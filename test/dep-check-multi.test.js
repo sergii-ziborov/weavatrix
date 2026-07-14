@@ -1,0 +1,75 @@
+// Go + Python dependency findings (dep-check.js computeGoDepFindings / computePyDepFindings) —
+// set math over ecosystem-tagged externalImports vs go.mod / python manifests.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { computeGoDepFindings, computePyDepFindings } from "../src/analysis/dep-check.js";
+
+const goImp = (spec, pkg, file = "main.go", extra = {}) => ({ file, spec, pkg, builtin: false, kind: "go-import", line: 3, ecosystem: "Go", ...extra });
+const pyImp = (spec, pkg, file = "app.py", extra = {}) => ({ file, spec, pkg, builtin: false, kind: "py-import", line: 2, ecosystem: "PyPI", ...extra });
+
+test("go: direct-unused flagged, indirect + used + replaced never flagged; missing detected", () => {
+  const goMod = {
+    module: "github.com/acme/speaker",
+    requires: [
+      { path: "github.com/segmentio/kafka-go", version: "v0.4.47", indirect: false },
+      { path: "github.com/unused/dep", version: "v1.0.0", indirect: false },
+      { path: "golang.org/x/sys", version: "v0.15.0", indirect: true },
+    ],
+    replaces: [{ from: "github.com/replaced/mod", to: "../local" }],
+  };
+  const externalImports = [
+    goImp("github.com/segmentio/kafka-go/sasl", "github.com/segmentio/kafka-go"), // used via subpackage
+    goImp("github.com/not/declared", "github.com/not/declared"),
+    goImp("github.com/replaced/mod/pkg", "github.com/replaced/mod"),
+    goImp("fmt", "fmt", "main.go", { builtin: true }),
+  ];
+  const { findings } = computeGoDepFindings({ externalImports, goMod });
+  const unused = findings.filter((f) => f.rule === "unused-dep").map((f) => f.package);
+  const missing = findings.filter((f) => f.rule === "missing-dep").map((f) => f.package);
+  assert.deepEqual(unused, ["github.com/unused/dep"]);
+  assert.deepEqual(missing, ["github.com/not/declared"]); // replaced module suppressed
+});
+
+test("go: no go.mod → no findings (can't judge)", () => {
+  const { findings } = computeGoDepFindings({ externalImports: [goImp("github.com/a/b", "github.com/a/b")], goMod: null });
+  assert.equal(findings.length, 0);
+});
+
+test("py: alias (yaml→PyYAML) and python-X naming suppress unused; CLI tools + stubs skipped", () => {
+  const pyManifest = { present: true, deps: [
+    { name: "PyYAML", dev: false },
+    { name: "python-dateutil", dev: false },
+    { name: "pytest", dev: true },          // CLI tool — never unused
+    { name: "types-requests", dev: true },  // stubs — never unused
+    { name: "leftover-lib", dev: false },   // truly unused
+  ] };
+  const externalImports = [
+    pyImp("yaml", "PyYAML"),
+    pyImp("dateutil.parser", "python-dateutil"),
+  ];
+  const { findings } = computePyDepFindings({ externalImports, pyManifest });
+  assert.deepEqual(findings.map((f) => [f.rule, f.package]), [["unused-dep", "leftover-lib"]]);
+  assert.equal(findings[0].confidence, "low"); // import↔dist mapping is heuristic — never higher
+});
+
+test("py: missing dep found with dist-name hint; test-only imports downgraded; no-manifest softened", () => {
+  const imports = [
+    pyImp("requests", "requests"),
+    pyImp("cv2", "opencv-python", "tests/test_vision.py"),
+  ];
+  const withManifest = computePyDepFindings({ externalImports: imports, pyManifest: { present: true, deps: [] } });
+  const req = withManifest.findings.find((f) => f.package === "requests");
+  const cv = withManifest.findings.find((f) => f.package === "opencv-python");
+  assert.equal(req.severity, "medium");
+  assert.equal(cv.severity, "low"); // test-only
+  assert.match(cv.fixHint, /pip install opencv-python/);
+  const noManifest = computePyDepFindings({ externalImports: imports, pyManifest: { present: false, deps: [] } });
+  assert.ok(noManifest.findings.every((f) => f.severity === "low" && f.confidence === "low"));
+});
+
+test("py: config mention keeps a declared dep alive (tox/setup.cfg text)", () => {
+  const pyManifest = { present: true, deps: [{ name: "celery", dev: false }] };
+  const configTexts = new Map([["tox.ini", "[testenv]\ncommands = celery worker -A app"]]);
+  const { findings } = computePyDepFindings({ externalImports: [], pyManifest, configTexts });
+  assert.equal(findings.length, 0);
+});
