@@ -30,6 +30,8 @@ import { detectEndpoints } from './analysis/endpoints.js'
 import { readCoverageForRepo } from './analysis/coverage-reports.js'
 import { buildFileImportGraph, findSccs } from './analysis/dep-rules.js'
 import { graphOutDirForRepo } from './graph/layout.js'
+import { refreshAdvisories, storeMeta, DEFAULT_STORE } from './security/advisory-store.js'
+import { collectInstalled } from './security/installed.js'
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url)) // packaged: resources/app.asar.unpacked/main/repos
 const resolveRg = createRgResolver(SELF_DIR)
@@ -973,6 +975,57 @@ function tListKnownRepos(g, args, ctx) {
     ].join('\n')
 }
 
+// ---- online tools ('online' capability group — the ONLY tools that ever touch the network) -------
+// Scans and graph queries stay 100% offline. These two run a network call ONLY when explicitly
+// invoked; registering the server with a caps list that omits 'online' removes them entirely.
+
+// Refresh the local OSV advisory store for the current repo's lockfile-pinned packages. What leaves
+// the machine: package names + versions (that is what an OSV query IS) — never source code.
+async function tRefreshAdvisories(g, args, ctx) {
+    if (!ctx.repoRoot) return 'No repo root — cannot collect installed packages.'
+    const {installed} = collectInstalled(ctx.repoRoot)
+    if (!installed.length) return 'No pinned packages found in lockfiles (npm/yarn/pip/poetry/uv/go) — nothing to query.'
+    const res = await refreshAdvisories({installed, repoKey: ctx.repoRoot, timeoutMs: Number(args.timeout_ms) || undefined})
+    if (res.ok === false) return `Advisory refresh failed: ${res.error}`
+    const meta = storeMeta()
+    return [
+        `Advisory store refreshed from OSV.dev: ${res.queried} package versions queried, ${res.vulnerable} with known advisories (${res.fetched} advisory records fetched).`,
+        res.unsupported ? `${res.unsupported} packages skipped (ecosystem not OSV-queryable — npm/PyPI/Go only).` : null,
+        res.errors?.length ? `Partial: ${res.errors.length} request error(s), first: ${res.errors[0]}` : null,
+        `Store: ${DEFAULT_STORE} (${meta.advisoryCount} advisories, fetched ${meta.fetchedAt}). run_audit now reflects it — offline.`,
+    ].filter(Boolean).join('\n')
+}
+
+// Push the current graph.json to a user-configured endpoint (the weavatrix site's hosted graph view,
+// or any self-hosted collector). Off until WEAVATRIX_SYNC_URL is set. The payload is the graph only —
+// file paths, symbol names, and edges — never file contents.
+async function tSyncGraph(g, args, ctx) {
+    const url = process.env.WEAVATRIX_SYNC_URL
+    if (!url) {
+        return 'Graph sync is not configured (optional feature). Set WEAVATRIX_SYNC_URL to the upload endpoint'
+            + ' (and WEAVATRIX_SYNC_TOKEN for bearer auth) in the MCP registration env, then call again.'
+    }
+    if (!g) return 'No graph loaded — build one first (open_repo / rebuild_graph).'
+    let body
+    try { body = readFileSync(ctx.graphPath, 'utf8') } catch (e) { return `Cannot read ${ctx.graphPath}: ${e.message}` }
+    const repoName = String(ctx.repoRoot || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'repo'
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'x-weavatrix-repo': repoName,
+                ...(process.env.WEAVATRIX_SYNC_TOKEN ? {authorization: `Bearer ${process.env.WEAVATRIX_SYNC_TOKEN}`} : {}),
+            },
+            body,
+        })
+        if (!res.ok) return `Sync endpoint answered HTTP ${res.status} — graph NOT accepted.`
+        return `Graph for ${repoName} (${g.nodes.length} nodes / ${g.links.length} edges, ${Math.round(body.length / 1024)} KB) pushed to ${url}.`
+    } catch (e) {
+        return `Sync failed: ${e.message} — the graph stays local.`
+    }
+}
+
 // Each tool declares a capability GROUP; the server exposes only groups enabled for this repo (argv[4]).
 const TOOLS = [
     {cap: 'graph', name: 'graph_stats', description: 'Return summary statistics: node count, edge count, communities, confidence breakdown, and graph build time vs repo HEAD (staleness).', inputSchema: {type: 'object', properties: {}}, run: (g, a, ctx) => tGraphStats(g, ctx)},
@@ -996,6 +1049,8 @@ const TOOLS = [
     {cap: 'graph', name: 'graph_diff', description: 'Structural diff of the last rebuild: previous graph state (graph.prev.json, saved by rebuild_graph) vs current — architecture drift (new module dependencies), broken or introduced import cycles, symbols that lost their last caller. The semantic complement to the textual git diff for validating a refactor.', inputSchema: {type: 'object', properties: {path: {type: 'string', description: 'Optional node-id/path prefix to scope the diff, e.g. src/query'}}}, run: (g, args, ctx) => tGraphDiff(g, args, ctx)},
     {cap: 'build', name: 'open_repo', description: 'Retarget this server at another local repository: loads its graph from the central weavatrix-graphs layout next to the repo, building it first when missing (large repos can take minutes; pass build:false to probe without building). Afterwards every tool answers for the new repo.', inputSchema: {type: 'object', properties: {path: {type: 'string', description: 'Absolute path to the repository folder'}, build: {type: 'boolean', description: 'Build the graph when missing (default true)', default: true}, mode: {type: 'string', enum: ['full', 'no-tests', 'tests-only'], default: 'full'}}, required: ['path']}, run: (g, args, ctx) => tOpenRepo(g, args, ctx)},
     {cap: 'graph', name: 'list_known_repos', description: 'List sibling repositories that already have a built graph in the central weavatrix-graphs folder next to the current repo — ready targets for open_repo.', inputSchema: {type: 'object', properties: {}}, run: (g, args, ctx) => tListKnownRepos(g, args, ctx)},
+    {cap: 'online', name: 'refresh_advisories', description: "ONLINE, explicit opt-in: refresh the local OSV advisory store for this repo's lockfile-pinned packages (npm/PyPI/Go). Sends package names + versions to OSV.dev — never automatic, never source code. Afterwards run_audit reads the refreshed store fully offline (~/.weavatrix/advisories.json).", inputSchema: {type: 'object', properties: {timeout_ms: {type: 'integer', description: 'Per-request timeout, default 20000'}}}, run: (g, args, ctx) => tRefreshAdvisories(g, args, ctx)},
+    {cap: 'online', name: 'sync_graph', description: 'ONLINE, explicit opt-in, off until configured: push the current graph.json to your weavatrix site or self-hosted endpoint (env WEAVATRIX_SYNC_URL, optional WEAVATRIX_SYNC_TOKEN bearer auth) for a hosted graph view. Payload is the graph only — file paths, symbol names, edges — never file contents.', inputSchema: {type: 'object', properties: {}}, run: (g, args, ctx) => tSyncGraph(g, args, ctx)},
 ]
 // argv[4] = comma-separated enabled capability groups (from the per-repo Settings config); absent/empty
 // → ALL enabled (backward-compatible with older registrations).

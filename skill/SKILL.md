@@ -21,9 +21,12 @@ then retry.
   the graph. Act on it: `rebuild_graph`.
 - **Ambiguity**: `get_node`/`get_neighbors`/`get_dependents` disclose `matched N nodes; using the
   best-connected` — read that note before trusting the answer; pass an exact node id to pin it.
-- **Offline by design**: everything runs in-process against local files. The OSV vulnerability check
-  in `run_audit` reads a previously downloaded advisory store; coverage tools read existing reports,
-  they never run tests.
+- **Offline by design**: scans and graph queries run in-process against local files; coverage tools
+  read existing reports and never run tests. The ONLY network-touching tools live in the `online`
+  capability group and run solely when explicitly called: `refresh_advisories` (queries OSV.dev with
+  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (pushes
+  graph.json to a user-configured endpoint; disabled until `WEAVATRIX_SYNC_URL` is set). Registering
+  the server with a caps list that omits `online` removes both.
 
 ## Recipes
 
