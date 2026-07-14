@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weavatrix — code graph &amp; blast-radius MCP for AI coding agents</title>
+<meta name="description" content="Weavatrix builds a code graph of any local repository and serves it to Claude Code & Codex over MCP: change impact, transitive dependents, health audit, clone detection, coverage mapping. Local-first — your code never leaves your machine.">
+<meta property="og:title" content="Weavatrix — give your AI agent blast-radius vision">
+<meta property="og:description" content="Code graph & blast-radius MCP server for AI coding agents. Local-first, MIT.">
+<meta property="og:url" content="https://weavatrix.com">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='30' cy='30' r='12' fill='%237c6cff'/><circle cx='72' cy='44' r='9' fill='%2340e0c8'/><circle cx='44' cy='74' r='9' fill='%23f0f2f8'/><line x1='30' y1='30' x2='72' y2='44' stroke='%237c6cff' stroke-width='4'/><line x1='30' y1='30' x2='44' y2='74' stroke='%2340e0c8' stroke-width='4'/></svg>">
+<style>
+  :root {
+    --bg: #0b0d14; --bg2: #101322; --panel: #141830; --line: #23284a;
+    --text: #e8eaf6; --muted: #9aa0c0; --accent: #7c6cff; --accent2: #40e0c8;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
+  a { color: var(--accent2); text-decoration: none; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+  .mark { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .12em; font-size: 18px; }
+  .mark svg { flex: none; }
+  .badge { font: 11px/1 var(--mono); letter-spacing: .1em; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 4px; padding: 4px 7px; }
+  nav a { color: var(--muted); margin-left: 22px; font-size: 14px; }
+  nav a:hover { color: var(--text); }
+  .soon { opacity: .55; cursor: default; }
+
+  .hero { position: relative; padding: 72px 0 56px; }
+  #net { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; opacity: .9; }
+  .hero-inner { position: relative; z-index: 1; max-width: 640px; }
+  h1 { font-size: clamp(34px, 5.4vw, 56px); line-height: 1.1; font-weight: 800; }
+  h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: var(--muted); margin: 22px 0 30px; font-size: 18px; max-width: 560px; }
+  .cta { display: inline-block; background: linear-gradient(90deg, var(--accent), #5a8bff); color: #fff; font-weight: 600; border-radius: 8px; padding: 12px 22px; }
+  .cta:hover { filter: brightness(1.12); }
+  .cta2 { display: inline-block; margin-left: 14px; color: var(--muted); padding: 12px 10px; }
+
+  .term { background: #0d1020; border: 1px solid var(--line); border-radius: 10px; margin: 46px 0 0; overflow: hidden; box-shadow: 0 18px 60px rgba(0,0,0,.45); position: relative; z-index: 1; }
+  .term-bar { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2c3157; }
+  .term pre { padding: 18px 20px; font: 13.5px/1.75 var(--mono); overflow-x: auto; }
+  .c { color: #5c6390; } .g { color: var(--accent2); } .p { color: #b7aaff; }
+
+  section { padding: 64px 0 8px; }
+  h2 { font-size: 26px; margin-bottom: 8px; }
+  .lead { color: var(--muted); margin-bottom: 34px; max-width: 640px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .card h3 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 9px; }
+  .card p { color: var(--muted); font-size: 14.5px; }
+  .card code { font: 12.5px var(--mono); color: var(--accent2); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); flex: none; }
+  .dot.t { background: var(--accent2); box-shadow: 0 0 10px var(--accent2); }
+
+  .langs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+  .langs span { font: 12.5px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; }
+
+  .road { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .step { border: 1px solid var(--line); border-radius: 12px; padding: 22px; position: relative; }
+  .step .tag { font: 11px var(--mono); letter-spacing: .1em; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 12px; }
+  .now .tag { background: rgba(64,224,200,.12); color: var(--accent2); }
+  .next .tag { background: rgba(124,108,255,.12); color: #b7aaff; }
+  .later .tag { background: rgba(154,160,192,.12); color: var(--muted); }
+  .step h3 { font-size: 16px; margin-bottom: 6px; }
+  .step p { color: var(--muted); font-size: 14.5px; }
+
+  footer { margin-top: 80px; border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 13.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  @media (max-width: 640px) { nav { display: none; } .cta2 { display: block; margin: 12px 0 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">
+      <svg width="26" height="26" viewBox="0 0 100 100"><circle cx="30" cy="30" r="12" fill="#7c6cff"/><circle cx="72" cy="44" r="9" fill="#40e0c8"/><circle cx="44" cy="74" r="9" fill="#f0f2f8"/><line x1="30" y1="30" x2="72" y2="44" stroke="#7c6cff" stroke-width="4"/><line x1="30" y1="30" x2="44" y2="74" stroke="#40e0c8" stroke-width="4"/></svg>
+      WEAVATRIX <span class="badge">MCP</span>
+    </div>
+    <nav>
+      <a href="#features">Tools</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#roadmap">Roadmap</a>
+      <a class="soon" title="Coming soon">GitHub ·soon</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <canvas id="net"></canvas>
+    <div class="hero-inner">
+      <h1>Give your AI agent <em>blast-radius vision</em>.</h1>
+      <p class="sub">Weavatrix builds a code graph of any local repository and serves it to Claude Code
+        &amp; Codex over MCP — change impact, transitive dependents, health audit, clone detection,
+        coverage mapping. 23 tools. One server for every repo on your machine.</p>
+      <a class="cta" href="#install">Get started</a>
+      <a class="cta2" href="#features">Explore the tools ↓</a>
+    </div>
+    <div class="term" id="install">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <pre><span class="c"># pre-release — npm package landing soon</span>
+<span class="g">$</span> claude mcp add -s user weavatrix -- npx weavatrix-mcp <span class="p">&lt;graph.json&gt; &lt;repoRoot&gt;</span>
+
+<span class="c"># then, inside Claude Code:</span>
+<span class="g">›</span> what breaks if I change the auth middleware?
+<span class="c">→ change_impact: 3 changed files map to 9 symbols; 41 dependents in blast radius,
+   7 untested hotspots called out — ranked by proximity × connectivity.</span></pre>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>The graph your agent is missing</h2>
+    <p class="lead">Grep sees text. Weavatrix sees structure: files, symbols, and the imports, calls
+      and inheritance connecting them — built with tree-sitter, no native toolchain.</p>
+    <div class="grid">
+      <div class="card"><h3><span class="dot"></span>Change impact</h3><p><code>change_impact</code> diffs your branch (staged, unstaged, untracked included) and lists everything that depends on what you touched — with test coverage attached and untested hotspots called out.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Blast radius per symbol</h3><p><code>get_dependents</code> walks reverse edges transitively: every caller, importer and subclass that can feel your refactor, ranked by proximity and connectivity.</p></div>
+      <div class="card"><h3><span class="dot"></span>Health audit</h3><p><code>run_audit</code> finds dead code, unused exports, missing and unused dependencies, import cycles, orphans — plus offline OSV vulnerability, typosquat and lockfile-drift checks.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Clone detection</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies — catches copy-paste even after variables were renamed, not just identical text.</p></div>
+      <div class="card"><h3><span class="dot"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: new module dependencies, broken or introduced cycles, symbols that lost their last caller.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Every repo, one server</h3><p><code>open_repo</code> retargets the running server at any local repository and builds missing graphs; <code>list_known_repos</code> shows what's ready. Register once, use everywhere.</p></div>
+    </div>
+    <div class="langs">
+      <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>HTML</span><span>CSS</span><span style="opacity:.5">Rust — roadmap</span>
+    </div>
+  </section>
+
+  <section id="privacy">
+    <h2>Local-first, offline by design</h2>
+    <p class="lead">Graph queries, audits and clone scans run in-process against local files — your
+      source never leaves your machine. Exactly two tools can touch the network, both in an explicit
+      opt-in capability group: <code style="font-family:var(--mono);color:var(--accent2)">refresh_advisories</code>
+      (queries OSV.dev with package names + versions) and
+      <code style="font-family:var(--mono);color:var(--accent2)">sync_graph</code> (pushes your graph —
+      paths, symbols, edges, never file contents — to an endpoint you configure). Omit the
+      <code style="font-family:var(--mono);color:var(--accent2)">online</code> group at registration and
+      they don't even exist.</p>
+  </section>
+
+  <section id="roadmap">
+    <h2>Roadmap</h2>
+    <p class="lead">The MCP server is free and MIT — forever. The hosted layer comes next.</p>
+    <div class="road">
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server</h3><p>23 tools over your local code graph. Pre-release; npm publish imminent.</p></div>
+      <div class="step next"><span class="tag">NEXT</span><h3>Hosted graph view</h3><p>Your interactive dependency map on weavatrix.com — sync with one tool call, share with your team. Paid.</p></div>
+      <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
+      <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <div>© 2026 Sergii Ziborov · MIT License</div>
+    <div>weavatrix.com — built with weavatrix</div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('net'), cx = cv.getContext('2d');
+  let W, H, nodes = [], links = [];
+  const N = 46, LINKDIST = 150;
+
+  function reset() {
+    const r = cv.parentElement.getBoundingClientRect();
+    W = cv.width = r.width * devicePixelRatio; H = cv.height = r.height * devicePixelRatio;
+    nodes = Array.from({length: N}, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      vx: (Math.random() - .5) * .18 * devicePixelRatio, vy: (Math.random() - .5) * .18 * devicePixelRatio,
+      r: (Math.random() * 2.2 + 1.4) * devicePixelRatio,
+    }));
+    links = [];
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+      if (d < LINKDIST * devicePixelRatio && Math.random() < .5) links.push([i, j]);
+    }
+  }
+
+  let pulse = 0, pulseNode = 0;
+  function tick(t) {
+    cx.clearRect(0, 0, W, H);
+    // one node "changes" every few seconds and its blast radius ripples out
+    if (t / 1600 > pulse) { pulse = Math.ceil(t / 1600); pulseNode = Math.floor(Math.random() * N); }
+    const ripple = ((t % 1600) / 1600) * 130 * devicePixelRatio;
+    const pn = nodes[pulseNode];
+
+    cx.lineWidth = devicePixelRatio * .7;
+    for (const [i, j] of links) {
+      const a = nodes[i], b = nodes[j];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d > LINKDIST * 1.6 * devicePixelRatio) continue;
+      const near = Math.min(Math.hypot(a.x - pn.x, a.y - pn.y), Math.hypot(b.x - pn.x, b.y - pn.y));
+      const hot = Math.abs(near - ripple) < 34 * devicePixelRatio;
+      cx.strokeStyle = hot ? 'rgba(64,224,200,.5)' : 'rgba(124,108,255,.14)';
+      cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke();
+    }
+    for (let i = 0; i < N; i++) {
+      const n = nodes[i];
+      n.x += n.vx; n.y += n.vy;
+      if (n.x < 0 || n.x > W) n.vx *= -1;
+      if (n.y < 0 || n.y > H) n.vy *= -1;
+      const dp = Math.hypot(n.x - pn.x, n.y - pn.y);
+      const hot = i === pulseNode || Math.abs(dp - ripple) < 30 * devicePixelRatio;
+      cx.fillStyle = i === pulseNode ? '#40e0c8' : hot ? 'rgba(64,224,200,.85)' : 'rgba(160,150,255,.5)';
+      cx.beginPath(); cx.arc(n.x, n.y, i === pulseNode ? n.r * 1.7 : n.r, 0, 7); cx.fill();
+    }
+    requestAnimationFrame(tick);
+  }
+  addEventListener('resize', reset);
+  reset(); requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
