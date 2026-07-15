@@ -11,13 +11,16 @@ import { buildResolvers } from "./internal-builder.resolvers.js";
 
 // Parse a repo directory into a graph-builder-compatible { nodes, links } graph.
 export async function buildInternalGraph(repoDir, opts = {}) {
-  const langs = await ensureParser(opts);
+  const files = walk(repoDir);
+  // Lazy grammar loading: compile only the WASMs for languages this repo actually contains.
+  const wanted = new Set();
+  for (const f of files) { const g = EXT_LANG[extname(f)]; if (g) wanted.add(g); }
+  const langs = await ensureParser(opts, wanted);
   const qc = new Map();
   const q = (grammar, src) => { const k = grammar + ":" + src; if (qc.has(k)) return qc.get(k); let x = null; try { x = new Query(langs[grammar], src); } catch { x = null; } qc.set(k, x); return x; };
   const caps = (grammar, src, root) => { const query = src && q(grammar, src); return query ? query.captures(root) : []; };
   const field = (n, f) => (n && n.childForFieldName ? n.childForFieldName(f) : null);
 
-  const files = walk(repoDir);
   const rel = (p) => relative(repoDir, p).replace(/\\/g, "/");
   const fileSet = new Set(files.map(rel));
   const nodes = []; const links = []; const nodeIds = new Set(); const nodeById = new Map();

@@ -52,11 +52,15 @@ const MAX_PARSE_BYTES = 1_500_000;   // skip parsing files above this (minified 
 
 let _ready = null;
 const _langs = {};
-async function ensureParser(opts = {}) {
+// `wanted` (a Set of grammar names) makes loading LAZY: only grammars for extensions actually present
+// in the repo get compiled. The heavy WASMs (rust ~3MB, c_sharp ~4MB) cost seconds to compile — a tax
+// a JS-only repo must never pay. Omit `wanted` to load everything (old behavior).
+async function ensureParser(opts = {}, wanted = null) {
   if (!_ready) _ready = Parser.init({ locateFile: () => opts.runtimeWasm || DEFAULT_RUNTIME_WASM });
   await _ready;
   const wasmDir = opts.wasmDir || DEFAULT_WASM_DIR;
-  for (const g of GRAMMARS) if (!_langs[g]) { try { _langs[g] = await Language.load(join(wasmDir, `tree-sitter-${g}.wasm`)); } catch { _langs[g] = null; } }
+  const list = wanted ? GRAMMARS.filter((g) => wanted.has(g)) : GRAMMARS;
+  for (const g of list) if (!_langs[g]) { try { _langs[g] = await Language.load(join(wasmDir, `tree-sitter-${g}.wasm`)); } catch { _langs[g] = null; } }
   return _langs;
 }
 
@@ -78,7 +82,9 @@ function walk(dir, acc = [], seen = new Set(), depth = 0) {
     const full = join(dir, name);
     let st; try { st = statSync(full); } catch { continue; }
     if (st.isDirectory()) walk(full, acc, seen, depth + 1);
-    else { const e = extname(name); if ((EXT_LANG[e] && _langs[EXT_LANG[e]]) || isDataFile(name) || isDocFile(name)) acc.push(full); }
+    // include by KNOWN extension, not by loaded grammar — grammars now load lazily AFTER the walk
+    // (the parse passes skip files whose grammar failed to load, so the guarantee is unchanged)
+    else { const e = extname(name); if (EXT_LANG[e] || isDataFile(name) || isDocFile(name)) acc.push(full); }
   }
   return acc;
 }

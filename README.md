@@ -125,7 +125,7 @@ Graphs are derived data and never live inside your repo: they go to a `weavatrix
 
 ```sh
 npm install
-npm test          # node --test — 224 tests
+npm test          # node --test
 ```
 
 Design rule: **no source file exceeds 300 lines.** Larger concerns split into dotted-suffix modules

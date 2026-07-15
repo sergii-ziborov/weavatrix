@@ -22,8 +22,11 @@ import process from 'node:process'
 import {loadGraph} from './mcp/graph-context.mjs'
 import {loadHotApi, HOT_FILES} from './mcp/catalog.mjs'
 import {graphOutDirForRepo} from './graph/layout.js'
+import {createRequire} from 'node:module'
 
-const SERVER_INFO = {name: 'weavatrix', version: '0.1.0'}
+// version comes from package.json so serverInfo can never drift from the published package again
+const PKG_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version } catch { return '0.0.0' } })()
+const SERVER_INFO = {name: 'weavatrix', version: PKG_VERSION}
 const DEFAULT_PROTOCOL = '2024-11-05'
 const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 
