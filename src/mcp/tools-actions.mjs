@@ -16,7 +16,7 @@ export async function tRebuildGraph(g, args, ctx) {
     // snapshot the outgoing state: bytes → graph.prev.json (for graph_diff later), struct → inline delta
     let prevBytes = null
     try { prevBytes = readFileSync(ctx.graphPath) } catch { /* first build — nothing to diff against */ }
-    const before = g?.nodes ? {nodes: g.nodes, links: g.links} : null
+    const before = g?.nodes ? {nodes: g.nodes, links: g.links, edgeTypesV: g.edgeTypesV || 0} : null
     const res = await buildGraphForRepo(ctx.repoRoot, {mode, scope: args.scope || ''})
     if (!res || !res.ok) return `Graph rebuild failed: ${(res && res.error) || 'unknown error'}`
     if (prevBytes) { try { writeFileSync(prevGraphPathFor(ctx.graphPath), prevBytes) } catch { /* snapshot is best-effort */ } }
@@ -41,8 +41,21 @@ export async function tOpenRepo(g, args, ctx) {
     if (!existsSync(join(repoPath, '.git'))) return `Not a Git repository: ${requestedPath}`
     const graphPath = join(graphOutDirForRepo(repoPath), 'graph.json')
     let built = false
-    if (!existsSync(graphPath)) {
-        if (args.build === false) return `No graph yet for ${repoPath} (expected at ${graphPath}). Re-call without build:false to build one — large repos can take minutes.`
+    let upgrade = false
+    if (existsSync(graphPath)) {
+        try {
+            const saved = JSON.parse(readFileSync(graphPath, 'utf8'))
+            upgrade = !Number.isInteger(saved.edgeTypesV) || saved.edgeTypesV < 1
+        } catch {
+            upgrade = true
+        }
+    }
+    if (!existsSync(graphPath) || upgrade) {
+        if (args.build === false) {
+            return upgrade
+                ? `The existing graph for ${repoPath} predates typed import edges. Re-call without build:false to upgrade it before switching.`
+                : `No graph yet for ${repoPath} (expected at ${graphPath}). Re-call without build:false to build one — large repos can take minutes.`
+        }
         const mode = ['no-tests', 'tests-only', 'full'].includes(args.mode) ? args.mode : 'full'
         const res = await buildGraphForRepo(repoPath, {mode, scope: ''})
         if (!res || !res.ok) return `Graph build failed for ${repoPath}: ${(res && res.error) || 'unknown error'}`
@@ -58,7 +71,8 @@ export async function tOpenRepo(g, args, ctx) {
         ctx.reload()
         return `Failed to load ${graphPath} — still targeting the previous repo (${prev.repoRoot || 'none'}).`
     }
-    return `Opened ${repoPath}${built ? ' (graph built fresh)' : ''}: ${loaded.nodes.length} nodes / ${loaded.links.length} edges. All tools now target this repo.`
+    const buildNote = built ? (upgrade ? ' (graph upgraded to typed import edges)' : ' (graph built fresh)') : ''
+    return `Opened ${repoPath}${buildNote}: ${loaded.nodes.length} nodes / ${loaded.links.length} edges. All tools now target this repo.`
 }
 
 // Sibling repos that already have a built graph in the central weavatrix-graphs folder — open_repo candidates.
@@ -99,7 +113,7 @@ export async function tRefreshAdvisories(g, args, ctx) {
     if (res.ok === false) return `Advisory refresh failed: ${res.error}`
     const meta = storeMeta()
     return [
-        `Advisory store refreshed from OSV.dev: ${res.queried} package versions queried, ${res.vulnerable} with known advisories (${res.fetched} advisory records fetched).`,
+        `Advisory store ${res.status === 'PARTIAL' ? 'partially refreshed' : 'refreshed'} from OSV.dev: ${res.queriedOk ?? res.queried}/${res.queried} package versions queried successfully, ${res.vulnerable} with known advisories (${res.fetched} advisory records fetched).`,
         res.unsupported ? `${res.unsupported} packages skipped (ecosystem not OSV-queryable — npm/PyPI/Go only).` : null,
         res.errors?.length ? `Partial: ${res.errors.length} request error(s), first: ${res.errors[0]}` : null,
         `Store: ${DEFAULT_STORE} (${meta.advisoryCount} advisories, fetched ${meta.fetchedAt}). run_audit now reflects it — offline.`,
@@ -118,8 +132,8 @@ export async function tSyncGraph(g, args, ctx) {
     let raw
     try { raw = JSON.parse(readFileSync(ctx.graphPath, 'utf8')) } catch (e) { return `Cannot read ${ctx.graphPath}: ${e.message}` }
     let payload
-    try { payload = createSyncPayload(raw) } catch {
-        return 'This graph predates repository-boundary hardening. Run rebuild_graph once before sync_graph.'
+    try { payload = createSyncPayload(raw) } catch (e) {
+        return `Cannot sync: ${e.message}. Run rebuild_graph once before sync_graph.`
     }
     const body = JSON.stringify(payload)
     const repoName = String(ctx.repoRoot || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'repo'
@@ -128,6 +142,7 @@ export async function tSyncGraph(g, args, ctx) {
             method: 'POST',
             headers: {
                 'content-type': 'application/json',
+                'x-weavatrix-payload-version': String(payload.syncPayloadV),
                 'x-weavatrix-repo': repoName,
                 ...(process.env.WEAVATRIX_SYNC_TOKEN ? {authorization: `Bearer ${process.env.WEAVATRIX_SYNC_TOKEN}`} : {}),
             },

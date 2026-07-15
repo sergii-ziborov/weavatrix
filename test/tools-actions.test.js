@@ -39,6 +39,7 @@ test("open_repo: switches to another Git repository with an existing graph in on
     nodes: [{ id: "src/a.js", label: "a.js", source_file: "src/a.js" }],
     links: [],
     repoBoundaryV: 1,
+    edgeTypesV: 1,
   }));
   const ctx = {
     repoRoot: parent,
@@ -74,12 +75,34 @@ test("sync_graph: requires one rebuild for graphs created before boundary harden
   }
 });
 
+test("sync_graph: requires typed-edge metadata before upload", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-sync-untyped-"));
+  const graphPath = join(dir, "graph.json");
+  writeFileSync(graphPath, JSON.stringify({ nodes: [], links: [], repoBoundaryV: 1 }));
+  const previousUrl = process.env.WEAVATRIX_SYNC_URL;
+  const previousFetch = globalThis.fetch;
+  let fetched = false;
+  process.env.WEAVATRIX_SYNC_URL = "https://sync.invalid/upload";
+  globalThis.fetch = async () => { fetched = true; throw new Error("must not fetch"); };
+  try {
+    const out = await tSyncGraph(loadGraph(graphPath), {}, { graphPath, repoRoot: dir });
+    assert.match(out, /predates typed import edges/);
+    assert.equal(fetched, false);
+  } finally {
+    if (previousUrl == null) delete process.env.WEAVATRIX_SYNC_URL;
+    else process.env.WEAVATRIX_SYNC_URL = previousUrl;
+    globalThis.fetch = previousFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("sync_graph: uploads only the versioned metadata allowlist", async () => {
   const dir = mkdtempSync(join(tmpdir(), "wx-sync-safe-"));
   const graphPath = join(dir, "graph.json");
   const secret = "PRIVATE_SOURCE_BODY_9f4c";
   writeFileSync(graphPath, JSON.stringify({
     repoBoundaryV: 1,
+    edgeTypesV: 1,
     extImportsV: 2,
     complexityV: 1,
     injectedSource: secret,
@@ -89,7 +112,7 @@ test("sync_graph: uploads only the versioned metadata allowlist", async () => {
       source_text: secret,
       complexity: { startLine: 1, endLine: 3, cyclomatic: 2, confidence: "medium", evidence: [secret], source: secret },
     }],
-    links: [{ source: "src/a.js", target: "src/a.js#run@1", relation: "contains", confidence: "EXTRACTED", source_text: secret }],
+    links: [{ source: "src/a.js", target: "src/a.js#run@1", relation: "imports", confidence: "EXTRACTED", typeOnly: true, line: 2, specifier: "./types.js", source_text: secret }],
     externalImports: [{ file: "src/a.js", spec: "node:fs", pkg: "fs", builtin: true, kind: "esm", line: 1, source_text: secret }],
   }));
   const previousUrl = process.env.WEAVATRIX_SYNC_URL;
@@ -105,8 +128,11 @@ test("sync_graph: uploads only the versioned metadata allowlist", async () => {
     assert.equal(sent.headers["content-type"], "application/json");
     assert.equal(sent.body.includes(secret), false, "raw or nested injected source must not leave the machine");
     const payload = JSON.parse(sent.body);
-    assert.equal(payload.syncPayloadV, 1);
-    assert.deepEqual(Object.keys(payload).sort(), ["complexityV", "extImportsV", "externalImports", "links", "nodes", "repoBoundaryV", "syncPayloadV"]);
+    assert.equal(payload.syncPayloadV, 2);
+    assert.equal(payload.edgeTypesV, 1);
+    assert.deepEqual(Object.keys(payload).sort(), ["complexityV", "edgeTypesV", "extImportsV", "externalImports", "links", "nodes", "repoBoundaryV", "syncPayloadV"]);
+    assert.deepEqual(payload.links[0], { source: "src/a.js", target: "src/a.js#run@1", relation: "imports", confidence: "EXTRACTED", typeOnly: true, line: 2, specifier: "./types.js" });
+    assert.equal(sent.headers["x-weavatrix-payload-version"], "2");
     assert.deepEqual(payload.nodes[0].complexity, { startLine: 1, endLine: 3, cyclomatic: 2, confidence: "medium" });
     assert.equal(payload.nodes[0].source_text, undefined);
     assert.equal(payload.externalImports[0].source_text, undefined);
@@ -125,4 +151,20 @@ test("loadGraph preserves the repository-boundary marker for sync_graph", () => 
   try {
     assert.equal(loadGraph(graphPath).repoBoundaryV, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("open_repo: build:false refuses a legacy untyped graph without changing target", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "wx-open-legacy-"));
+  const repo = join(parent, "legacy-repo");
+  const graphPath = join(parent, "weavatrix-graphs", "legacy-repo", "graph.json");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(join(parent, "weavatrix-graphs", "legacy-repo"), { recursive: true });
+  writeFileSync(graphPath, JSON.stringify({ nodes: [], links: [], repoBoundaryV: 1 }));
+  const ctx = { repoRoot: parent, graphPath: join(parent, "current.json"), reload() { throw new Error("must not reload"); } };
+  try {
+    const out = await tOpenRepo(null, { path: repo, build: false }, ctx);
+    assert.match(out, /predates typed import edges/);
+    assert.equal(ctx.repoRoot, parent);
+    assert.equal(ctx.graphPath, join(parent, "current.json"));
+  } finally { rmSync(parent, { recursive: true, force: true }); }
 });

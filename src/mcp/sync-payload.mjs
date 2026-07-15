@@ -63,6 +63,10 @@ function sanitizeLink(value) {
     const out = {source, target};
     setIf(out, 'relation', metadataString(value.relation, 32));
     setIf(out, 'confidence', metadataString(value.confidence, 32));
+    if (value.typeOnly === true) out.typeOnly = true;
+    const line = finiteNumber(value.line);
+    if (line !== undefined && Number.isInteger(line) && line >= 0) out.line = line;
+    setIf(out, 'specifier', metadataString(value.specifier));
     return out;
 }
 
@@ -85,14 +89,18 @@ export function createSyncPayload(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.repoBoundaryV !== 1) {
         throw new Error('graph predates repository-boundary hardening');
     }
+    if (!Number.isInteger(raw.edgeTypesV) || raw.edgeTypesV < 1) {
+        throw new Error('graph predates typed import edges');
+    }
     const nodes = Array.isArray(raw.nodes) ? raw.nodes.map(sanitizeNode).filter(Boolean) : [];
     const links = Array.isArray(raw.links) ? raw.links.map(sanitizeLink).filter(Boolean) : [];
     const externalImports = Array.isArray(raw.externalImports)
         ? raw.externalImports.map(sanitizeExternalImport).filter(Boolean)
         : [];
     return {
-        syncPayloadV: 1,
+        syncPayloadV: 2,
         repoBoundaryV: 1,
+        edgeTypesV: 1,
         extImportsV: Number.isInteger(raw.extImportsV) ? raw.extImportsV : 0,
         complexityV: Number.isInteger(raw.complexityV) ? raw.complexityV : 0,
         nodes,

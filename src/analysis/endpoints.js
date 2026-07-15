@@ -44,8 +44,26 @@ function handlerName(expr) {
 // endpoints (handler "operation", {id} params). These keys never appear in a real route/handler table.
 const OPENAPI_BLOCK = /\boperationId\b|\bresponses\s*:|\brequestBody\b|\bschemaRef\b|\boperation\s*\(|\bsummary\s*:/;
 
-const looksLikePath = (p) => typeof p === "string" && /^\/[\w\-./:{}*$]*$/.test(p) && !p.includes("://");
+const looksLikePath = (p) => typeof p === "string" && /^\/[\w\-./:{}*$?]*$/.test(p) && !p.includes("://");
 const cleanPath = (p) => String(p || "").replace(/\/+$/, "") || "/";
+
+export function nextRoutePath(file) {
+  const parts = String(file || "").replace(/\\/g, "/").split("/").filter(Boolean);
+  if (!/^route\.[cm]?[jt]s$/i.test(parts.at(-1) || "")) return "";
+  const appAt = parts.lastIndexOf("app");
+  if (appAt < 0) return "";
+  const route = [];
+  for (let segment of parts.slice(appAt + 1, -1)) {
+    if (!segment || /^\([^)]*\)$/.test(segment) || segment.startsWith("@")) continue; // route groups / parallel slots
+    segment = segment.replace(/^\((?:\.{1,3})\)/, "");                    // intercepting-route marker
+    let m;
+    if ((m = /^\[\[\.\.\.([^\]]+)\]\]$/.exec(segment))) segment = `*${m[1]}?`;
+    else if ((m = /^\[\.\.\.([^\]]+)\]$/.exec(segment))) segment = `*${m[1]}`;
+    else if ((m = /^\[([^\]]+)\]$/.exec(segment))) segment = `:${m[1]}`;
+    if (segment) route.push(segment);
+  }
+  return `/${route.join("/")}`;
+}
 
 export function extractEndpointsFromText(text, file) {
   const out = [];
@@ -57,6 +75,31 @@ export function extractEndpointsFromText(text, file) {
     if (!HTTP_METHODS.has(m)) return;
     out.push({ method: m, path: p, handler: handlerName(expr), file, line: lineAt(text, idx) });
   };
+
+  // Next.js App Router: the filesystem provides the path and exported HTTP-method functions provide the
+  // verbs. No literal route string exists in route.ts, so generic Express/FastAPI regexes cannot see it.
+  const nextPath = nextRoutePath(file);
+  if (nextPath) {
+    const seen = new Set();
+    const direct = /\bexport\s+(?:(?:async|declare)\s+)*(?:function\s+|(?:const|let|var)\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g;
+    let nm;
+    while ((nm = direct.exec(text))) {
+      const method = nm[1].toUpperCase();
+      if (!seen.has(method)) { seen.add(method); add(method, nextPath, method, nm.index); }
+    }
+    const lists = /\bexport\s*\{([^}]+)\}/g;
+    let lm;
+    while ((lm = lists.exec(text))) {
+      for (const item of lm[1].split(",")) {
+        const mm = /^\s*([A-Za-z_$][\w$]*)(?:\s+as\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))?\s*$/.exec(item);
+        if (!mm) continue;
+        if (!mm[2] && !HTTP_METHODS.has(mm[1])) continue;
+        const method = String(mm[2] || mm[1]).toUpperCase();
+        if (!HTTP_METHODS.has(method)) continue;
+        if (!seen.has(method)) { seen.add(method); add(method, nextPath, mm[1], lm.index); }
+      }
+    }
+  }
 
   // ---- object routes: "/path": { GET: fn, POST: fn2 }  or  "/path": handler --------------------
   // find each  "…": {  or  "…": expr,  where the key looks like a path
@@ -132,7 +175,7 @@ export function detectEndpoints(repoPath, codeFiles) {
     const resolved = boundary.resolve(rel);
     if (!resolved.ok) continue;
     const text = safeRead(resolved.path);
-    if (!text || !/["'`]\/|\.(get|post|put|patch|delete)\s*\(|HandleFunc|@\w*\.?(get|post|put|patch|delete)/i.test(text)) continue;
+    if (!text || (!nextRoutePath(rel) && !/["'`]\/|\.(get|post|put|patch|delete)\s*\(|HandleFunc|@\w*\.?(get|post|put|patch|delete)/i.test(text))) continue;
     for (const e of extractEndpointsFromText(text, rel.replace(/\\/g, "/"))) {
       const key = `${e.method} ${normParamKey(e.path)}`;
       const prev = byKey.get(key);

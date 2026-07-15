@@ -37,7 +37,9 @@ test("aggregateGraph: rolls files up into folder modules with file/module edges"
     files: 2,
     nodes: 4,
     fileEdges: 1,
+    typeOnlyFileEdges: 0,
     moduleEdges: 1,
+    typeOnlyModuleEdges: 0,
     symbols: 2,
     symbolEdges: 1
   });

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const readJson = (path) => JSON.parse(readFileSync(resolve(path), "utf8"));
@@ -9,6 +9,7 @@ const server = readJson("server.json");
 const site = readFileSync(resolve("site/index.html"), "utf8");
 const siteVersion = site.match(/"softwareVersion"\s*:\s*"([^"]+)"/)?.[1];
 const expected = pkg.version;
+const releaseNotesPath = resolve("docs", "releases", `v${expected}.md`);
 
 const versions = {
   "package-lock root": lock.version,
@@ -21,6 +22,9 @@ const versions = {
 for (const [label, version] of Object.entries(versions)) {
   if (version !== expected) throw new Error(`${label} version ${version || "(missing)"} does not match package ${expected}`);
 }
+
+if (!existsSync(releaseNotesPath)) throw new Error(`release notes are missing: docs/releases/v${expected}.md`);
+if (!readFileSync(releaseNotesPath, "utf8").trim()) throw new Error(`release notes are empty: docs/releases/v${expected}.md`);
 
 if (pkg.mcpName !== server.name) throw new Error("package mcpName and server.json name differ");
 if (manifest.tools_generated !== true) throw new Error("MCPB manifest must declare tools_generated");

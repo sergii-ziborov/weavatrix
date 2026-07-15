@@ -32,37 +32,56 @@ export default {
     // on deeply-nested / minified / bundled JS (regression). An export_statement is always a NEAR ancestor of
     // the declaration head (≤ ~5 hops), and hitting a statement_block means we're nested inside a function →
     // not a module-level export → bail immediately. See [[graph-builder-internalization]].
-    // early-out on statement_block (we're nested inside a function → not a module-level export) keeps this
-    // O(1) for nested symbols; program is the top; the hop cap is the backstop. A method of an EXPORTED class
-    // is only ~4 hops to its export_statement (method → class_body → class_declaration → export_statement),
-    // so we do NOT bail at class_body — that preserves the exported flag for such methods.
+    // Early-out for nested scopes keeps this O(1); class members are intentionally never module exports even
+    // when their owner class is exported. The hop cap remains a backstop for malformed/deep syntax trees.
     const isExportedDecl = (node) => {
       let p = node.parent;
       for (let hops = 0; p && hops < 6; hops++) {
         if (p.type === "export_statement") return true;
-        if (p.type === "program" || p.type === "statement_block") return false;
+        if (p.type === "program" || p.type === "statement_block" || p.type === "class_body") return false;
+        p = p.parent;
+      }
+      return false;
+    };
+    const isModuleDeclaration = (node) => {
+      let p = node.parent;
+      for (let hops = 0; p && hops < 8; hops++) {
+        if (p.type === "program") return true;
+        if (p.type === "statement_block" || p.type === "class_body") return false;
         p = p.parent;
       }
       return false;
     };
     // a bare (package) specifier = non-relative AND not a path alias; alias-that-missed is a broken local, not a dep
-    const isBareSpec = (spec) => !!spec && !spec.startsWith(".") && resolveAlias(spec) == null;
+    const isBareSpec = (spec) => !!spec && !spec.startsWith(".") && resolveAlias(fileRel, spec) == null;
     // broken local import (relative or alias path resolving to no file) — recorded for the "unresolved-import"
     // finding. Asset imports (svg/css-modules-adjacent/fonts/…) and ?query-suffixed specs that resolve once
     // the query is stripped (Vite ?raw/?url/?worker) are NOT code-graph concerns.
     const ASSET_RE = /\.(svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|eot|otf|mp[34]|webm|wasm|pdf|txt|md|html?)$/i;
-    const recordUnresolved = (rawSpec, kind, line) => {
+    const recordUnresolved = (rawSpec, kind, line, typeOnly = false) => {
       const clean = String(rawSpec || "").split("?")[0];
       if (!clean || ASSET_RE.test(clean)) return;
       if (clean !== rawSpec && resolveJsImport(fileRel, clean)) return; // only the ?query broke resolution
-      addExternalImport({ spec: rawSpec, kind, line, unresolved: true });
+      addExternalImport({ spec: rawSpec, kind, line, unresolved: true, typeOnly });
     };
 
     // ---- symbols (export flag captured at declaration time) ----
+    const methodMetadata = (nameNode) => {
+      let method = nameNode.parent;
+      while (method && method.type !== "method_definition") method = method.parent;
+      let owner = method?.parent;
+      while (owner && !["class_declaration", "class"].includes(owner.type)) owner = owner.parent;
+      const ownerName = owner && field(owner, "name")?.text;
+      const visibility = /^\s*private\b/.test(method?.text || "") ? "private"
+        : /^\s*protected\b/.test(method?.text || "") ? "protected" : "public";
+      return { symbolKind: "method", ...(ownerName ? { memberOf: ownerName } : {}), visibility };
+    };
     for (const cap of caps(grammar, FUNCS, tree.rootNode)) {
+      const isMethod = cap.name === "method";
       addSym(cap.node.text, cap.node.startPosition.row + 1, cap.name !== "class", {
         sourceNode: cap.node.parent,
-        ...(isExportedDecl(cap.node) ? { exported: true } : {})
+        ...(!isMethod && isExportedDecl(cap.node) ? { exported: true } : {}),
+        ...(isMethod ? methodMetadata(cap.node) : { symbolKind: cap.name === "class" ? "class" : "function", moduleDeclaration: isModuleDeclaration(cap.node) })
       });
     }
     for (const cap of caps(grammar, TOPVARS, tree.rootNode)) {
@@ -70,26 +89,47 @@ export default {
       const val = field(cap.node, "value");
       addSym(nameNode.text, nameNode.startPosition.row + 1, !!(val && CALLABLE.test(val.type)), {
         sourceNode: val || cap.node,
-        ...(isExportedDecl(cap.node) ? { exported: true } : {})
+        ...(isExportedDecl(cap.node) ? { exported: true } : {}),
+        symbolKind: "variable",
+        moduleDeclaration: true
       });
     }
+
+    const importTypeOnly = (node) => {
+      if (/^\s*import\s+type\b/.test(node.text)) return true;
+      const clause = node.namedChildren.find((c) => c.type === "import_clause");
+      if (!clause) return false; // side-effect import executes the target module
+      const parts = clause.namedChildren;
+      if (parts.some((c) => c.type === "identifier" || c.type === "namespace_import")) return false;
+      const named = parts.find((c) => c.type === "named_imports");
+      const specs = named?.namedChildren.filter((c) => c.type === "import_specifier") || [];
+      return specs.length > 0 && specs.every((s) => /^\s*type\b/.test(s.text));
+    };
+    const reexportTypeOnly = (node) => {
+      if (/^\s*export\s+type\b/.test(node.text)) return true;
+      const clause = node.namedChildren.find((c) => c.type === "export_clause");
+      const specs = clause?.namedChildren.filter((c) => c.type === "export_specifier") || [];
+      return specs.length > 0 && specs.every((s) => /^\s*type\b/.test(s.text));
+    };
 
     // ---- ESM imports ----
     for (const cap of caps(grammar, `(import_statement) @imp`, tree.rootNode)) {
       const node = cap.node; const srcNode = field(node, "source");
       const rawSpec = srcNode ? srcNode.text.replace(/^['"`]|['"`]$/g, "") : "";
+      const line = node.startPosition.row + 1;
+      const typeOnly = importTypeOnly(node);
       const tgt = resolveJsImport(fileRel, rawSpec);
       if (!tgt) {
-        if (isBareSpec(rawSpec)) addExternalImport({ spec: rawSpec, kind: "esm", line: node.startPosition.row + 1 });
-        else if (rawSpec) recordUnresolved(rawSpec, "esm", node.startPosition.row + 1);
+        if (isBareSpec(rawSpec)) addExternalImport({ spec: rawSpec, kind: "esm", line, typeOnly });
+        else if (rawSpec) recordUnresolved(rawSpec, "esm", line, typeOnly);
         continue;
       }
-      addImportEdge(tgt);
+      addImportEdge(tgt, { typeOnly, line, specifier: rawSpec });
       const clause = node.namedChildren.find((c) => c.type === "import_clause"); if (!clause) continue;
       for (const c of clause.namedChildren) {
-        if (c.type === "identifier") imports.set(c.text, { imported: "default", targetFile: tgt });
-        else if (c.type === "namespace_import") { const id = c.namedChildren.find((x) => x.type === "identifier"); if (id) imports.set(id.text, { imported: "*", targetFile: tgt }); }
-        else if (c.type === "named_imports") for (const s of c.namedChildren) { if (s.type !== "import_specifier") continue; const nm = field(s, "name"), al = field(s, "alias"); if (nm) imports.set((al || nm).text, { imported: nm.text, targetFile: tgt }); }
+        if (c.type === "identifier") imports.set(c.text, { imported: "default", targetFile: tgt, typeOnly });
+        else if (c.type === "namespace_import") { const id = c.namedChildren.find((x) => x.type === "identifier"); if (id) imports.set(id.text, { imported: "*", targetFile: tgt, typeOnly }); }
+        else if (c.type === "named_imports") for (const s of c.namedChildren) { if (s.type !== "import_specifier") continue; const nm = field(s, "name"), al = field(s, "alias"); if (nm) imports.set((al || nm).text, { imported: nm.text, targetFile: tgt, typeOnly: typeOnly || /^\s*type\b/.test(s.text) }); }
       }
     }
 
@@ -98,7 +138,7 @@ export default {
       if (cap.name !== "src") continue;
       let dv = cap.node; while (dv && dv.type !== "variable_declarator") dv = dv.parent;
       const tgt = resolveJsImport(fileRel, cap.node.text); if (!tgt) continue;
-      addImportEdge(tgt);
+      addImportEdge(tgt, { typeOnly: false, line: cap.node.startPosition.row + 1, specifier: cap.node.text });
       const lhs = dv && field(dv, "name");
       if (lhs && lhs.type === "identifier") imports.set(lhs.text, { imported: "*", targetFile: tgt });
       else if (lhs && lhs.type === "object_pattern") for (const p of lhs.namedChildren) { const key = field(p, "key") || (p.type === "shorthand_property_identifier_pattern" ? p : null); const val = field(p, "value"); const local = (val && val.type === "identifier") ? val : key; if (key && local) imports.set(local.text, { imported: key.text, targetFile: tgt }); }
@@ -139,13 +179,16 @@ export default {
     }
 
     // ---- re-exports (barrel/index files): edge so the real target isn't falsely DEAD; bare source → external ----
-    for (const cap of caps(grammar, `(export_statement source: (string (string_fragment) @src))`, tree.rootNode)) {
-      if (cap.name !== "src") continue;
-      const rawSpec = cap.node.text;
+    for (const cap of caps(grammar, `(export_statement) @exp`, tree.rootNode)) {
+      const node = cap.node; const srcNode = field(node, "source");
+      if (!srcNode) continue;
+      const rawSpec = srcNode.text.replace(/^['"`]|['"`]$/g, "");
+      const line = node.startPosition.row + 1;
+      const typeOnly = reexportTypeOnly(node);
       const tgt = resolveJsImport(fileRel, rawSpec);
-      if (tgt) addImportEdge(tgt);
-      else if (isBareSpec(rawSpec)) addExternalImport({ spec: rawSpec, kind: "reexport", line: cap.node.startPosition.row + 1 });
-      else if (rawSpec) recordUnresolved(rawSpec, "reexport", cap.node.startPosition.row + 1);
+      if (tgt) addImportEdge(tgt, { relation: "re_exports", typeOnly, line, specifier: rawSpec });
+      else if (isBareSpec(rawSpec)) addExternalImport({ spec: rawSpec, kind: "reexport", line, typeOnly });
+      else if (rawSpec) recordUnresolved(rawSpec, "reexport", line, typeOnly);
     }
 
     // ---- export markers beyond declarations: `export { a, b }`, `export default X`, CJS module.exports ----

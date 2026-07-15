@@ -15,12 +15,34 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
 (`claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot>`; Codex:
 `codex mcp add weavatrix -- npx -y weavatrix <repoRoot>`), then retry.
 
+If only `refresh_advisories` or `sync_graph` is missing, do not diagnose a broken installation:
+`online` is intentionally absent from the default capability list.
+
 ## Ground rules
 
+- **Evidence, not verdicts**: treat audit, hub, orphan and duplicate output as hypotheses. Confirm a
+  finding in source and check framework/runtime conventions before deleting, merging or redesigning
+  code. A same-name/different-body pair is a divergence candidate, not proof of duplication.
 - **Freshness**: every graph tool appends a staleness warning when the repo has commits newer than
-  the graph. Act on it: `rebuild_graph`.
+  the graph. Act on it: `rebuild_graph`. A normal `open_repo` builds missing graphs and upgrades
+  pre-`0.1.3` graphs to typed import edges; `build:false` deliberately refuses that upgrade.
 - **Ambiguity**: `get_node`/`get_neighbors`/`get_dependents` disclose `matched N nodes; using the
   best-connected` — read that note before trusting the answer; pass an exact node id to pin it.
+- **Runtime versus compile time**: keep runtime cycles and TypeScript type-only coupling separate.
+  `module_map` and `change_impact` label the distinction; `god_nodes` ranks unique connectivity and
+  reports repeated references separately. Do not schedule a runtime-cycle refactor from type-only
+  edges alone.
+- **Repository universe**: in Git repositories, graph and duplicate scans include tracked plus
+  non-ignored untracked files. If an old graph still contains packaged/generated output, rebuild it
+  before interpreting the result.
+- **Coverage**: `coverage_map` reads an existing report. `unavailable` means no supported report was
+  found, not 0% coverage; do not rank testing risk from that state.
+- **Audit completeness**: read `checks.osv.status` and `checks.malware.status`. For OSV, `OK` is
+  complete for the recorded dependency fingerprint; `PARTIAL` is incomplete or stale,
+  `NOT_CHECKED` has no repository-specific result, and `ERROR` means the local check failed. Treat
+  the same non-`OK` states as incomplete for malware scanning. Refresh OSV only when the user has
+  authorized adding the optional `online` capability group to the MCP registration and then
+  invoking `refresh_advisories`; enabling the group alone sends nothing.
 - **Offline by design**: scans and graph queries run in-process against local files; coverage tools
   read existing reports and never run tests. The ONLY network-touching tools live in the `online`
   capability group and run solely when explicitly called: `refresh_advisories` (queries OSV.dev with
@@ -46,16 +68,45 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
   (cycle broken? new module dependency introduced? symbols orphaned?); re-query later with
   `graph_diff` (optionally scoped by `path`). The semantic complement to the textual git diff.
 - **Health sweep**: `run_audit` (filter by `category`/`min_severity`) → `find_duplicates` →
-  `coverage_map`.
+  `coverage_map`. Inspect the source behind shortlisted findings before proposing edits.
 - **API inventory**: `list_endpoints`.
 - **Find code**: `search_code` (regex + glob) → `get_node` → `read_source`.
 - **Another repo**: `list_known_repos` → `open_repo <path>`
-  (builds the graph when missing; `build:false` probes without building).
+  (builds or upgrades the graph when needed; `build:false` probes without building).
+
+## Repository-specific conventions
+
+Weavatrix understands nearest workspace manifests, nested `tsconfig`/`jsconfig` aliases,
+framework-owned runtime peers such as Next.js + `react-dom`, and Next.js App Router route exports.
+For project-specific entry points or Python dependencies supplied by an external runtime, add
+`.weavatrix-deps.json` at the repository root:
+
+```json
+{
+  "entrypoints": ["scripts/publish-release.mjs"],
+  "python": {
+    "managedDependencies": ["numpy", "openvino-genai"],
+    "ignoreDependencies": ["vendor-sdk"]
+  }
+}
+```
+
+Keep exceptions narrow. `managedDependencies` documents modules provided outside the repo's Python
+manifest; `ignoreDependencies` suppresses intentionally unresolved imports.
+
+## Sync
+
+`sync_graph` uses allowlisted payload v2, including typed-edge metadata but no source bodies. A graph
+built before `0.1.3` must be rebuilt first; normal `open_repo` does this automatically. Sync remains
+unavailable until the user opts into `online` and configures `WEAVATRIX_SYNC_URL`.
 
 ## Troubleshooting
 
 - `Graph unavailable` → `rebuild_graph`; `open_repo` can select another valid repository path unless
   the registration deliberately omitted `retarget`.
+- `refresh_advisories` is unavailable → with the user's approval, re-register/reconfigure the MCP
+  capability list to include `online`, reconnect it, and then invoke the tool. Do not enable network
+  access merely to turn `NOT_CHECKED` into a cosmetic green state.
 - `No coverage report` → run the repo's own tests with coverage (`vitest run --coverage`,
   `jest --coverage`, `pytest --cov --cov-report=json`, `go test -coverprofile=coverage.out`),
   then re-call.

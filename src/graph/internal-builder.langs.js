@@ -5,8 +5,10 @@
 // build works — and Electron main runs Node, so this needs no external runtime.
 import { readdirSync, statSync, realpathSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { isPathInside } from "../repo-path.js";
+import { childProcessEnv } from "../child-env.js";
 import LANG_JS from "./builder/lang-js.js";
 import LANG_PY from "./builder/lang-python.js";
 import LANG_GO from "./builder/lang-go.js";
@@ -68,7 +70,7 @@ async function ensureParser(opts = {}, wanted = null) {
 // Cycle-safe directory walk. statSync FOLLOWS symlinks/junctions, so a link pointing at an ancestor would
 // otherwise recurse forever (a/b/link/b/link/…). We dedupe by REAL path (a visited dir is never re-entered)
 // and cap depth as a backstop, so a symlink loop can't wedge the build.
-function walk(dir, acc = [], seen = new Set(), depth = 0, rootReal = null) {
+function walkFallback(dir, acc = [], seen = new Set(), depth = 0, rootReal = null) {
   if (depth > 40) return acc;
   let real; try { real = realpathSync.native(dir); } catch { return acc; }
   if (rootReal == null) rootReal = real;
@@ -86,12 +88,51 @@ function walk(dir, acc = [], seen = new Set(), depth = 0, rootReal = null) {
     let entryReal; try { entryReal = realpathSync.native(full); } catch { continue; }
     if (!isPathInside(rootReal, entryReal)) continue;
     let st; try { st = statSync(full); } catch { continue; }
-    if (st.isDirectory()) walk(full, acc, seen, depth + 1, rootReal);
+    if (st.isDirectory()) walkFallback(full, acc, seen, depth + 1, rootReal);
     // include by KNOWN extension, not by loaded grammar — grammars now load lazily AFTER the walk
     // (the parse passes skip files whose grammar failed to load, so the guarantee is unchanged)
     else { const e = extname(name); if (EXT_LANG[e] || isDataFile(name) || isDocFile(name)) acc.push(full); }
   }
   return acc;
+}
+
+// Git already owns the repository's file-universe rules. Asking it for tracked files plus untracked,
+// non-ignored files prevents generated outputs (Electron release/, custom cache dirs, ignored agent files,
+// etc.) from contaminating graph/duplicate/audit results while still indexing new source before it is staged.
+// A repository may be opened without Git (or Git may be unavailable), so failure is deliberately a signal to
+// use the boundary-safe walker above rather than a build failure.
+function gitFileUniverse(dir) {
+  let raw;
+  try {
+    raw = execFileSync("git", ["-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15_000,
+      maxBuffer: 64 * 1024 * 1024,
+      env: childProcessEnv(),
+    });
+  } catch { return null; }
+
+  let rootReal;
+  try { rootReal = realpathSync.native(dir); } catch { return null; }
+  const files = [];
+  for (const rel of raw.split("\0")) {
+    if (!rel) continue;
+    const full = join(dir, rel);
+    let real; try { real = realpathSync.native(full); } catch { continue; } // deleted index entry
+    if (!isPathInside(rootReal, real)) continue; // tracked symlink/junction escaping the repo
+    let st; try { st = statSync(full); } catch { continue; }
+    if (!st.isFile()) continue; // includes neither submodule dirs nor directory-like junctions
+    const name = rel.split(/[\\/]/).pop() || "";
+    const ext = extname(name);
+    if (EXT_LANG[ext] || isDataFile(name) || isDocFile(name)) files.push(full);
+  }
+  return files;
+}
+
+function walk(dir) {
+  return gitFileUniverse(dir) ?? walkFallback(dir);
 }
 
 export { Parser, Query, GRAMMARS, LANGS, EXT_LANG, FAMILY, isDataFile, isDocFile, MAX_PARSE_BYTES, ensureParser, walk };

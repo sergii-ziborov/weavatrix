@@ -18,21 +18,44 @@ const dirOf = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
 
 // File-level import adjacency. Go same-directory edges are excluded: a Go package IS the directory, the
 // compiler forbids real cross-package cycles, and our suffix-fallback Go resolution could fake them.
-export function buildFileImportGraph(graph) {
+export function buildFileImportGraph(graph, { includeTypeOnly = false } = {}) {
   const fileIds = new Set();
   for (const n of graph.nodes || []) if (!String(n.id).includes("#")) fileIds.add(String(n.id));
-  const adj = new Map();
+  const runtimeAdj = new Map();       // runtime/value imports only
+  const allAdj = new Map();           // runtime + type-only, used to describe architectural coupling
   const edges = [];
+  const allEdges = [];
+  const typeOnlyEdges = [];
+  const runtimeSeen = new Set(), allSeen = new Set(), typeSeen = new Set();
+  const add = (map, a, b) => {
+    let set = map.get(a);
+    if (!set) map.set(a, (set = new Set()));
+    set.add(b);
+  };
   for (const l of graph.links || []) {
     if (l.relation !== "imports" && l.relation !== "re_exports") continue;
     const a = ep(l.source), b = ep(l.target);
     if (!fileIds.has(a) || !fileIds.has(b) || a === b) continue;
     if (a.endsWith(".go") && b.endsWith(".go") && dirOf(a) === dirOf(b)) continue;
-    let set = adj.get(a);
-    if (!set) adj.set(a, (set = new Set()));
-    if (!set.has(b)) { set.add(b); edges.push([a, b]); }
+    const key = `${a}\0${b}`;
+    if (!allSeen.has(key)) { allSeen.add(key); add(allAdj, a, b); allEdges.push([a, b]); }
+    if (l.typeOnly === true) {
+      if (!typeSeen.has(key)) { typeSeen.add(key); typeOnlyEdges.push([a, b]); }
+      continue;
+    }
+    if (!runtimeSeen.has(key)) { runtimeSeen.add(key); add(runtimeAdj, a, b); edges.push([a, b]); }
   }
-  return { fileIds, adj, edges };
+  const pureTypeOnlyEdges = typeOnlyEdges.filter(([a, b]) => !runtimeSeen.has(`${a}\0${b}`));
+  return {
+    fileIds,
+    adj: includeTypeOnly ? allAdj : runtimeAdj,
+    edges: includeTypeOnly ? allEdges : edges,
+    runtimeAdj,
+    runtimeEdges: edges,
+    allAdj,
+    allEdges,
+    typeOnlyEdges: pureTypeOnlyEdges,
+  };
 }
 
 // Iterative Tarjan (deep graphs must not blow the JS stack). Returns only non-trivial SCCs (size > 1).
@@ -147,7 +170,7 @@ const MAX_BOUNDARY_FINDINGS = 100;
 
 // Assemble everything into unified Findings. rules comes from the repo's .weavatrix-deps.json (optional).
 export function computeStructureFindings(graph, { rules = {}, entrySet = new Set(), externalImportFiles = new Set() } = {}) {
-  const { adj, edges } = buildFileImportGraph(graph);
+  const { adj, edges, allAdj, allEdges, typeOnlyEdges } = buildFileImportGraph(graph);
   const findings = [];
 
   const sccs = findSccs(adj).sort((a, b) => b.length - a.length);
@@ -165,6 +188,36 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
       evidence: cycle.map((f) => ({ file: f, line: 0, snippet: "" })),
       source: "internal",
       fixHint: "extract the shared code into a module both sides import, or invert the weaker dependency",
+    }));
+  }
+
+  // A TypeScript `import type` is erased before runtime. It can still reveal architectural coupling, but
+  // it cannot create an initialization-order/runtime cycle. Report SCCs that grow only because of type
+  // edges separately and at info severity so agents do not churn working code to fix a phantom hazard.
+  const runtimeKeys = new Set(sccs.map((s) => [...s].sort().join("\0")));
+  const allSccs = findSccs(allAdj).sort((a, b) => b.length - a.length);
+  const typeCouplings = allSccs.filter((s) => !runtimeKeys.has([...s].sort().join("\0")));
+  const edgeCountIn = (scc, list) => {
+    const inside = new Set(scc);
+    return list.reduce((n, [a, b]) => n + (inside.has(a) && inside.has(b) ? 1 : 0), 0);
+  };
+  for (const scc of typeCouplings.slice(0, MAX_CYCLE_FINDINGS)) {
+    const cycle = representativeCycle(allAdj, scc);
+    const runtimeInside = edgeCountIn(scc, edges);
+    const typeInside = edgeCountIn(scc, typeOnlyEdges);
+    const containsRuntimeCycle = sccs.some((runtime) => runtime.every((f) => scc.includes(f)));
+    findings.push(makeFinding({
+      category: "structure",
+      rule: "type-coupling",
+      severity: "info",
+      confidence: "high",
+      title: `${containsRuntimeCycle ? "Type imports expand dependency coupling" : "Type-induced dependency cycle (no runtime cycle)"}: ${scc.length} files`,
+      detail: `${cycle.join(" → ")}. This strongly-connected group needs type-only edges to close; it contains ${runtimeInside} runtime edge(s) and ${typeInside} type-only edge(s)${containsRuntimeCycle ? ", with a smaller runtime cycle reported separately" : ", while its runtime import graph is acyclic"}. Treat this as design coupling, not an initialization-order failure.`,
+      file: cycle[0],
+      graphNodeId: cycle[0],
+      evidence: cycle.map((f) => ({ file: f, line: 0, snippet: "" })),
+      source: "internal",
+      fixHint: "review the shared type ownership only if the coupling impedes changes; no runtime-cycle fix is required",
     }));
   }
   if (sccs.length > MAX_CYCLE_FINDINGS) {
@@ -190,6 +243,8 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
     }));
   }
 
+  // Architecture boundaries describe executable dependencies by default. Type-only contract sharing is
+  // visible in typeCouplings above, but must not be presented as a runtime layer violation.
   const violations = checkBoundaries(edges, rules);
   for (const v of violations.slice(0, MAX_BOUNDARY_FINDINGS)) {
     findings.push(makeFinding({
@@ -216,6 +271,17 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
 
   return {
     findings,
-    stats: { importEdges: edges.length, cycles: sccs.length, largestCycle: sccs[0]?.length || 0, orphans: findings.filter((f) => f.rule === "orphan-file").length, boundaryViolations: violations.length },
+    stats: {
+      importEdges: allEdges.length,
+      runtimeImportEdges: edges.length,
+      typeOnlyImportEdges: typeOnlyEdges.length,
+      cycles: sccs.length,
+      runtimeCycles: sccs.length,
+      largestCycle: sccs[0]?.length || 0,
+      typeCouplings: typeCouplings.length,
+      largestTypeCoupling: typeCouplings[0]?.length || 0,
+      orphans: findings.filter((f) => f.rule === "orphan-file").length,
+      boundaryViolations: violations.length,
+    },
   };
 }

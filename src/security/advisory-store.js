@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { uniqueBy } from "../util.js";
 
 export const DEFAULT_STORE = join(homedir(), ".weavatrix", "advisories.json");
@@ -21,6 +22,13 @@ export const OSV_SUPPORTED_ECOSYSTEMS = new Set(["npm", "PyPI", "Go"]);
 const keyOf = (ecosystem, name) => `${ecosystem}|${ecosystem === "PyPI" ? String(name).toLowerCase().replace(/[-_.]+/g, "-") : name}`;
 
 const uniquePackages = (pkgs) => uniqueBy(pkgs, (p) => `${p.ecosystem}|${p.name}|${p.version}`);
+
+export function advisoryQueryFingerprint(installed = []) {
+  const rows = uniquePackages(installed.filter((p) => p?.ecosystem && p?.name && p?.version && OSV_SUPPORTED_ECOSYSTEMS.has(p.ecosystem)))
+    .map((p) => `${p.ecosystem}|${p.name}|${p.version}`)
+    .sort();
+  return createHash("sha256").update(rows.join("\n"), "utf8").digest("hex");
+}
 
 async function fetchJson(fetcher, url, options, timeoutMs) {
   const timeout = Math.max(50, Number(timeoutMs) || DEFAULT_FETCH_TIMEOUT_MS);
@@ -119,6 +127,7 @@ export async function refreshAdvisories({ installed = [], storePath = DEFAULT_ST
   const store = loadStore(storePath);
   const idsByPkg = new Map(); // pkgIndex -> [vuln ids]
   const errors = [];
+  let queriedOk = 0;
 
   for (let i = 0; i < pkgs.length; i += batchSize) {
     const batch = pkgs.slice(i, i + batchSize);
@@ -128,7 +137,22 @@ export async function refreshAdvisories({ installed = [], storePath = DEFAULT_ST
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ queries: batch.map((p) => ({ package: { ecosystem: p.ecosystem, name: p.name }, version: p.version })) }),
       }, timeoutMs);
-      (json.results || []).forEach((r, j) => { if (r && Array.isArray(r.vulns) && r.vulns.length) idsByPkg.set(i + j, r.vulns.map((v) => v.id)); });
+      if (!Array.isArray(json?.results) || json.results.length !== batch.length) {
+        throw new Error(`OSV querybatch returned ${Array.isArray(json?.results) ? json.results.length : "no"} result(s) for ${batch.length} query item(s)`);
+      }
+      for (const [resultIndex, result] of json.results.entries()) {
+        if (!result || typeof result !== "object" || Array.isArray(result)) {
+          throw new Error(`OSV querybatch result ${resultIndex + 1} is not an object`);
+        }
+        if (result.vulns !== undefined && !Array.isArray(result.vulns)) {
+          throw new Error(`OSV querybatch result ${resultIndex + 1} has a non-array vulns field`);
+        }
+        if (Array.isArray(result.vulns) && result.vulns.some((v) => !v || typeof v.id !== "string" || !v.id.trim())) {
+          throw new Error(`OSV querybatch result ${resultIndex + 1} contains an advisory without a valid id`);
+        }
+      }
+      queriedOk += batch.length;
+      json.results.forEach((r, j) => { if (r && Array.isArray(r.vulns) && r.vulns.length) idsByPkg.set(i + j, r.vulns.map((v) => v.id)); });
     } catch (error) {
       errors.push(`querybatch ${Math.floor(i / batchSize) + 1}/${Math.ceil(pkgs.length / batchSize)}: ${error.message}`);
     }
@@ -141,16 +165,24 @@ export async function refreshAdvisories({ installed = [], storePath = DEFAULT_ST
   for (const [id, pkgList] of wanted) {
     try {
       const rec = await fetchJson(fetcher, OSV_VULN_URL + encodeURIComponent(id), {}, timeoutMs);
-      if (!rec || !rec.id) continue;
-      fetched++;
+      if (!rec || typeof rec.id !== "string" || !rec.id) throw new Error("OSV detail response is missing its advisory id");
+      if (rec.id !== id) throw new Error(`OSV detail id mismatch (expected ${id}, received ${rec.id})`);
+      let normalized = 0;
       for (const p of pkgList) {
         const row = normalizeRecord(rec, p.ecosystem, p.name);
-        if (!row) continue;
+        if (!row) {
+          errors.push(`${id}: OSV detail does not describe ${p.ecosystem}:${p.name} reported by querybatch`);
+          continue;
+        }
+        normalized++;
         const key = keyOf(p.ecosystem, p.name);
         const list = store.records[key] || (store.records[key] = []);
         const at = list.findIndex((x) => x.id === row.id);
         if (at >= 0) list[at] = row; else list.push(row);
       }
+      // Count a detail response as fetched only after at least one package-specific row was
+      // validated. A malformed or unrelated response must never make coverage look complete.
+      if (normalized > 0) fetched++;
     } catch (error) {
       errors.push(`${id}: ${error.message}`);
     }
@@ -158,20 +190,32 @@ export async function refreshAdvisories({ installed = [], storePath = DEFAULT_ST
 
   // A refresh where NOTHING was fetched but errors occurred (offline, OSV blocked) must NOT stamp
   // fetched_at — that would turn an empty cache into "No known vulnerabilities as of <today>".
-  if (errors.length && fetched === 0 && (idsByPkg.size === 0 || wanted.size > 0)) {
+  if (errors.length && queriedOk === 0) {
     return { ok: false, queried: pkgs.length, unsupported, error: `advisory refresh failed: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more)` : ""}`, errors };
   }
   store.meta.fetched_at = new Date().toISOString();
+  const status = errors.length ? "PARTIAL" : "OK";
   // per-repo stamp: the cache only covers packages that were QUERIED — a repo that never refreshed must
   // show "fetch advisories", not "0 vulnerabilities as of <someone else's date>" (false assurance).
   // repoKeys[] lets one online pass (a "refresh all repos") stamp every repo whose packages it covered.
   const stampRepos = [...new Set([repoKey, ...repoKeys].filter(Boolean))];
-  if (stampRepos.length) { store.meta.repos = store.meta.repos || {}; for (const k of stampRepos) store.meta.repos[k] = store.meta.fetched_at; }
+  if (stampRepos.length) {
+    store.meta.repos = store.meta.repos || {};
+    for (const k of stampRepos) store.meta.repos[k] = {
+      fetched_at: store.meta.fetched_at,
+      status,
+      queried: pkgs.length,
+      queried_ok: queriedOk,
+      unsupported,
+      error_count: errors.length,
+      query_fingerprint: advisoryQueryFingerprint(pkgs),
+    };
+  }
   try {
     mkdirSync(dirname(storePath), { recursive: true });
     writeFileSync(storePath, JSON.stringify(store), "utf8");
   } catch (error) {
     return { ok: false, error: `store write failed: ${error.message}`, errors };
   }
-  return { ok: true, queried: pkgs.length, unsupported, vulnerable: wanted.size, fetched, saved: existsSync(storePath), errors };
+  return { ok: true, status, queried: pkgs.length, queriedOk, unsupported, vulnerable: wanted.size, fetched, saved: existsSync(storePath), errors };
 }

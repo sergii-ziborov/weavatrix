@@ -53,7 +53,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     const parser = new Parser(); parser.setLanguage(langs[grammar]);
     let tree; try { tree = parser.parse(code); } catch { continue; }
 
-    const syms = []; const nameToId = new Map();
+    const syms = []; const nameToId = new Map(); const moduleNameToId = new Map();
     const addSym = (name, line, callable, extra) => {
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return;
       const id = `${fileRel}#${name}@${line}`; if (nodeIds.has(id)) return;
@@ -73,28 +73,44 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         ...(endLine >= line ? { source_end: `L${endLine}` } : {}),
         ...(complexity ? { complexity } : {}),
         ...(extra && extra.exported ? { exported: true } : {}),
-        ...(extra && extra.decorated ? { decorated: true } : {})
+        ...(extra && extra.decorated ? { decorated: true } : {}),
+        ...(extra && extra.symbolKind ? { symbol_kind: extra.symbolKind } : {}),
+        ...(extra && extra.memberOf ? { member_of: extra.memberOf } : {}),
+        ...(extra && extra.visibility ? { visibility: extra.visibility } : {})
       });
       links.push({ source: fileRel, target: id, relation: "contains", confidence: "EXTRACTED" });
-      syms.push({ id, name, start: line, end: endLine >= line ? endLine : 0 }); if (!nameToId.has(name)) nameToId.set(name, id);
+      syms.push({ id, name, start: line, end: endLine >= line ? endLine : 0 });
+      if (!nameToId.has(name)) nameToId.set(name, id);
+      if (extra?.moduleDeclaration && !moduleNameToId.has(name)) moduleNameToId.set(name, id);
     };
     const imports = new Map(); importedLocals.set(fileRel, imports);
-    const addImportEdge = (tgt) => { if (tgt && tgt !== fileRel) links.push({ source: fileRel, target: tgt, relation: "imports", confidence: "EXTRACTED" }); };
+    const addImportEdge = (tgt, meta = {}) => {
+      if (!tgt || tgt === fileRel) return;
+      links.push({
+        source: fileRel,
+        target: tgt,
+        relation: meta.relation || "imports",
+        confidence: "EXTRACTED",
+        ...(typeof meta.typeOnly === "boolean" ? { typeOnly: meta.typeOnly } : {}),
+        ...(meta.line ? { line: meta.line } : {}),
+        ...(meta.specifier ? { specifier: meta.specifier } : {}),
+      });
+    };
     // rec: {spec, kind, line} bare-pkg import · {dynamic:true, spec?, target?} dynamic import marker
     // (target = internally-resolved dynamic import; suppresses false "unused file" in dep analysis) ·
     // {unresolved:true, spec} broken local import (relative or alias path that resolves to no file).
     const addExternalImport = (rec) => {
       if (!rec) return;
-      if (rec.dynamic) { externalImports.push({ file: fileRel, spec: rec.spec || null, kind: rec.kind || "dynamic", dynamic: true, line: rec.line || 0, ...(rec.target ? { target: rec.target } : {}) }); return; }
-      if (rec.unresolved) { externalImports.push({ file: fileRel, spec: rec.spec, kind: rec.kind || "esm", unresolved: true, line: rec.line || 0 }); return; }
+      if (rec.dynamic) { externalImports.push({ file: fileRel, spec: rec.spec || null, kind: rec.kind || "dynamic", dynamic: true, line: rec.line || 0, ...(rec.target ? { target: rec.target } : {}), ...(rec.typeOnly ? { typeOnly: true } : {}) }); return; }
+      if (rec.unresolved) { externalImports.push({ file: fileRel, spec: rec.spec, kind: rec.kind || "esm", unresolved: true, line: rec.line || 0, ...(rec.typeOnly ? { typeOnly: true } : {}) }); return; }
       // non-npm extractors (go/python) classify their own specs and pass pkg/builtin/ecosystem precomputed
-      if (rec.pkg) { externalImports.push({ file: fileRel, spec: rec.spec, pkg: rec.pkg, builtin: !!rec.builtin, kind: rec.kind || "import", line: rec.line || 0, ...(rec.ecosystem ? { ecosystem: rec.ecosystem } : {}) }); return; }
+      if (rec.pkg) { externalImports.push({ file: fileRel, spec: rec.spec, pkg: rec.pkg, builtin: !!rec.builtin, kind: rec.kind || "import", line: rec.line || 0, ...(rec.ecosystem ? { ecosystem: rec.ecosystem } : {}), ...(rec.typeOnly ? { typeOnly: true } : {}) }); return; }
       const r = specToPkg(rec.spec);
       if (!r) return;
-      externalImports.push({ file: fileRel, spec: rec.spec, pkg: r.pkg, builtin: !!r.builtin, kind: rec.kind || "esm", line: rec.line || 0 });
+      externalImports.push({ file: fileRel, spec: rec.spec, pkg: r.pkg, builtin: !!r.builtin, kind: rec.kind || "esm", line: rec.line || 0, ...(rec.typeOnly ? { typeOnly: true } : {}) });
     };
     // Post-hoc export flag (export {a}, export default X, CJS module.exports) — declarations are flagged at addSym time.
-    const markExported = (name) => { const id = nameToId.get(name); const n = id && nodeById.get(id); if (n) n.exported = true; };
+    const markExported = (name) => { const id = moduleNameToId.get(name); const n = id && nodeById.get(id); if (n) n.exported = true; };
 
     try { lang.pass1({ grammar, tree, fileRel, code, caps, field, addSym, addNode, links, nodeIds, syms, nameToId, imports, addImportEdge, addExternalImport, markExported, fileSet, ...resolvers }); }
     catch (e) { /* one bad file never sinks the whole build */ void e; }
@@ -164,6 +180,28 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       const target = resolveCall(cap.node.text, fileRel);
       if (target && target !== cls.id) links.push({ source: cls.id, target, relation: "inherits", confidence: "INFERRED" });
     }
+    // JSX is a real symbol use even though it is not a call_expression. Resolve imported components to their
+    // declaration so component fan-in and unused-export checks do not claim `<SettingsView />` is unreferenced.
+    if (FAMILY[grammar] === "js") {
+      for (const cap of caps(grammar, `[
+        (jsx_opening_element name: (_) @jsx)
+        (jsx_self_closing_element name: (_) @jsx)
+      ]`, tree.rootNode)) {
+        const jsxName = cap.node.text;
+        const parts = jsxName.split(".");
+        const localName = parts[0];
+        if (parts.length === 1 && !/^[A-Z_$]/.test(localName)) continue; // undotted lowercase tags are platform/intrinsic elements
+        const imp = importedLocals.get(fileRel)?.get(localName);
+        if (!imp || !imp.targetFile || imp.typeOnly) continue;
+        const targetSymbols = symByFileName.get(imp.targetFile);
+        if (!targetSymbols) continue;
+        const importedName = imp.imported === "*" && parts.length > 1 ? parts[parts.length - 1] : imp.imported;
+        const target = targetSymbols.get(importedName) || targetSymbols.get(localName);
+        if (!target) continue;
+        const owner = enclosing(fileRel, cap.node.startPosition.row + 1);
+        links.push({ source: owner?.id || fileRel, target, relation: "references", confidence: "INFERRED", usage: "jsx", line: cap.node.startPosition.row + 1 });
+      }
+    }
     // Go value references: a top-level const/var/type/func used BY NAME (bare `X`, or cross-package `pkg.X`) in
     // another file/scope → a `references` edge, so used-but-never-called symbols (message-type consts, etc.) are
     // not falsely DEAD. (Same-file usage is already covered by graph-builder-analysis localRefs.) Go-only for now.
@@ -206,7 +244,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
 
   // extImportsV: bump when the externalImports schema/coverage changes (v2 = go/python ecosystems) —
   // deps-engine rebuilds in memory when a saved graph is older than this.
-  return { nodes, links, externalImports, extImportsV: 2, complexityV: 1, repoBoundaryV: 1 };
+  return { nodes, links, externalImports, extImportsV: 2, edgeTypesV: 1, complexityV: 1, repoBoundaryV: 1 };
 }
 
 // Build + write graph.json to outPath (creating the dir). Returns { ok, nodes, links, graphJson }.

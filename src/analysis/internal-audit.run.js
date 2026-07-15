@@ -4,19 +4,19 @@
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { computeDead, computeUnusedExports } from "./dead-check.js";
-import { computeDepFindings, computeGoDepFindings, computePyDepFindings } from "./dep-check.js";
+import { computeScopedDepFindings, computeGoDepFindings, computePyDepFindings } from "./dep-check.js";
 import { parseGoMod } from "./manifests.js";
 import { computeStructureFindings } from "./dep-rules.js";
 import { makeFinding, summarizeFindings, sortFindings } from "./findings.js";
 import { graphOutDirForRepo } from "../graph/layout.js";
 import { collectInstalled } from "../security/installed.js";
-import { loadStore, queryStore } from "../security/advisory-store.js";
+import { loadStore, queryStore, advisoryQueryFingerprint } from "../security/advisory-store.js";
 import { matchAdvisories } from "../security/match.js";
 import { scanMalware } from "../security/malware-heuristics.js";
 import { classifyTyposquat } from "../security/typosquat.js";
 import {
   readJson, readRepoText, readRepoJson, collectSourceTexts, collectConfigTexts, workspacePkgNames,
-  collectPyManifest, TEST_FILE_RE,
+  collectPackageScopes, collectPyManifest, TEST_FILE_RE,
 } from "./internal-audit.collect.js";
 import { entryFiles, computeReachability } from "./internal-audit.reach.js";
 import { createRepoBoundary } from "../repo-path.js";
@@ -33,26 +33,44 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
     if (!graph) return { ok: false, error: "Build the graph first (no graph.json)" };
   }
   const pkg = readRepoJson(boundary, "package.json") || {};
+  const packageScopes = collectPackageScopes(repoPath, pkg);
   const externalImports = graph.externalImports || [];
   const dynamicTargets = new Set(externalImports.filter((e) => e.dynamic && e.target).map((e) => e.target));
+  const rules = readRepoJson(boundary, ".weavatrix-deps.json") || {};
 
   // Graphs can be stale or miss a helper file; text fallbacks must scan the real repo tree too.
   const sources = collectSourceTexts(repoPath, graph);
 
-  const dead = computeDead(graph, sources);
-  const unusedExports = computeUnusedExports(graph, sources, { dynamicTargets });
-  const entries = entryFiles(graph, pkg, dynamicTargets);
+  const entries = entryFiles(graph, packageScopes, dynamicTargets, {
+    declaredEntries: rules.entrypoints || rules.entries || [],
+    sources,
+  });
+  const dead = computeDead(graph, sources, { entrySet: entries });
+  const unusedExports = computeUnusedExports(graph, sources, { dynamicTargets, entrySet: entries });
   const reachable = computeReachability(graph, entries);
   const configTexts = collectConfigTexts(repoPath);
-  const dep = computeDepFindings({ externalImports, pkg, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts });
+  const dep = computeScopedDepFindings({ externalImports, packageScopes, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts });
   // non-npm ecosystems: Go (go.mod) + Python (requirements/pyproject/Pipfile) — same findings shape
   const goModText = readRepoText(boundary, "go.mod");
   const goDep = computeGoDepFindings({ externalImports, goMod: goModText != null ? parseGoMod(goModText) : null });
-  const pyDep = computePyDepFindings({ externalImports, pyManifest: collectPyManifest(repoPath), configTexts });
+  const asList = (v) => Array.isArray(v) ? v : typeof v === "string" ? [v] : [];
+  const pyRules = rules.python || {};
+  const depRules = rules.dependencies || {};
+  const managedPython = [...new Set([
+    ...asList(rules.managedPythonDependencies), ...asList(pyRules.managed), ...asList(pyRules.managedDependencies),
+    ...asList(depRules.managedPython),
+  ])];
+  const ignoredPython = [...new Set([
+    ...asList(rules.ignorePythonDependencies), ...asList(pyRules.ignore), ...asList(pyRules.ignoreDependencies),
+    ...asList(depRules.ignorePython),
+  ])];
+  const pyDep = computePyDepFindings({
+    externalImports, pyManifest: collectPyManifest(repoPath), configTexts,
+    managedDependencies: managedPython, ignoredDependencies: ignoredPython,
+  });
 
   // structure: cycles / orphans / boundary rules. Rules come from the repo's optional .weavatrix-deps.json
   // (the depcruise-config analogue); no bundled default rules — cycles+orphans are always on.
-  const rules = readRepoJson(boundary, ".weavatrix-deps.json") || {};
   const externalImportFiles = new Set(externalImports.filter((e) => e.pkg && !e.builtin).map((e) => e.file));
   const structure = computeStructureFindings(graph, { rules, entrySet: entries, externalImportFiles });
 
@@ -61,7 +79,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   const deadFileSet = new Set(dead.deadFiles.map((f) => f.file));
   for (const f of structure.findings) if (!(f.rule === "orphan-file" && deadFileSet.has(f.file))) findings.push(f);
   for (const f of dead.deadFiles) {
-    if (dynamicTargets.has(f.file) || TEST_FILE_RE.test(f.file)) continue;
+    if (entries.has(f.file) || dynamicTargets.has(f.file) || TEST_FILE_RE.test(f.file)) continue;
     findings.push(makeFinding({
       category: "unused",
       rule: "unused-file",
@@ -75,6 +93,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       fixHint: "review, then delete the file",
     }));
   }
+  let unusedExportCount = 0;
   for (const s of unusedExports) {
     if (s.test) continue; // exports from test files are runner-visible noise
     if (/(^|\/)[^/]*\.config\.[a-z0-9]+$|(^|\/)\.[^/]+rc(\.[a-z]+)?$/i.test(s.file)) continue; // config exports are consumed by their tool
@@ -90,6 +109,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       graphNodeId: s.id,
       source: "internal",
     }));
+    unusedExportCount++;
   }
 
   // ---- supply-chain: installed packages × cached OSV advisories. 100% OFFLINE here — the cache is
@@ -97,14 +117,31 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   let advisoryDbDate = null;
   let installedCount = 0;
   let inst = { installed: [], drift: [] };
+  const checks = {
+    osv: { status: "NOT_CHECKED", detail: "Advisory cache was never refreshed for this repository. The refresh_advisories tool belongs to the optional online capability group: enable that group in the MCP registration, then call the tool explicitly to opt in to sending pinned package names and versions to OSV.dev." },
+    malware: { status: skipMalwareScan ? "NOT_CHECKED" : "PENDING", detail: skipMalwareScan ? "Installed-package malware scan is opt-in and was not requested." : "" },
+  };
   try {
     inst = collectInstalled(repoPath);
     installedCount = inst.installed.length;
     const store = advisoryStorePath ? loadStore(advisoryStorePath) : loadStore();
-    // per-repo date when the store tracks it (cache only covers QUERIED packages); legacy stores
-    // without the repos map keep the old global-date behavior
-    advisoryDbDate = store.meta?.repos ? store.meta.repos[repoPath] || null : store.meta?.fetched_at || null;
+    // Only a per-repo stamp proves that this repository's installed versions were queried. A legacy
+    // global fetched_at may belong to another repo and must never certify this one as clean.
+    const repoStamp = store.meta?.repos?.[repoPath] || null;
+    advisoryDbDate = typeof repoStamp === "string" ? repoStamp : repoStamp?.fetched_at || null;
     if (advisoryDbDate) {
+      let status = typeof repoStamp === "object" && ["OK", "PARTIAL", "ERROR"].includes(repoStamp.status) ? repoStamp.status : "PARTIAL";
+      const fingerprintMatches = typeof repoStamp === "object" && repoStamp.query_fingerprint === advisoryQueryFingerprint(inst.installed);
+      if (!fingerprintMatches && status === "OK") status = "PARTIAL";
+      const coverage = typeof repoStamp === "object" && Number.isFinite(repoStamp.queried)
+        ? ` (${repoStamp.queried_ok ?? repoStamp.queried}/${repoStamp.queried} package versions queried successfully)`
+        : "";
+      const drift = fingerprintMatches ? "" : " Dependency versions changed, or this is a legacy stamp without a package fingerprint; enable the optional online capability group and call refresh_advisories for complete coverage.";
+      checks.osv = {
+        status,
+        detail: `${status === "PARTIAL" ? "Partially matched" : "Matched"} installed packages against the cached OSV snapshot from ${advisoryDbDate}${coverage}.${drift}`,
+        checkedAt: advisoryDbDate,
+      };
       for (const h of matchAdvisories(inst.installed, (eco, name) => queryStore(store, eco, name))) {
         const mal = h.adv.kind === "malicious";
         findings.push(makeFinding({
@@ -123,7 +160,8 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       }
     }
     // direct-dependency typosquat (dev-chosen names, small set → low FP): surface quietly even alone.
-    for (const name of Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })) {
+    const directDependencyNames = new Set(packageScopes.flatMap((s) => Object.keys({ ...(s.pkg?.dependencies || {}), ...(s.pkg?.devDependencies || {}) })));
+    for (const name of directDependencyNames) {
       const sq = classifyTyposquat(name);
       if (!sq) continue;
       findings.push(makeFinding({
@@ -152,7 +190,9 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
         fixHint: "npm ci (clean install from the lockfile)",
       }));
     }
-  } catch { /* supply-chain layer is best-effort */ }
+  } catch (error) {
+    checks.osv = { status: "ERROR", detail: `Offline advisory matching failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
 
   // ---- malware heuristics: install-script beacons / miners / exfil / obfuscation across installed libs.
   // Local + offline (ripgrep or a bounded Node fallback). Scans node_modules, Python venvs, Go vendor/cache.
@@ -163,7 +203,10 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       const scan = await scanMalware(repoPath, { installed: inst.installed, importedPkgs, malwareExclusions, rgPath });
       findings.push(...scan.findings);
       malwareScan = { scanMode: scan.scanMode, packagesScanned: scan.packagesScanned, findings: scan.findings.length, excludedSignals: scan.excludedSignals || 0 };
-    } catch { /* heuristic scan is best-effort */ }
+      checks.malware = { status: "OK", detail: `Scanned ${scan.packagesScanned} installed package(s) using ${scan.scanMode}.` };
+    } catch (error) {
+      checks.malware = { status: "ERROR", detail: `Installed-package malware scan failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   const sorted = sortFindings(findings);
@@ -181,12 +224,17 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       nodeModulesPresent: boundary.resolve("node_modules").ok,
       installedPackages: installedCount,
       advisoryDbDate,
+      advisoryStatus: checks.osv.status,
       malwareScanMode: malwareScan?.scanMode || "skipped",
+      malwareStatus: checks.malware.status,
+      packageScopes: packageScopes.length,
+      managedPythonDependencies: managedPython.length,
     },
     summary: summarizeFindings(sorted),
     findings: sorted,
-    deadReport: { deadSymbols: dead.deadSymbols.length, deadFiles: dead.deadFiles.length, unusedExports: unusedExports.length },
+    deadReport: { deadSymbols: dead.deadSymbols.length, deadFiles: dead.deadFiles.length, unusedExports: unusedExportCount },
     structureReport: structure.stats,
+    checks,
     malwareScan,
   };
 }

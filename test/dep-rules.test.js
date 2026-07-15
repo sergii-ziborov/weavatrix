@@ -36,6 +36,29 @@ test("dep-rules: two independent cycles → two findings; acyclic graph → none
   assert.equal(computeStructureFindings(acyclic).stats.cycles, 0);
 });
 
+test("dep-rules: type-only edges create info coupling, not a runtime cycle or boundary violation", () => {
+  const typeImp = (a, b) => ({ ...imp(a, b), typeOnly: true, specifier: "./types" });
+  const graph = {
+    nodes: ["main/a.ts", "shared/b.ts", "shared/c.ts"].map(fileNode),
+    links: [imp("main/a.ts", "shared/b.ts"), typeImp("shared/b.ts", "shared/c.ts"), imp("shared/c.ts", "main/a.ts")],
+  };
+  const runtime = buildFileImportGraph(graph);
+  const inclusive = buildFileImportGraph(graph, { includeTypeOnly: true });
+  assert.equal(findSccs(runtime.adj).length, 0, "runtime graph is acyclic");
+  assert.equal(findSccs(inclusive.adj).length, 1, "type-inclusive graph preserves design coupling");
+  const r = computeStructureFindings(graph, {
+    rules: { forbidden: [{ name: "runtime-only", from: "shared/b.ts", to: "shared/c.ts", severity: "high" }] },
+  });
+  assert.equal(r.stats.runtimeCycles, 0);
+  assert.equal(r.stats.typeCouplings, 1);
+  assert.equal(r.stats.runtimeImportEdges, 2);
+  assert.equal(r.stats.typeOnlyImportEdges, 1);
+  assert.equal(r.stats.boundaryViolations, 0);
+  const coupling = r.findings.find((f) => f.rule === "type-coupling");
+  assert.equal(coupling.severity, "info");
+  assert.match(coupling.title, /no runtime cycle/i);
+});
+
 test("dep-rules: Go same-directory edges are excluded from the cycle graph", () => {
   const graph = {
     nodes: ["pkg/a.go", "pkg/b.go"].map(fileNode),

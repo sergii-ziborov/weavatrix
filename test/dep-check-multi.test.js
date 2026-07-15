@@ -73,3 +73,15 @@ test("py: config mention keeps a declared dep alive (tox/setup.cfg text)", () =>
   const { findings } = computePyDepFindings({ externalImports: [], pyManifest, configTexts });
   assert.equal(findings.length, 0);
 });
+
+test("py: managed-runtime and explicitly ignored dependencies are not called accidental environment leaks", () => {
+  const externalImports = [pyImp("numpy", "numpy"), pyImp("openvino_genai", "openvino-genai"), pyImp("vendor_sdk", "vendor-sdk")];
+  const { findings, managed } = computePyDepFindings({
+    externalImports,
+    pyManifest: { present: false, deps: [] },
+    managedDependencies: ["numpy", "openvino-genai"],
+    ignoredDependencies: ["vendor-sdk"],
+  });
+  assert.equal(findings.length, 0);
+  assert.deepEqual([...managed].sort(), ["numpy", "openvino-genai"]);
+});

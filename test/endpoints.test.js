@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractEndpointsFromText, detectEndpoints } from "../src/analysis/endpoints.js";
+import { extractEndpointsFromText, detectEndpoints, nextRoutePath } from "../src/analysis/endpoints.js";
 
 const find = (eps, method, path) => eps.find((e) => e.method === method && e.path === path);
 
@@ -120,4 +120,17 @@ test("detectEndpoints: {id} doc route and :id real route collapse to ONE, real h
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("endpoints: Next App Router derives filesystem paths, methods and dynamic segments", () => {
+  const file = "web/app/(dashboard)/api/items/[id]/route.ts";
+  const text = `export async function GET() { return Response.json({}) }\nconst create = async () => new Response();\nconst DELETE = create;\nexport { create as POST, DELETE }`;
+  assert.equal(nextRoutePath(file), "/api/items/:id");
+  const eps = extractEndpointsFromText(text, file);
+  assert.equal(find(eps, "GET", "/api/items/:id").handler, "GET");
+  assert.equal(find(eps, "POST", "/api/items/:id").handler, "create");
+  assert.equal(find(eps, "DELETE", "/api/items/:id").handler, "DELETE");
+  assert.equal(extractEndpointsFromText("const get = handler; export { get }", file).length, 0, "lowercase exports are not Next HTTP methods");
+  assert.equal(nextRoutePath("src/app/docs/[...slug]/route.ts"), "/docs/*slug");
+  assert.equal(nextRoutePath("src/app/search/[[...parts]]/route.ts"), "/search/*parts?");
 });

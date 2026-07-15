@@ -50,6 +50,24 @@ test("unused-exports: entry files, dynamic-import targets and inbound-edged symb
   assert.deepEqual(out.map((s) => s.label), ["reallyUnused()"]);
 });
 
+test("unused-exports: old exported-class methods, Next entry exports and namespace-consumed modules are exempt", () => {
+  const klass = "src/service.ts", route = "web/app/api/items/route.ts", schema = "web/db/schema.ts", use = "web/db/client.ts";
+  const method = { ...sym(klass, "startInternal", 3, true), symbol_kind: "method", member_of: "Service", visibility: "private" };
+  const get = sym(route, "GET", 1, true);
+  const users = sym(schema, "users", 1, true);
+  const graph = {
+    nodes: [fileNode(klass), fileNode(route), fileNode(schema), fileNode(use), method, get, users],
+    links: [contains(klass, method.id), contains(route, get.id), contains(schema, users.id), { source: use, target: schema, relation: "imports", specifier: "@/db/schema" }],
+  };
+  const sources = new Map([
+    [klass, "export class Service {\n  private startInternal() {}\n}"],
+    [route, "export async function GET() { return Response.json([]) }"],
+    [schema, "export const users = table('users')"],
+    [use, "import * as schema from '@/db/schema';\nexport const db = drizzle(schema)"],
+  ]);
+  assert.deepEqual(computeUnusedExports(graph, sources), []);
+});
+
 test("unused-exports: repo source fallback sees imports from files missing in graph.json", () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-unused-"));
   try {

@@ -100,21 +100,25 @@ export function aggregateGraph(graph, repoRoot) {
   for (const node of nodes) if (node.source_file) id2file.set(node.id, fileIdOf(node));
   const fileEdges = new Map(); // key → { count, rels:{relation→n} } so we can emit the DOMINANT relation (call/import/inherit)
   const moduleEdges = new Map();
+  const typeOnlyFileEdges = new Map();
+  const typeOnlyModuleEdges = new Map();
   for (const link of links) {
     if (link.relation === "contains") continue;
     const fromFile = id2file.get(endpoint(link.source));
     const toFile = id2file.get(endpoint(link.target));
     if (fromFile && toFile && fromFile !== toFile) {
       const key = `${fromFile} ${toFile}`;
-      let fe = fileEdges.get(key);
-      if (!fe) fileEdges.set(key, (fe = { count: 0, rels: {} }));
+      const targetFileEdges = link.typeOnly === true ? typeOnlyFileEdges : fileEdges;
+      let fe = targetFileEdges.get(key);
+      if (!fe) targetFileEdges.set(key, (fe = { count: 0, rels: {} }));
       fe.count++;
       if (link.relation) fe.rels[link.relation] = (fe.rels[link.relation] || 0) + 1;
       const fromMod = fileModule.get(fromFile);
       const toMod = fileModule.get(toFile);
       if (fromMod && toMod && fromMod !== toMod) {
         const mkey = `${fromMod} ${toMod}`;
-        moduleEdges.set(mkey, (moduleEdges.get(mkey) || 0) + 1);
+        const targetModuleEdges = link.typeOnly === true ? typeOnlyModuleEdges : moduleEdges;
+        targetModuleEdges.set(mkey, (targetModuleEdges.get(mkey) || 0) + 1);
       }
     }
   }
@@ -263,7 +267,9 @@ export function aggregateGraph(graph, repoRoot) {
       }))
       .sort((a, b) => b.fileCount - a.fileCount),
     moduleEdges: edgeList(moduleEdges),
+    typeOnlyModuleEdges: edgeList(typeOnlyModuleEdges),
     fileEdges: edgeList(fileEdges),
+    typeOnlyFileEdges: edgeList(typeOnlyFileEdges),
     symbols,
     symbolEdges,
     symbolRefs: [...new Set([...symbolLocalRefs.keys(), ...symbolExternalRefs.keys()])].map((id) => {
@@ -276,7 +282,9 @@ export function aggregateGraph(graph, repoRoot) {
       files: fileModule.size,
       nodes: nodes.filter((n) => n.file_type === "code").length,
       fileEdges: fileEdges.size,
+      typeOnlyFileEdges: typeOnlyFileEdges.size,
       moduleEdges: moduleEdges.size,
+      typeOnlyModuleEdges: typeOnlyModuleEdges.size,
       symbols: symbols.length,
       symbolEdges: symbolEdges.length
     }
