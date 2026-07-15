@@ -4,14 +4,21 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
+import { createRepoBoundary } from "../repo-path.js";
 
 export function buildResolvers(repoDir, fileSet) {
+  const boundary = createRepoBoundary(repoDir);
+  const readLocal = (relativePath) => {
+    const resolved = boundary.resolve(relativePath);
+    if (!resolved.ok) throw new Error("resolver input is outside the repository");
+    return readFileSync(resolved.path, "utf8");
+  };
   // Go package = directory (resolved via go.mod module prefix); Java class = file (basename index).
   // go.mod requires also feed goSpecToPkg so external Go imports map to their declared module.
   let goModule = "";
   let goRequires = [];
   try {
-    const gomod = parseGoMod(readFileSync(join(repoDir, "go.mod"), "utf8"));
+    const gomod = parseGoMod(readLocal("go.mod"));
     goModule = gomod.module;
     goRequires = gomod.requires.map((r) => r.path);
   } catch { /* no go.mod */ }
@@ -51,7 +58,7 @@ export function buildResolvers(repoDir, fileSet) {
   const jsBaseUrls = []; // tsconfig/jsconfig baseUrl roots — bare "components/Button" may be baseUrl-rooted, not an npm package
   for (const cfg of ["tsconfig.json", "tsconfig.app.json", "tsconfig.base.json", "jsconfig.json"]) {
     try {
-      const raw = readFileSync(join(repoDir, cfg), "utf8").replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/,(\s*[}\]])/g, "$1");
+      const raw = readLocal(cfg).replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/,(\s*[}\]])/g, "$1");
       const tj = JSON.parse(raw); const co = tj.compilerOptions || {}; const paths = co.paths || {};
       const baseUrl = String(co.baseUrl || ".").replace(/^\.\/?/, "").replace(/\/$/, "");
       if (co.baseUrl != null && !jsBaseUrls.includes(baseUrl)) jsBaseUrls.push(baseUrl);
@@ -59,7 +66,7 @@ export function buildResolvers(repoDir, fileSet) {
     } catch { /* no/invalid tsconfig */ }
   }
   for (const vc of ["vite.config.ts", "vite.config.js", "vite.config.mjs", "webpack.config.js"]) {
-    try { const src = readFileSync(join(repoDir, vc), "utf8"); for (const m of src.matchAll(/['"`]([^'"`]+)['"`]\s*:\s*path\.resolve\([^,]+,\s*['"`]([^'"`]+)['"`]\s*\)/g)) addAlias(m[1], m[2]); } catch { /* no bundler config */ }
+    try { const src = readLocal(vc); for (const m of src.matchAll(/['"`]([^'"`]+)['"`]\s*:\s*path\.resolve\([^,]+,\s*['"`]([^'"`]+)['"`]\s*\)/g)) addAlias(m[1], m[2]); } catch { /* no bundler config */ }
   }
   aliasList.sort((a, b) => b.alias.length - a.alias.length);
   const resolveAlias = (spec) => { for (const { alias, target } of aliasList) { if (spec === alias) return target; if (spec.startsWith(alias + "/")) return target + spec.slice(alias.length); } return null; };

@@ -29,27 +29,31 @@
   <div class="date">Effective: July 15, 2026</div>
 
   <h2>The short version</h2>
-  <p>Weavatrix is a local-first tool. It runs entirely on your machine, collects no telemetry,
-  requires no account, and sends no data to us — we operate no servers that receive anything from
-  the software.</p>
+  <p>The local Weavatrix MCP is local-first, collects no telemetry, requires no account, and sends no
+  repository data to us by default. Its network capability group is disabled by default. Any graph
+  upload requires that you configure a destination and enable the group explicitly.</p>
 
   <h2>What the software processes</h2>
   <p>The Weavatrix MCP server analyzes source code repositories on your own computer. All analysis
   (graph building, audits, clone detection, coverage mapping) happens locally. Derived data — the
   code graph — is written next to your repository (<code>weavatrix-graphs/</code>) and an advisory
-  cache to <code>~/.weavatrix/</code>. Nothing is uploaded.</p>
+  cache to <code>~/.weavatrix/</code>. By default, no repository data leaves your machine.</p>
 
   <h2>The only network-capable features (opt-in)</h2>
   <ul>
-    <li><code>refresh_advisories</code> — when you explicitly invoke it, the names and versions of
+    <li><code>refresh_advisories</code> — when the tool is invoked, the names and versions of
     packages pinned in your lockfiles are sent to <a href="https://osv.dev">OSV.dev</a> (a Google-run
     public vulnerability database) to fetch security advisories. No source code is transmitted.</li>
-    <li><code>sync_graph</code> — disabled unless you configure your own endpoint via the
-    <code>WEAVATRIX_SYNC_URL</code> environment variable. When you do, the graph (file paths, symbol
-    names, edges — never file contents) is sent to the endpoint <em>you</em> chose.</li>
+    <li><code>sync_graph</code> — disabled unless you configure an endpoint via the
+    <code>WEAVATRIX_SYNC_URL</code> environment variable. When the tool is invoked, it constructs a
+    versioned allowlist of graph metadata: relative paths, symbol names and line ranges,
+    import/dependency identifiers, edges and numeric metrics. Unknown graph fields are discarded;
+    source file bodies are not read for sync or included in the payload. The endpoint is one
+    <em>you</em> chose. It may be self-hosted or an optional hosted service, if one is available, and
+    is governed by its own terms.</li>
   </ul>
-  <p>Both tools live in an <code>online</code> capability group that can be excluded entirely at
-  registration time.</p>
+  <p>Both tools live in an <code>online</code> capability group that is disabled by default and must be
+  added explicitly at registration time.</p>
 
   <h2>This website</h2>
   <p>weavatrix.com is a static page served by Cloudflare. We run no analytics and set no cookies.

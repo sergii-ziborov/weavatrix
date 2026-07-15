@@ -6,6 +6,7 @@
 import { readdirSync, statSync, realpathSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { createRequire } from "node:module";
+import { isPathInside } from "../repo-path.js";
 import LANG_JS from "./builder/lang-js.js";
 import LANG_PY from "./builder/lang-python.js";
 import LANG_GO from "./builder/lang-go.js";
@@ -67,9 +68,11 @@ async function ensureParser(opts = {}, wanted = null) {
 // Cycle-safe directory walk. statSync FOLLOWS symlinks/junctions, so a link pointing at an ancestor would
 // otherwise recurse forever (a/b/link/b/link/…). We dedupe by REAL path (a visited dir is never re-entered)
 // and cap depth as a backstop, so a symlink loop can't wedge the build.
-function walk(dir, acc = [], seen = new Set(), depth = 0) {
+function walk(dir, acc = [], seen = new Set(), depth = 0, rootReal = null) {
   if (depth > 40) return acc;
-  let real; try { real = realpathSync.native(dir); } catch { real = dir; }
+  let real; try { real = realpathSync.native(dir); } catch { return acc; }
+  if (rootReal == null) rootReal = real;
+  if (!isPathInside(rootReal, real)) return acc;
   if (seen.has(real)) return acc;
   seen.add(real);
   let entries;
@@ -80,8 +83,10 @@ function walk(dir, acc = [], seen = new Set(), depth = 0) {
     // never match AGENT_DOTFILE, so we still never recurse into them (.git/.github/.cursor stay out).
     if (name.startsWith(".") && !AGENT_DOTFILE.test(name)) continue;
     const full = join(dir, name);
+    let entryReal; try { entryReal = realpathSync.native(full); } catch { continue; }
+    if (!isPathInside(rootReal, entryReal)) continue;
     let st; try { st = statSync(full); } catch { continue; }
-    if (st.isDirectory()) walk(full, acc, seen, depth + 1);
+    if (st.isDirectory()) walk(full, acc, seen, depth + 1, rootReal);
     // include by KNOWN extension, not by loaded grammar — grammars now load lazily AFTER the walk
     // (the parse passes skip files whose grammar failed to load, so the guarantee is unchanged)
     else { const e = extname(name); if (EXT_LANG[e] || isDataFile(name) || isDocFile(name)) acc.push(full); }

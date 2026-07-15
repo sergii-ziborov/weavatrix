@@ -9,6 +9,7 @@
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { childProcessEnv } from "./child-env.js";
 import { graphOutDirForRepo, repoTopFolders, summarizeCommunities, summarizeHotspots, filterGraphForMode, filterGraphByScope } from "./graph/layout.js";
 
 // The worker path deadlocks web-tree-sitter's WASM in Electron's worker threads (fine in plain Node) — off
@@ -25,7 +26,7 @@ function buildGraphInWorker(payload) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
-      worker = new Worker(new URL("./graph/build-worker.js", import.meta.url), { workerData: payload });
+      worker = new Worker(new URL("./graph/build-worker.js", import.meta.url), { workerData: payload, env: childProcessEnv() });
     } catch (e) {
       reject(Object.assign(e, { workerStartFailed: true }));
       return;

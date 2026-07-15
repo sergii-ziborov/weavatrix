@@ -2,10 +2,11 @@
 // (package-lock v1/v2/v3, basic yarn.lock, requirements.txt ==pins, go.sum), plus a top-level
 // node_modules walk — which also yields the lockfile-DRIFT signal (installed ≠ locked → tampering or
 // stale install). Parsers are pure + exported for tests; collectInstalled is the thin fs wrapper.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
 import { uniqueBy } from "../util.js";
+import { createRepoBoundary } from "../repo-path.js";
 
 const pep503 = (name) => String(name).toLowerCase().replace(/[-_.]+/g, "-"); // PyPI canonical name
 
@@ -144,21 +145,19 @@ export function parseGoModPackages(text) {
 }
 
 // Top-level node_modules walk (incl. @scopes): the ground truth of what is REALLY on disk.
-function walkNodeModules(repoPath) {
+function walkNodeModules(repoPath, { readJsonFile = readJson, readdir = readdirSync } = {}) {
   const out = [];
   const nm = join(repoPath, "node_modules");
   const readPkg = (dir, name) => {
-    try {
-      const pj = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-      if (pj && pj.version) out.push({ ecosystem: "npm", name: pj.name || name, version: pj.version, dev: false, integrity: "", source: "node_modules" });
-    } catch { /* not a package dir */ }
+    const pj = readJsonFile(join(dir, "package.json"));
+    if (pj && pj.version) out.push({ ecosystem: "npm", name: pj.name || name, version: pj.version, dev: false, integrity: "", source: "node_modules" });
   };
   let entries;
-  try { entries = readdirSync(nm); } catch { return out; }
+  try { entries = readdir(nm); } catch { return out; }
   for (const e of entries) {
     if (e.startsWith(".")) continue;
     if (e.startsWith("@")) {
-      let scoped; try { scoped = readdirSync(join(nm, e)); } catch { continue; }
+      let scoped; try { scoped = readdir(join(nm, e)); } catch { continue; }
       for (const s of scoped) readPkg(join(nm, e, s), `${e}/${s}`);
     } else readPkg(join(nm, e), e);
   }
@@ -170,58 +169,72 @@ const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } ca
 
 const SUBPROJECT_SKIP = new Set([".git", ".idea", ".vscode", ".venv", "venv", "env", "node_modules", "vendor", "dist", "build", "coverage", "__pycache__", ".tox", "testdata"]);
 
-function projectDirs(repoPath) {
-  const dirs = [repoPath];
+function projectDirs(boundary) {
+  const dirs = boundary.root ? [boundary.root] : [];
   let entries = [];
-  try { entries = readdirSync(repoPath, { withFileTypes: true }); } catch { return dirs; }
+  try { entries = readdirSync(boundary.root, { withFileTypes: true }); } catch { return dirs; }
   for (const e of entries) {
     if (!e.isDirectory() || e.name.startsWith(".") || SUBPROJECT_SKIP.has(e.name)) continue;
-    dirs.push(join(repoPath, e.name));
+    const resolved = boundary.resolve(e.name);
+    if (resolved.ok) dirs.push(resolved.path);
     if (dirs.length >= 101) break;
   }
   return dirs;
 }
 
-function collectReqFiles(dir) {
+function collectReqFiles(dir, readdir = readdirSync) {
   const reqFiles = [];
-  try { for (const n of readdirSync(dir)) if (/^requirements[\w.-]*\.(txt|in)$/i.test(n)) reqFiles.push(join(dir, n)); } catch { /* unreadable root */ }
-  try { for (const n of readdirSync(join(dir, "requirements"))) if (/\.(txt|in)$/i.test(n)) reqFiles.push(join(dir, "requirements", n)); } catch { /* no requirements/ dir */ }
+  try { for (const n of readdir(dir)) if (/^requirements[\w.-]*\.(txt|in)$/i.test(n)) reqFiles.push(join(dir, n)); } catch { /* unreadable root */ }
+  try { for (const n of readdir(join(dir, "requirements"))) if (/\.(txt|in)$/i.test(n)) reqFiles.push(join(dir, "requirements", n)); } catch { /* no requirements/ dir */ }
   return reqFiles;
 }
 
 // → { installed: [{ecosystem,name,version,dev,source}], drift: [{name, locked, installed}] }
 export function collectInstalled(repoPath) {
-  const dirs = projectDirs(repoPath);
+  const boundary = createRepoBoundary(repoPath);
+  if (!boundary.root) return { installed: [], drift: [] };
+  const inside = (path) => boundary.resolve(relative(boundary.root, path) || ".");
+  const boundedText = (path) => { const resolved = inside(path); return resolved.ok ? readText(resolved.path) : null; };
+  const boundedJson = (path) => { const resolved = inside(path); return resolved.ok ? readJson(resolved.path) : null; };
+  const boundedReaddir = (path, options) => {
+    const resolved = inside(path);
+    if (!resolved.ok) throw new Error("path is outside the repository");
+    return readdirSync(resolved.path, options);
+  };
+  const dirs = projectDirs(boundary);
   const lock = [];
   const yarn = [];
   const disk = [];
   for (const dir of dirs) {
-    const lockHere = parsePackageLock(readJson(join(dir, "package-lock.json")) || {});
+    const lockHere = parsePackageLock(boundedJson(join(dir, "package-lock.json")) || {});
     lock.push(...lockHere);
-    if (!lockHere.length) yarn.push(...parseYarnLock(readText(join(dir, "yarn.lock")) || ""));
-    disk.push(...walkNodeModules(dir));
+    if (!lockHere.length) yarn.push(...parseYarnLock(boundedText(join(dir, "yarn.lock")) || ""));
+    disk.push(...walkNodeModules(dir, { readJsonFile: boundedJson, readdir: boundedReaddir }));
   }
   // Python: venv site-packages = the ground truth (exact installed versions); requirements*.txt (root +
   // a requirements/ dir) and poetry/uv/Pipfile locks fill in when there's no venv. venv wins per name.
-  const venvPy = dirs.flatMap((dir) => collectVenvPackages(dir));
-  const reqFiles = dirs.flatMap((dir) => collectReqFiles(dir));
+  const venvPy = dirs.flatMap((dir) => collectVenvPackages(dir, { readdir: boundedReaddir }));
+  const reqFiles = dirs.flatMap((dir) => collectReqFiles(dir, boundedReaddir));
   const venvNames = new Set(venvPy.map((p) => p.name));
   const pyDeclared = [
-    ...reqFiles.flatMap((f) => parseRequirements(readText(f) || "")),
-    ...dirs.flatMap((dir) => parseTomlLockPackages(readText(join(dir, "poetry.lock")) || "", "poetry-lock")),
-    ...dirs.flatMap((dir) => parseTomlLockPackages(readText(join(dir, "uv.lock")) || "", "uv-lock")),
-    ...dirs.flatMap((dir) => parsePipfileLock(readJson(join(dir, "Pipfile.lock")) || null)),
+    ...reqFiles.flatMap((f) => parseRequirements(boundedText(f) || "")),
+    ...dirs.flatMap((dir) => parseTomlLockPackages(boundedText(join(dir, "poetry.lock")) || "", "poetry-lock")),
+    ...dirs.flatMap((dir) => parseTomlLockPackages(boundedText(join(dir, "uv.lock")) || "", "uv-lock")),
+    ...dirs.flatMap((dir) => parsePipfileLock(boundedJson(join(dir, "Pipfile.lock")) || null)),
   ].filter((p) => !venvNames.has(p.name)); // installed version supersedes the declared pin
   const py = [...venvPy, ...pyDeclared];
   // Go: go.sum (exact, hashed) first, then go.mod require versions as a fallback. Walk the repo root
   // AND its immediate subdirectories so a Go MONOREPO (per-folder modules, no root go.mod — e.g. gpro)
   // still scans; dedupe() collapses the go.sum/go.mod overlap and cross-module shared deps.
-  const goFromDir = (dir) => [...parseGoSum(readText(join(dir, "go.sum")) || ""), ...parseGoModPackages(readText(join(dir, "go.mod")) || "")];
-  const go = [...goFromDir(repoPath)];
-  if (!go.length || existsSync(join(repoPath, "go.work"))) {
+  const goFromDir = (dir) => [...parseGoSum(boundedText(join(dir, "go.sum")) || ""), ...parseGoModPackages(boundedText(join(dir, "go.mod")) || "")];
+  const go = [...goFromDir(boundary.root)];
+  if (!go.length || boundary.resolve("go.work").ok) {
     let subs = [];
-    try { subs = readdirSync(repoPath, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".") && !["node_modules", "vendor", "dist", "build", "testdata"].includes(e.name)); } catch { /* unreadable root */ }
-    for (const s of subs.slice(0, 100)) go.push(...goFromDir(join(repoPath, s.name)));
+    try { subs = boundedReaddir(boundary.root, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".") && !["node_modules", "vendor", "dist", "build", "testdata"].includes(e.name)); } catch { /* unreadable root */ }
+    for (const s of subs.slice(0, 100)) {
+      const resolved = boundary.resolve(s.name);
+      if (resolved.ok) go.push(...goFromDir(resolved.path));
+    }
   }
 
   // lockfile wins as the version source; disk fills gaps + powers the drift signal. A package

@@ -15,21 +15,24 @@ import { matchAdvisories } from "../security/match.js";
 import { scanMalware } from "../security/malware-heuristics.js";
 import { classifyTyposquat } from "../security/typosquat.js";
 import {
-  readText, readJson, collectSourceTexts, collectConfigTexts, workspacePkgNames,
+  readJson, readRepoText, readRepoJson, collectSourceTexts, collectConfigTexts, workspacePkgNames,
   collectPyManifest, TEST_FILE_RE,
 } from "./internal-audit.collect.js";
 import { entryFiles, computeReachability } from "./internal-audit.reach.js";
+import { createRepoBoundary } from "../repo-path.js";
 
 // Run the internal audit. graph is optional (loaded from the repo's central graph.json when absent);
 // advisoryStorePath overrides the default ~/.weavatrix/advisories.json (tests use a scratch path).
 // async because the malware sweep shells out to ripgrep.
 export async function runInternalAudit(repoPath, { graph, advisoryStorePath, skipMalwareScan = false, malwareExclusions = {}, rgPath = "" } = {}) {
   if (!existsSync(repoPath)) return { ok: false, error: "Repo path not found" };
+  const boundary = createRepoBoundary(repoPath);
+  if (!boundary.root) return { ok: false, error: "Repository path is unreadable" };
   if (!graph) {
     graph = readJson(join(graphOutDirForRepo(repoPath), "graph.json"));
     if (!graph) return { ok: false, error: "Build the graph first (no graph.json)" };
   }
-  const pkg = readJson(join(repoPath, "package.json")) || {};
+  const pkg = readRepoJson(boundary, "package.json") || {};
   const externalImports = graph.externalImports || [];
   const dynamicTargets = new Set(externalImports.filter((e) => e.dynamic && e.target).map((e) => e.target));
 
@@ -43,13 +46,13 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   const configTexts = collectConfigTexts(repoPath);
   const dep = computeDepFindings({ externalImports, pkg, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts });
   // non-npm ecosystems: Go (go.mod) + Python (requirements/pyproject/Pipfile) — same findings shape
-  const goModText = readText(join(repoPath, "go.mod"));
+  const goModText = readRepoText(boundary, "go.mod");
   const goDep = computeGoDepFindings({ externalImports, goMod: goModText != null ? parseGoMod(goModText) : null });
   const pyDep = computePyDepFindings({ externalImports, pyManifest: collectPyManifest(repoPath), configTexts });
 
   // structure: cycles / orphans / boundary rules. Rules come from the repo's optional .weavatrix-deps.json
   // (the depcruise-config analogue); no bundled default rules — cycles+orphans are always on.
-  const rules = readJson(join(repoPath, ".weavatrix-deps.json")) || {};
+  const rules = readRepoJson(boundary, ".weavatrix-deps.json") || {};
   const externalImportFiles = new Set(externalImports.filter((e) => e.pkg && !e.builtin).map((e) => e.file));
   const structure = computeStructureFindings(graph, { rules, entrySet: entries, externalImportFiles });
 
@@ -175,7 +178,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       symbols: dead.stats.symbols,
       manifestDeps: dep.declared.size + goDep.declared.size + pyDep.declared.size,
       externalImports: externalImports.length,
-      nodeModulesPresent: existsSync(join(repoPath, "node_modules")),
+      nodeModulesPresent: boundary.resolve("node_modules").ok,
       installedPackages: installedCount,
       advisoryDbDate,
       malwareScanMode: malwareScan?.scanMode || "skipped",

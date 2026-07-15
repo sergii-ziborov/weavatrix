@@ -11,6 +11,7 @@ import {readSource, searchCode} from '../mcp-source-tools.mjs'
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url))
 const resolveRg = createRgResolver(SELF_DIR)
+export const DEFAULT_CAPS = Object.freeze(['graph', 'search', 'source', 'health', 'build', 'retarget'])
 
 // The files whose mtime the stdio shell watches for hot reload — keep in sync with the imports in
 // loadHotApi below (catalog.mjs itself is last: a change here re-derives the whole table).
@@ -37,16 +38,16 @@ function buildTools({tg, ti, th, ta}) {
         {cap: 'source', name: 'list_endpoints', description: 'Inventory of HTTP endpoints defined in the repo (Express/Fastify/Nest/Flask/FastAPI/Go mux …): method, path, handler, and file:line, deduped across code and OpenAPI docs.', inputSchema: {type: 'object', properties: {max_results: {type: 'integer', description: 'Max endpoints to list, default 100'}}}, run: (g, a, ctx) => th.tListEndpoints(g, a, ctx)},
         {cap: 'build', name: 'rebuild_graph', description: "Rebuild this repo's code graph from current source (weavatrix's own web-tree-sitter builder), reload it in-memory, and report the STRUCTURAL DELTA vs the previous state — new/removed module dependencies, cycle changes, newly orphaned symbols. The prior state is saved as graph.prev.json for graph_diff. Call after significant edits.", inputSchema: {type: 'object', properties: {mode: {type: 'string', enum: ['full', 'no-tests', 'tests-only'], default: 'full'}, scope: {type: 'string', description: 'optional path prefix to limit the graph'}}}, run: (g, a, ctx) => ta.tRebuildGraph(g, a, ctx)},
         {cap: 'graph', name: 'graph_diff', description: 'Structural diff of the last rebuild: previous graph state (graph.prev.json, saved by rebuild_graph) vs current — architecture drift (new module dependencies), broken or introduced import cycles, symbols that lost their last caller. The semantic complement to the textual git diff for validating a refactor.', inputSchema: {type: 'object', properties: {path: {type: 'string', description: 'Optional node-id/path prefix to scope the diff, e.g. src/query'}}}, run: (g, a, ctx) => ti.tGraphDiff(g, a, ctx)},
-        {cap: 'build', name: 'open_repo', description: 'Retarget this server at another local repository: loads its graph from the central weavatrix-graphs layout next to the repo, building it first when missing (large repos can take minutes; pass build:false to probe without building). Afterwards every tool answers for the new repo.', inputSchema: {type: 'object', properties: {path: {type: 'string', description: 'Absolute path to the repository folder'}, build: {type: 'boolean', description: 'Build the graph when missing (default true)', default: true}, mode: {type: 'string', enum: ['full', 'no-tests', 'tests-only'], default: 'full'}}, required: ['path']}, run: (g, a, ctx) => ta.tOpenRepo(g, a, ctx)},
-        {cap: 'graph', name: 'list_known_repos', description: 'List sibling repositories that already have a built graph in the central weavatrix-graphs folder next to the current repo — ready targets for open_repo.', inputSchema: {type: 'object', properties: {}}, run: (g, a, ctx) => ta.tListKnownRepos(g, a, ctx)},
+        {cap: 'retarget', name: 'open_repo', description: 'OFFLINE RETARGET: switch this server to another local Git repository, building its graph when missing. This explicit tool call changes the active repository boundary; pass build:false to probe without building. Omit the retarget capability at registration to pin one repository.', inputSchema: {type: 'object', properties: {path: {type: 'string', description: 'Absolute path to a Git working tree'}, build: {type: 'boolean', description: 'Build the graph when missing (default true)', default: true}, mode: {type: 'string', enum: ['full', 'no-tests', 'tests-only'], default: 'full'}}, required: ['path']}, run: (g, a, ctx) => ta.tOpenRepo(g, a, ctx)},
+        {cap: 'retarget', name: 'list_known_repos', description: 'OFFLINE RETARGET: list sibling repositories with existing graphs that can be selected through open_repo.', inputSchema: {type: 'object', properties: {}}, run: (g, a, ctx) => ta.tListKnownRepos(g, a, ctx)},
         {cap: 'online', name: 'refresh_advisories', description: "ONLINE, explicit opt-in: refresh the local OSV advisory store for this repo's lockfile-pinned packages (npm/PyPI/Go). Sends package names + versions to OSV.dev — never automatic, never source code. Afterwards run_audit reads the refreshed store fully offline (~/.weavatrix/advisories.json).", inputSchema: {type: 'object', properties: {timeout_ms: {type: 'integer', description: 'Per-request timeout, default 20000'}}}, run: (g, a, ctx) => ta.tRefreshAdvisories(g, a, ctx)},
-        {cap: 'online', name: 'sync_graph', description: 'ONLINE, explicit opt-in, off until configured: push the current graph.json to your weavatrix site or self-hosted endpoint (env WEAVATRIX_SYNC_URL, optional WEAVATRIX_SYNC_TOKEN bearer auth) for a hosted graph view. Payload is the graph only — file paths, symbol names, edges — never file contents.', inputSchema: {type: 'object', properties: {}}, run: (g, a, ctx) => ta.tSyncGraph(g, a, ctx)},
+        {cap: 'online', name: 'sync_graph', description: 'ONLINE, explicit opt-in, off until configured: send a versioned allowlist of graph metadata to an endpoint you configure (env WEAVATRIX_SYNC_URL, optional WEAVATRIX_SYNC_TOKEN bearer auth). Unknown graph fields are discarded and source file bodies are not read for sync. Graphs built before 0.1.2 must be rebuilt once before syncing.', inputSchema: {type: 'object', properties: {}}, run: (g, a, ctx) => ta.tSyncGraph(g, a, ctx)},
     ]
 }
 
 // Import the tool modules (cache-busted when version > 0), build the catalog, apply the caps filter.
-// capsArg semantics: undefined/null = no per-repo config → ALL tools; a present string (even '') is an
-// explicit selection → expose exactly those groups, so "select nothing" really exposes nothing.
+// capsArg semantics: undefined/null = offline defaults (including explicit-call repo retargeting); a
+// present string (even '') is an explicit selection, so "select nothing" really exposes nothing.
 export async function loadHotApi(version, capsArg) {
     const v = version ? `?v=${version}` : ''
     const [tg, ti, th, ta] = await Promise.all([
@@ -56,8 +57,9 @@ export async function loadHotApi(version, capsArg) {
         import(new URL(`./tools-actions.mjs${v}`, import.meta.url).href),
     ])
     const all = buildTools({tg, ti, th, ta})
-    const caps = capsArg == null ? null : new Set(String(capsArg).split(',').map((s) => s.trim()).filter(Boolean))
-    const tools = caps ? all.filter((t) => caps.has(t.cap)) : all
+    const selected = capsArg == null ? DEFAULT_CAPS : String(capsArg).split(',').map((s) => s.trim()).filter(Boolean)
+    const caps = new Set(selected)
+    const tools = all.filter((t) => caps.has(t.cap))
     return {
         tools,
         byName: new Map(tools.map((t) => [t.name, t])),

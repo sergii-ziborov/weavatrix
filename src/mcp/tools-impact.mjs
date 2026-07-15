@@ -3,6 +3,7 @@
 // Hot-reloadable (re-imported by catalog.mjs on change).
 import {readFileSync} from 'node:fs'
 import {spawnSync} from 'node:child_process'
+import {childProcessEnv} from '../child-env.js'
 import {
     isSymbol, degreeOf, labelOf, resolveNodeInfo, ambiguityNote,
     rawGraph, prevGraphPathFor, edgeEndpoint, diffGraphs, formatGraphDiff,
@@ -81,7 +82,7 @@ export function tGraphDiff(g, args, ctx) {
 
 // ---- change impact -------------------------------------------------------------------------------
 function gitLines(repoRoot, args) {
-    const res = spawnSync('git', ['-C', repoRoot, ...args], {encoding: 'utf8', timeout: 8000})
+    const res = spawnSync('git', ['-C', repoRoot, ...args], {encoding: 'utf8', timeout: 8000, env: childProcessEnv()})
     if (res.status !== 0) return null
     return String(res.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
 }
@@ -89,7 +90,7 @@ function gitLines(repoRoot, args) {
 function resolveImpactBase(repoRoot, requested) {
     const candidates = requested ? [requested] : ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']
     for (const ref of candidates) {
-        const ok = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {encoding: 'utf8', timeout: 8000})
+        const ok = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {encoding: 'utf8', timeout: 8000, env: childProcessEnv()})
         if (ok.status === 0) return ref
     }
     return null

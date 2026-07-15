@@ -3,6 +3,7 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { childProcessEnv } from "../child-env.js";
 import { graphOutDirForRepo } from "../graph/layout.js";
 import { computeDuplicates } from "./duplicates.compute.js";
 
@@ -10,7 +11,7 @@ function computeInWorker(repoPath, graphJsonPath) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
-      worker = new Worker(new URL("./duplicates-worker.js", import.meta.url), { workerData: { repoPath, graphJsonPath } });
+      worker = new Worker(new URL("./duplicates-worker.js", import.meta.url), { workerData: { repoPath, graphJsonPath }, env: childProcessEnv() });
     } catch (e) {
       reject(Object.assign(e, { workerStartFailed: true }));
       return;

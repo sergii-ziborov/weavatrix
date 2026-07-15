@@ -3,6 +3,7 @@
 // graph's known files. Split out of graph-builder-analysis.js (pure except for reading the repo's coverage files).
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { createRepoBoundary } from "../repo-path.js";
 
 export function normRepoPath(value) {
   return String(value || "").replace(/\\/g, "/").replace(/^\.\//, "");
@@ -210,20 +211,22 @@ function parseGoCoverage(map, filePath, knownFiles, repoRoot) {
 export function readCoverageForRepo(repoRoot, knownFiles) {
   const out = new Map();
   if (!repoRoot) return out;
+  const boundary = createRepoBoundary(repoRoot);
   const candidates = [
-    [join(repoRoot, "coverage", "coverage-summary.json"), parseIstanbulSummary],
-    [join(repoRoot, "coverage", "coverage-final.json"), parseIstanbulFinal],
-    [join(repoRoot, "coverage", "lcov.info"), parseLcov],
-    [join(repoRoot, "lcov.info"), parseLcov],
-    [join(repoRoot, "coverage", "coverage.json"), parseCoveragePyJson],
-    [join(repoRoot, "coverage.json"), parseCoveragePyJson],
-    [join(repoRoot, "coverage.out"), parseGoCoverage],
-    [join(repoRoot, "cover.out"), parseGoCoverage]
+    ["coverage/coverage-summary.json", parseIstanbulSummary],
+    ["coverage/coverage-final.json", parseIstanbulFinal],
+    ["coverage/lcov.info", parseLcov],
+    ["lcov.info", parseLcov],
+    ["coverage/coverage.json", parseCoveragePyJson],
+    ["coverage.json", parseCoveragePyJson],
+    ["coverage.out", parseGoCoverage],
+    ["cover.out", parseGoCoverage]
   ];
-  for (const [path, parser] of candidates) {
-    if (!existsSync(path)) continue;
+  for (const [candidate, parser] of candidates) {
+    const resolved = boundary.resolve(candidate);
+    if (!resolved.ok || !existsSync(resolved.path)) continue;
     try {
-      parser(out, path, knownFiles, repoRoot);
+      parser(out, resolved.path, knownFiles, repoRoot);
     } catch {
       /* malformed/foreign coverage report: ignore */
     }

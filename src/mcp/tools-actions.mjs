@@ -1,13 +1,14 @@
-// Action tools: rebuild the graph, retarget the server at another repo, list sibling repos with
-// built graphs — plus the 'online' capability group (the ONLY tools that ever touch the network).
+// Action tools: rebuild the graph, the explicit 'retarget' group, and the explicit 'online' group
+// (the ONLY tools that ever touch the network).
 // Hot-reloadable (re-imported by catalog.mjs on change).
-import {readFileSync, writeFileSync, existsSync, readdirSync, statSync} from 'node:fs'
-import {join, dirname} from 'node:path'
+import {readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync} from 'node:fs'
+import {join, dirname, isAbsolute} from 'node:path'
 import {prevGraphPathFor, diffGraphs, formatGraphDiff} from './graph-context.mjs'
 import {buildGraphForRepo} from '../build-graph.js'
 import {graphOutDirForRepo} from '../graph/layout.js'
 import {refreshAdvisories, storeMeta, DEFAULT_STORE} from '../security/advisory-store.js'
 import {collectInstalled} from '../security/installed.js'
+import {createSyncPayload} from './sync-payload.mjs'
 
 export async function tRebuildGraph(g, args, ctx) {
     if (!ctx.repoRoot) return 'Rebuild needs the repo root (not provided to this server).'
@@ -31,9 +32,13 @@ export async function tRebuildGraph(g, args, ctx) {
 // repo. Loads <parent>/weavatrix-graphs/<name>/graph.json (the central layout graphs
 // always live in), building it first when missing. On a failed load the previous repo stays active.
 export async function tOpenRepo(g, args, ctx) {
-    const repoPath = String(args.path || '').trim().replace(/[\\/]+$/, '')
-    if (!repoPath) return 'Provide "path" — an absolute path to a local repository folder.'
-    if (!existsSync(repoPath)) return `Path not found: ${repoPath}`
+    const requestedPath = String(args.path || '').trim()
+    if (!requestedPath) return 'Provide "path" — an absolute path to a local repository folder.'
+    if (!isAbsolute(requestedPath)) return 'open_repo requires an absolute repository path.'
+    let repoPath
+    try { repoPath = realpathSync.native(requestedPath) } catch { return `Path not found: ${requestedPath}` }
+    try { if (!statSync(repoPath).isDirectory()) return `Not a directory: ${requestedPath}` } catch { return `Path not found: ${requestedPath}` }
+    if (!existsSync(join(repoPath, '.git'))) return `Not a Git repository: ${requestedPath}`
     const graphPath = join(graphOutDirForRepo(repoPath), 'graph.json')
     let built = false
     if (!existsSync(graphPath)) {
@@ -101,9 +106,8 @@ export async function tRefreshAdvisories(g, args, ctx) {
     ].filter(Boolean).join('\n')
 }
 
-// Push the current graph.json to a user-configured endpoint (the weavatrix site's hosted graph view,
-// or any self-hosted collector). Off until WEAVATRIX_SYNC_URL is set. The payload is the graph only —
-// file paths, symbol names, and edges — never file contents.
+// Push the current graph.json to a user-configured endpoint. Off until WEAVATRIX_SYNC_URL is set.
+// The payload is graph metadata (paths, symbols/ranges, imports, edges, metrics), never file contents.
 export async function tSyncGraph(g, args, ctx) {
     const url = process.env.WEAVATRIX_SYNC_URL
     if (!url) {
@@ -111,8 +115,13 @@ export async function tSyncGraph(g, args, ctx) {
             + ' (and WEAVATRIX_SYNC_TOKEN for bearer auth) in the MCP registration env, then call again.'
     }
     if (!g) return 'No graph loaded — build one first (open_repo / rebuild_graph).'
-    let body
-    try { body = readFileSync(ctx.graphPath, 'utf8') } catch (e) { return `Cannot read ${ctx.graphPath}: ${e.message}` }
+    let raw
+    try { raw = JSON.parse(readFileSync(ctx.graphPath, 'utf8')) } catch (e) { return `Cannot read ${ctx.graphPath}: ${e.message}` }
+    let payload
+    try { payload = createSyncPayload(raw) } catch {
+        return 'This graph predates repository-boundary hardening. Run rebuild_graph once before sync_graph.'
+    }
+    const body = JSON.stringify(payload)
     const repoName = String(ctx.repoRoot || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'repo'
     try {
         const res = await fetch(url, {
@@ -125,7 +134,7 @@ export async function tSyncGraph(g, args, ctx) {
             body,
         })
         if (!res.ok) return `Sync endpoint answered HTTP ${res.status} — graph NOT accepted.`
-        return `Graph for ${repoName} (${g.nodes.length} nodes / ${g.links.length} edges, ${Math.round(body.length / 1024)} KB) pushed to ${url}.`
+        return `Graph for ${repoName} (${payload.nodes.length} nodes / ${payload.links.length} edges, ${Math.round(Buffer.byteLength(body) / 1024)} KB) pushed to ${url}.`
     } catch (e) {
         return `Sync failed: ${e.message} — the graph stays local.`
     }

@@ -1,10 +1,14 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { extname, join, relative } from 'node:path'
+import { resolveRepoPath } from './repo-path.js'
+import { childProcessEnv } from './child-env.js'
 
 const SEARCH_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', 'out', '.next', 'coverage', 'vendor', '.venv', 'venv', 'env', 'target', '__pycache__', '.idea', '.vscode', '.cache', 'bin', 'obj', 'weavatrix-graphs'])
 const BINARY_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.exe', '.dll', '.so', '.dylib', '.woff', '.woff2', '.ttf', '.eot', '.mp4', '.mp3', '.wasm', '.class', '.jar', '.node', '.bin'])
 const MAX_SEARCH_FILE_BYTES = 1024 * 1024
+const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024
+const MAX_SOURCE_CONTEXT_LINES = 1000
 
 function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }) {
     const rg = resolveRg()
@@ -13,7 +17,7 @@ function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }) {
     if (!isRegex) args.push('--fixed-strings')
     if (glob) args.push('-g', glob)
     args.push('--', query, repoRoot)
-    const res = spawnSync(rg, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15000 })
+    const res = spawnSync(rg, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15000, env: childProcessEnv() })
     if (res.status !== 0 && res.status !== 1) return null
     const out = []
     for (const line of (res.stdout || '').split(/\r?\n/)) {
@@ -122,14 +126,21 @@ export function readSource({ repoRoot, resolveNode, isSymbol }, g, { label, path
     }
     // explicit anchor wins: window = start_line-before .. start_line+after (how a path read escapes the file head)
     if (start_line != null && Number(start_line) > 0) focusLine = Math.floor(Number(start_line))
-    const abs = join(repoRoot, file)
-    if (!existsSync(abs)) return `File not found: ${file}`
+    const resolved = resolveRepoPath(repoRoot, file)
+    if (resolved.reason === 'escape') return `Refusing to read "${file}": path escapes the repository root.`
+    if (resolved.reason === 'not-found') return `File not found: ${file}`
+    if (!resolved.ok) return `Could not resolve ${file} inside the repository root.`
+    const abs = resolved.path
+    let st
+    try { st = statSync(abs) } catch (e) { return `Could not inspect ${file}: ${e.message}` }
+    if (!st.isFile()) return `Could not read ${file}: not a regular file.`
+    if (st.size > MAX_SOURCE_FILE_BYTES) return `Could not read ${file}: file exceeds the ${MAX_SOURCE_FILE_BYTES / 1024 / 1024} MB source-read limit.`
     let text
     try { text = readFileSync(abs, 'utf8') } catch (e) { return `Could not read ${file}: ${e.message}` }
     const lines = text.split(/\r?\n/)
     if (focusLine) focusLine = Math.min(focusLine, lines.length) // an anchor past EOF shows the tail, not nothing
-    const b = Math.max(0, Number(before) || 0)
-    const a = Math.max(1, Number(after) || 40)
+    const b = Math.min(MAX_SOURCE_CONTEXT_LINES, Math.max(0, Number(before) || 0))
+    const a = Math.min(MAX_SOURCE_CONTEXT_LINES, Math.max(1, Number(after) || 40))
     const start = focusLine ? Math.max(1, focusLine - b) : 1
     const end = focusLine ? Math.min(lines.length, focusLine + a) : Math.min(lines.length, 1 + b + a)
     const width = String(end).length

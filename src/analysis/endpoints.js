@@ -6,8 +6,8 @@
 //   • method-call routes (Express/Fastify/Koa/Hono/gin/echo):  app.get("/path", handler)
 //   • decorators (FastAPI/Flask/NestJS):   @app.get("/path")  /  @Get("/path")
 //   • Go net/http:                          mux.HandleFunc("/path", handler)
-import { join } from "node:path";
 import { safeRead } from "../util.js";
+import { createRepoBoundary } from "../repo-path.js";
 
 const MAX_FILES = 3000;
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ALL", "ANY"]);
@@ -125,11 +125,13 @@ const normParamKey = (p) => String(p).replace(/\{([^/}]+)\}/g, ":$1");
 export function detectEndpoints(repoPath, codeFiles) {
   const files = (codeFiles || []).slice(0, MAX_FILES);
   const byKey = new Map();
+  const boundary = createRepoBoundary(repoPath);
   for (const f of files) {
     const rel = f.path || f;
-    const full = f.full || join(repoPath, rel);
     if (!/\.(js|ts|tsx|jsx|cjs|mjs|py|go)$/i.test(rel)) continue;
-    const text = safeRead(full);
+    const resolved = boundary.resolve(rel);
+    if (!resolved.ok) continue;
+    const text = safeRead(resolved.path);
     if (!text || !/["'`]\/|\.(get|post|put|patch|delete)\s*\(|HandleFunc|@\w*\.?(get|post|put|patch|delete)/i.test(text)) continue;
     for (const e of extractEndpointsFromText(text, rel.replace(/\\/g, "/"))) {
       const key = `${e.method} ${normParamKey(e.path)}`;

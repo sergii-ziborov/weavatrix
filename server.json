@@ -1,27 +1,50 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sergii-ziborov/weavatrix",
   "description": "Code graph & blast-radius MCP for AI agents: change impact, dependents, health audit, clones.",
   "repository": {
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "0.1.2",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
         {
           "type": "positional",
           "valueHint": "repoRoot",
-          "description": "Absolute path to the repository to analyze (the graph location is derived automatically; open_repo can retarget any other repo later)",
+          "description": "Absolute path to the initial Git repository (the offline open_repo tool can explicitly switch repositories)",
           "isRequired": true
+        },
+        {
+          "type": "positional",
+          "valueHint": "capabilities",
+          "description": "Full comma-separated set replacing the default; allowed groups are graph,search,source,health,build,retarget,online (omit retarget to pin one repository; add online only for network tools)",
+          "format": "string",
+          "default": "graph,search,source,health,build,retarget",
+          "isRequired": false
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "WEAVATRIX_SYNC_URL",
+          "description": "Optional endpoint used only when online is enabled and sync_graph is called",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "WEAVATRIX_SYNC_TOKEN",
+          "description": "Optional bearer token for the configured graph sync endpoint",
+          "format": "string",
+          "isSecret": true,
+          "isRequired": false
         }
       ]
     }

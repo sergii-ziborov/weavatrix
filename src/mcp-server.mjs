@@ -15,12 +15,11 @@
 // go to stderr. Two argv forms:
 //   weavatrix-mcp <repoRoot> [caps]               — graph path derived from the standard layout
 //   weavatrix-mcp <graph.json> <repoRoot> [caps]  — explicit graph file (classic form)
-import {existsSync, statSync} from 'node:fs'
+import {existsSync, statSync, realpathSync} from 'node:fs'
 import {join, dirname} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import process from 'node:process'
 import {loadGraph} from './mcp/graph-context.mjs'
-import {loadHotApi, HOT_FILES} from './mcp/catalog.mjs'
 import {graphOutDirForRepo} from './graph/layout.js'
 import {createRequire} from 'node:module'
 
@@ -34,19 +33,20 @@ const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 // otherwise it is the graph.json path and the repo root follows it.
 let GRAPH_PATH = process.argv[2]
 let repoArg = process.argv[3]
-// caps ABSENT (undefined) = no per-repo config → ALL tools. PRESENT (even the empty string, which a
-// registration may pass for a zero-capability selection) = explicit set — see catalog.loadHotApi.
+// caps ABSENT (undefined) = offline defaults (including explicit-call repo retargeting, no network).
+// PRESENT (even the empty string) = explicit set — see catalog.loadHotApi.
 let CAPS_ARG = process.argv[4]
 try {
     if (GRAPH_PATH && statSync(GRAPH_PATH).isDirectory()) {
-        repoArg = GRAPH_PATH.replace(/[\\/]+$/, '')
+        repoArg = realpathSync.native(GRAPH_PATH)
         CAPS_ARG = process.argv[3]
         GRAPH_PATH = join(graphOutDirForRepo(repoArg), 'graph.json')
-        if (!existsSync(GRAPH_PATH)) log(`no graph built yet for ${repoArg} — ask the agent to call rebuild_graph (or open_repo) once; it builds into the standard weavatrix-graphs layout`)
+        if (!existsSync(GRAPH_PATH)) log(`no graph built yet for ${repoArg} — ask the agent to call rebuild_graph; it builds into the standard weavatrix-graphs layout`)
     }
 } catch { /* argv[2] is not a directory → classic <graph.json> <repoRoot> form */ }
 // repo source root for search_code / read_source; null → those tools degrade.
-const REPO_ROOT = repoArg && existsSync(repoArg) ? repoArg : null
+let REPO_ROOT = null
+try { if (repoArg && statSync(repoArg).isDirectory()) REPO_ROOT = realpathSync.native(repoArg) } catch { /* invalid repo root */ }
 
 // ---- hot reload of tool implementations -----------------------------------------------------------
 // Node caches modules at spawn, so edits to the tool code would otherwise be invisible until the MCP
@@ -55,16 +55,19 @@ const REPO_ROOT = repoArg && existsSync(repoArg) ? repoArg : null
 // swap the tool table, then notify the client. The stdio shell, graph-context (its caches), and the
 // analysis engines are NOT swapped — changing those still needs a reconnect.
 const MCP_DIR = join(dirname(fileURLToPath(import.meta.url)), 'mcp')
-function hotVersion() {
+const CATALOG_URL = new URL('./mcp/catalog.mjs', import.meta.url)
+const loadCatalog = (version = 0) => import(version ? `${CATALOG_URL.href}?v=${version}` : CATALOG_URL.href)
+function hotVersion(hotFiles) {
     let v = 0
-    for (const f of HOT_FILES) {
+    for (const f of hotFiles) {
         try { const t = statSync(join(MCP_DIR, f)).mtimeMs; if (t > v) v = t } catch { /* missing file just doesn't bump the version */ }
     }
     return v
 }
 
 async function main() {
-    let api = await loadHotApi(0, CAPS_ARG)
+    let catalog = await loadCatalog()
+    let api = await catalog.loadHotApi(0, CAPS_ARG)
     let graph = null
     let graphError = null
     // ctx owns the CURRENT target: rebuild_graph reloads it, open_repo retargets graphPath/repoRoot
@@ -81,20 +84,23 @@ async function main() {
         log(`failed to load graph: ${e.message}`)
     }
     log(`repo root: ${REPO_ROOT || '(none — source/action tools disabled)'}`)
-    log(`capabilities: ${api.caps ? [...api.caps].join(',') : 'all'} (${api.tools.length} tools)`)
+    log(`capabilities: ${[...api.caps].join(',') || '(none)'} (${api.tools.length} tools)`)
 
     let protocolVersion = DEFAULT_PROTOCOL
     const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n')
     const reply = (id, result) => send({jsonrpc: '2.0', id, result})
     const fail = (id, code, message) => send({jsonrpc: '2.0', id, error: {code, message}})
 
-    let loadedVersion = hotVersion()
+    let loadedVersion = hotVersion(catalog.HOT_FILES)
     let lastFailedVersion = 0
     const maybeHotReload = async () => {
-        const v = hotVersion()
+        const v = hotVersion(catalog.HOT_FILES)
         if (v <= loadedVersion || v === lastFailedVersion) return
         try {
-            api = await loadHotApi(v, CAPS_ARG)
+            const nextCatalog = await loadCatalog(v)
+            const nextApi = await nextCatalog.loadHotApi(v, CAPS_ARG)
+            catalog = nextCatalog
+            api = nextApi
             loadedVersion = v
             log(`hot-reloaded tool implementations from changed source (${api.tools.length} tools)`)
             send({jsonrpc: '2.0', method: 'notifications/tools/list_changed'})
@@ -121,8 +127,8 @@ async function main() {
             await maybeHotReload()
             const tool = api.byName.get(params?.name)
             if (!tool) return reply(id, {content: [{type: 'text', text: `Unknown tool: ${params?.name}`}], isError: true})
-            // action tools (rebuild_graph) don't need a currently-loaded graph; read tools do
-            if (!graph && tool.cap !== 'build') return reply(id, {content: [{type: 'text', text: `Graph unavailable: ${graphError}`}], isError: true})
+            // action tools can establish/retarget a graph; read tools need one already loaded
+            if (!graph && tool.cap !== 'build' && tool.cap !== 'retarget') return reply(id, {content: [{type: 'text', text: `Graph unavailable: ${graphError}`}], isError: true})
             try {
                 let text = String(await tool.run(graph, params?.arguments || {}, ctx))
                 // Graph answers silently reflect a point-in-time build — surface staleness on every graph tool.

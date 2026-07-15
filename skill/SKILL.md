@@ -5,9 +5,9 @@ description: Drive the weavatrix MCP — code graph, blast-radius (get_dependent
 
 # weavatrix MCP
 
-Structure-analysis tools over a prebuilt code graph plus the weavatrix analysis engines. One running
-server handles ANY local repository via `open_repo` — never register a second weavatrix server for a
-sibling repo.
+Structure-analysis tools over a prebuilt code graph plus the weavatrix analysis engines. The default
+is offline and includes `open_repo` for one-call switching between local Git repositories. A custom
+capability list that omits `retarget` pins the registration to its initial repository.
 
 ## Step 0 — if the tools are missing
 
@@ -24,13 +24,18 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
 - **Offline by design**: scans and graph queries run in-process against local files; coverage tools
   read existing reports and never run tests. The ONLY network-touching tools live in the `online`
   capability group and run solely when explicitly called: `refresh_advisories` (queries OSV.dev with
-  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (pushes
-  graph.json to a user-configured endpoint; disabled until `WEAVATRIX_SYNC_URL` is set). Registering
-  the server with a caps list that omits `online` removes both.
+  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (pushes a
+  versioned allowlist of graph metadata, discarding unknown fields and never reading source file
+  bodies for sync, to a user-configured endpoint; disabled until
+  `WEAVATRIX_SYNC_URL` is set). `online` is
+  absent from the default capability set and must be enabled explicitly.
+- **Repository boundary**: source reads and graph-derived paths are realpath-contained. `open_repo`
+  intentionally changes the active boundary through an explicit offline tool call. It is available
+  by default; omit `retarget` from a custom capability list to hide it.
 
 ## Recipes
 
-- **Orient in an unfamiliar repo**: `open_repo` → `module_map` → `list_communities` → `god_nodes`.
+- **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`.
 - **Refactor safety for one symbol**: `get_dependents` → `coverage_map` (low coverage × many
   dependents ⇒ write tests first) → `read_source`.
 - **Pre-PR review of your current changes**: `change_impact` (auto merge-base; includes uncommitted
@@ -44,12 +49,13 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
   `coverage_map`.
 - **API inventory**: `list_endpoints`.
 - **Find code**: `search_code` (regex + glob) → `get_node` → `read_source`.
-- **Another repo**: `list_known_repos` → `open_repo <path>` (builds the graph when missing — minutes
-  on large repos; `build:false` probes without building).
+- **Another repo**: `list_known_repos` → `open_repo <path>`
+  (builds the graph when missing; `build:false` probes without building).
 
 ## Troubleshooting
 
-- `Graph unavailable` → `open_repo` with a valid repo path.
+- `Graph unavailable` → `rebuild_graph`; `open_repo` can select another valid repository path unless
+  the registration deliberately omitted `retarget`.
 - `No coverage report` → run the repo's own tests with coverage (`vitest run --coverage`,
   `jest --coverage`, `pytest --cov --cov-report=json`, `go test -coverprofile=coverage.out`),
   then re-call.

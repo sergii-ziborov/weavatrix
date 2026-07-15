@@ -3,9 +3,18 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps } from "./manifests.js";
+import { createRepoBoundary } from "../repo-path.js";
 
 export const readText = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 export const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
+export const readRepoText = (boundary, relativePath) => {
+  const resolved = boundary.resolve(relativePath);
+  return resolved.ok ? readText(resolved.path) : null;
+};
+export const readRepoJson = (boundary, relativePath) => {
+  const resolved = boundary.resolve(relativePath);
+  return resolved.ok ? readJson(resolved.path) : null;
+};
 const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|py|go|vue|svelte)$/i;
 const SOURCE_SKIP_DIRS = new Set([
   ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", ".next", "out",
@@ -15,10 +24,13 @@ const SOURCE_SKIP_DIRS = new Set([
 
 export function collectSourceTexts(repoRoot, graph) {
   const sources = new Map();
+  const boundary = createRepoBoundary(repoRoot);
   const add = (rel) => {
     const file = String(rel || "").replace(/\\/g, "/");
     if (!file || sources.has(file)) return;
-    const text = readText(join(repoRoot, file));
+    const resolved = boundary.resolve(file);
+    if (!resolved.ok) return;
+    const text = readText(resolved.path);
     if (text != null) sources.set(file, text);
   };
 
@@ -63,11 +75,14 @@ const CONFIG_FILES = [
 
 export function collectConfigTexts(repoRoot) {
   const map = new Map();
-  for (const f of CONFIG_FILES) { const t = readText(join(repoRoot, f)); if (t != null) map.set(f, t); }
+  const boundary = createRepoBoundary(repoRoot);
+  for (const f of CONFIG_FILES) { const t = readRepoText(boundary, f); if (t != null) map.set(f, t); }
   try {
-    for (const wf of readdirSync(join(repoRoot, ".github", "workflows"))) {
+    const workflows = boundary.resolve(".github/workflows");
+    if (!workflows.ok) throw new Error("workflows directory is outside the repository");
+    for (const wf of readdirSync(workflows.path)) {
       if (!/\.ya?ml$/i.test(wf)) continue;
-      const t = readText(join(repoRoot, ".github", "workflows", wf));
+      const t = readRepoText(boundary, `.github/workflows/${wf}`);
       if (t != null) map.set(`.github/workflows/${wf}`, t);
     }
   } catch { /* no workflows */ }
@@ -78,14 +93,21 @@ export function collectConfigTexts(repoRoot) {
 // Those are importable without being declared — never "missing" deps.
 export function workspacePkgNames(repoRoot, pkg) {
   const names = new Set();
+  const boundary = createRepoBoundary(repoRoot);
   const globs = Array.isArray(pkg.workspaces) ? pkg.workspaces : (pkg.workspaces && pkg.workspaces.packages) || [];
   for (const g of globs) {
     const base = String(g).replace(/\/?\*+.*$/, "");
     let dirs = [];
-    if (/\*/.test(String(g))) { try { dirs = readdirSync(join(repoRoot, base)).map((d) => join(base, d)); } catch { continue; } }
+    if (/\*/.test(String(g))) {
+      try {
+        const resolvedBase = boundary.resolve(base || ".");
+        if (!resolvedBase.ok) continue;
+        dirs = readdirSync(resolvedBase.path).map((d) => join(base, d));
+      } catch { continue; }
+    }
     else dirs = [String(g)];
     for (const d of dirs) {
-      const p = readJson(join(repoRoot, d, "package.json"));
+      const p = readRepoJson(boundary, join(d, "package.json"));
       if (p && p.name) names.add(p.name);
     }
   }
@@ -100,18 +122,22 @@ export function collectPyManifest(repoRoot) {
   const deps = [];
   let present = false;
   let names = [];
-  try { names = readdirSync(repoRoot).filter((n) => /^requirements[\w.-]*\.(txt|in)$/i.test(n)); } catch { /* unreadable root */ }
-  try { names.push(...readdirSync(join(repoRoot, "requirements")).filter((n) => /\.(txt|in)$/i.test(n)).map((n) => `requirements/${n}`)); } catch { /* no requirements dir */ }
+  const boundary = createRepoBoundary(repoRoot);
+  try { names = readdirSync(boundary.root).filter((n) => /^requirements[\w.-]*\.(txt|in)$/i.test(n)); } catch { /* unreadable root */ }
+  try {
+    const requirements = boundary.resolve("requirements");
+    if (requirements.ok) names.push(...readdirSync(requirements.path).filter((n) => /\.(txt|in)$/i.test(n)).map((n) => `requirements/${n}`));
+  } catch { /* no requirements dir */ }
   for (const n of names) {
-    const t = readText(join(repoRoot, n));
+    const t = readRepoText(boundary, n);
     if (t == null) continue;
     present = true;
     const dev = /dev|test|lint|doc|ci/i.test(n.replace(/^requirements[/\\]?/i, ""));
     for (const d of parseRequirementsNames(t)) deps.push({ ...d, dev });
   }
-  const pp = readText(join(repoRoot, "pyproject.toml"));
+  const pp = readRepoText(boundary, "pyproject.toml");
   if (pp != null) { const r = parsePyprojectDeps(pp); if (r.present) { present = true; deps.push(...r.deps); } }
-  const pf = readText(join(repoRoot, "Pipfile"));
+  const pf = readRepoText(boundary, "Pipfile");
   if (pf != null) { const r = parsePipfileDeps(pf); if (r.present) { present = true; deps.push(...r.deps); } }
   return { present, deps };
 }

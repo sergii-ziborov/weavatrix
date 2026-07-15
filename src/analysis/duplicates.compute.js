@@ -3,6 +3,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 import { isTestPath } from "../graph/graph-filter.js";
+import { createRepoBoundary } from "../repo-path.js";
 import { stripNonCode, bodyEndLineCount, tokenize, fingerprints, extractLargeStrings } from "./duplicates.tokenize.js";
 
 const FLOOR_TOKENS = 30;   // fragments below this never enter the index (UI slider min)
@@ -132,8 +133,11 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   let graphSymbols = 0;
   for (const arr of byFile.values()) graphSymbols += arr.length;
   const frags = [];
+  const boundary = createRepoBoundary(repoPath);
   for (const [file, syms] of byFile) {
-    const full = join(repoPath, file);
+    const resolved = boundary.resolve(file);
+    if (!resolved.ok) continue;
+    const full = resolved.path;
     let lines;
     try { lines = readFileSync(full, "utf8").split(/\r?\n/); } catch { continue; }
     const py = /\.py$/i.test(file);
@@ -193,8 +197,10 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   const symFiles = new Set(byFile.keys());
   for (const file of walkAssets(repoPath, repoPath, [], 0)) {
     if (symFiles.has(file)) continue;
+    const resolved = boundary.resolve(file);
+    if (!resolved.ok) continue;
     let lines;
-    try { lines = readFileSync(join(repoPath, file), "utf8").split(/\r?\n/); } catch { continue; }
+    try { lines = readFileSync(resolved.path, "utf8").split(/\r?\n/); } catch { continue; }
     for (let start = 1; start <= lines.length; start += WINDOW_LINES) {
       const end = Math.min(start + WINDOW_LINES - 1, lines.length);
       if (end - start < 2) continue;

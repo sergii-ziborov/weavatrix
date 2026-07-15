@@ -1,6 +1,6 @@
 {
   "name": "weavatrix",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Weavatrix — code graph & blast-radius MCP server for AI coding agents: change impact, transitive dependents, health audit, duplicate detection, and coverage mapping over any local repository.",
   "author": "Sergii Ziborov <sergii@edgehawk.io>",
@@ -25,10 +25,16 @@
     "src",
     "skill",
     "README.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "build:mcpb": "node scripts/build-mcpb.mjs",
+    "verify:release": "node scripts/verify-release.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "mcp",
@@ -44,7 +50,13 @@
     "ai-agents"
   ],
   "dependencies": {
-    "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "^0.25.3"
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.25.10"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2"
+  },
+  "overrides": {
+    "tmp": "0.2.7"
   }
 }

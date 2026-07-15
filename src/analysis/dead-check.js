@@ -6,7 +6,7 @@
 // `analyzeDeadCode(graph, repoRoot)` is the thin fs wrapper. Works on ANY graph-builder-schema graph (built-in OR
 // graph-builder) — it only needs {nodes, links} + the source text. See [[graph-builder-internalization]].
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { createRepoBoundary } from "../repo-path.js";
 
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
 const bareName = (label) => String(label || "").replace(/\s*\(.*$/, "").replace(/[()]/g, "").trim();
@@ -130,7 +130,12 @@ export function computeUnusedExports(graph, sources, { dynamicTargets = new Set(
 export function analyzeDeadCode(graph, repoRoot) {
   const sources = new Map();
   const files = new Set();
+  const boundary = createRepoBoundary(repoRoot);
   for (const n of graph.nodes || []) if (n.source_file) files.add(n.source_file);
-  for (const f of files) { try { sources.set(f, readFileSync(join(repoRoot, f), "utf8")); } catch { /* file gone */ } }
+  for (const f of files) {
+    const resolved = boundary.resolve(f);
+    if (!resolved.ok) continue;
+    try { sources.set(f, readFileSync(resolved.path, "utf8")); } catch { /* file gone */ }
+  }
   return computeDead(graph, sources);
 }

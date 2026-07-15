@@ -5,7 +5,9 @@
 import {readFileSync, statSync} from 'node:fs'
 import {join} from 'node:path'
 import {spawnSync} from 'node:child_process'
+import {childProcessEnv} from '../child-env.js'
 import {buildFileImportGraph, findSccs} from '../analysis/dep-rules.js'
+import {resolveRepoPath} from '../repo-path.js'
 
 // ---- graph load + indexes -----------------------------------------------------------------------
 export function loadGraph(path) {
@@ -34,7 +36,7 @@ export function loadGraph(path) {
         push(out, s, {id: t, relation: e.relation, confidence: e.confidence})
         push(inn, t, {id: s, relation: e.relation, confidence: e.confidence})
     }
-    return {nodes, links, byId, byLabel, out, inn}
+    return {nodes, links, byId, byLabel, out, inn, repoBoundaryV: Number(raw.repoBoundaryV) || 0}
 }
 
 export const isSymbol = (id) => String(id).includes('#')
@@ -123,13 +125,13 @@ export function graphStaleness(ctx) {
     try { info.builtAt = statSync(ctx.graphPath).mtime } catch { /* no graph file — nothing to report */ }
     if (ctx.repoRoot && info.builtAt) {
         try {
-            const head = spawnSync('git', ['-C', ctx.repoRoot, 'log', '-1', '--format=%cI'], {encoding: 'utf8', timeout: 4000})
+            const head = spawnSync('git', ['-C', ctx.repoRoot, 'log', '-1', '--format=%cI'], {encoding: 'utf8', timeout: 4000, env: childProcessEnv()})
             const iso = (head.stdout || '').trim()
             if (head.status === 0 && iso) {
                 info.headAt = new Date(iso)
                 if (info.headAt > info.builtAt) {
                     info.stale = true
-                    const cnt = spawnSync('git', ['-C', ctx.repoRoot, 'rev-list', '--count', `--since=${info.builtAt.toISOString()}`, 'HEAD'], {encoding: 'utf8', timeout: 4000})
+                    const cnt = spawnSync('git', ['-C', ctx.repoRoot, 'rev-list', '--count', `--since=${info.builtAt.toISOString()}`, 'HEAD'], {encoding: 'utf8', timeout: 4000, env: childProcessEnv()})
                     if (cnt.status === 0) info.behind = Number(cnt.stdout.trim()) || null
                 }
             }
@@ -138,7 +140,7 @@ export function graphStaleness(ctx) {
         // they edit, then re-query). Count dirty files actually TOUCHED after the build — a dirty file
         // older than the graph was already part of it.
         try {
-            const st = spawnSync('git', ['-C', ctx.repoRoot, 'status', '--porcelain'], {encoding: 'utf8', timeout: 4000})
+            const st = spawnSync('git', ['-C', ctx.repoRoot, 'status', '--porcelain'], {encoding: 'utf8', timeout: 4000, env: childProcessEnv()})
             if (st.status === 0) {
                 let newer = 0
                 for (const ln of String(st.stdout || '').split(/\r?\n/).filter(Boolean).slice(0, 200)) {
@@ -170,7 +172,8 @@ export function fileStalenessNote(ctx, sourceFile) {
     const s = graphStaleness(ctx)
     if (!s.builtAt) return null
     try {
-        if (statSync(join(ctx.repoRoot, String(sourceFile))).mtime > s.builtAt) {
+        const resolved = resolveRepoPath(ctx.repoRoot, String(sourceFile))
+        if (resolved.ok && statSync(resolved.path).mtime > s.builtAt) {
             return `Note: ${sourceFile} changed after the graph was built — line numbers above may have drifted (rebuild_graph refreshes them).`
         }
     } catch { /* file gone — the read tools will surface that themselves */ }

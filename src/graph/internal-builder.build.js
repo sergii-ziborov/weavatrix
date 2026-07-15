@@ -206,7 +206,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
 
   // extImportsV: bump when the externalImports schema/coverage changes (v2 = go/python ecosystems) —
   // deps-engine rebuilds in memory when a saved graph is older than this.
-  return { nodes, links, externalImports, extImportsV: 2, complexityV: 1 };
+  return { nodes, links, externalImports, extImportsV: 2, complexityV: 1, repoBoundaryV: 1 };
 }
 
 // Build + write graph.json to outPath (creating the dir). Returns { ok, nodes, links, graphJson }.

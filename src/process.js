@@ -1,5 +1,6 @@
 // Subprocess runner shared by the search engines and security sweeps.
 import { spawn } from "node:child_process";
+import { childProcessEnv } from "./child-env.js";
 
 // Windows: .cmd/.ps1 shims (npx, etc.) can't be spawned directly by Node — they need a
 // shell. With shell:true Node does NOT quote args, so we build a quoted command line ourselves
@@ -18,13 +19,13 @@ export function runCommand(command, args = [], options = {}) {
     const child = needsShell
       ? spawn([command, ...args].map(winQuote).join(" "), [], {
           cwd: options.cwd || undefined,
-          env: { ...process.env, ...(options.env || {}) },
+          env: childProcessEnv(options.env || {}),
           shell: true,
           windowsHide: true
         })
       : spawn(command, args, {
           cwd: options.cwd || undefined,
-          env: { ...process.env, ...(options.env || {}) },
+          env: childProcessEnv(options.env || {}),
           windowsHide: true
         });
 
@@ -46,7 +47,7 @@ export function runCommand(command, args = [], options = {}) {
     const killTree = () => {
       if (process.platform === "win32" && child.pid) {
         try {
-          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, env: childProcessEnv() });
         } catch {
           try { child.kill(); } catch { /* process may already be gone */ }
         }

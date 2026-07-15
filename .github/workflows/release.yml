@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Require an npm version that supports trusted publishing
+        shell: bash
+        run: |
+          NPM_VERSION="$(npm --version)"
+          node -e "const [major, minor] = process.argv[1].split('.').map(Number); if (major < 11 || (major === 11 && minor < 5)) throw new Error('npm 11.5.1+ required, found ' + process.argv[1])" "$NPM_VERSION"
+      - run: npm ci --ignore-scripts
+      - run: npm run verify:release
+      - run: npm test
+      - run: npm audit
+      - run: npm run build:mcpb
+      - name: Generate portable bundle checksum
+        shell: bash
+        run: cd dist-mcpb && sha256sum weavatrix.mcpb > weavatrix.mcpb.sha256
+      - run: npm pack --dry-run --json
+      - name: Preserve the verified release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: weavatrix-release-${{ github.sha }}
+          path: |
+            dist-mcpb/weavatrix.mcpb
+            dist-mcpb/weavatrix.mcpb.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out tagged source without persisted credentials
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js for npm trusted publishing
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Require an npm version that supports trusted publishing
+        shell: bash
+        run: |
+          NPM_VERSION="$(npm --version)"
+          node -e "const [major, minor] = process.argv[1].split('.').map(Number); if (major < 11 || (major === 11 && minor < 5)) throw new Error('npm 11.5.1+ required, found ' + process.argv[1])" "$NPM_VERSION"
+      - name: Download the verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: weavatrix-release-${{ github.sha }}
+          path: dist-mcpb
+      - name: Verify bundle checksum
+        run: cd dist-mcpb && sha256sum --check weavatrix.mcpb.sha256
+      - name: Attest MCPB provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: dist-mcpb/weavatrix.mcpb
+      - name: Publish npm package with trusted publishing
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "weavatrix@$VERSION" version >/dev/null 2>&1; then
+            echo "weavatrix@$VERSION is already published; verifying it"
+          else
+            npm publish --ignore-scripts --provenance --access public
+          fi
+
+          PUBLISHED_HEAD=""
+          PREDICATE=""
+          for attempt in $(seq 1 24); do
+            PUBLISHED_HEAD="$(npm view "weavatrix@$VERSION" gitHead --json 2>/dev/null | tr -d '\"\r\n')"
+            PREDICATE="$(npm view "weavatrix@$VERSION" dist.attestations.provenance.predicateType --json 2>/dev/null | tr -d '\"\r\n')"
+            if [[ "$PUBLISHED_HEAD" == "$GITHUB_SHA" && "$PREDICATE" == "https://slsa.dev/provenance/v1" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          [[ "$PUBLISHED_HEAD" == "$GITHUB_SHA" ]] || { echo "npm gitHead $PUBLISHED_HEAD does not match tag commit $GITHUB_SHA" >&2; exit 1; }
+          [[ "$PREDICATE" == "https://slsa.dev/provenance/v1" ]] || { echo "npm provenance attestation is missing" >&2; exit 1; }
+      - name: Install verified MCP Registry publisher
+        shell: bash
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output mcp-publisher.tar.gz \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.0/mcp-publisher_linux_amd64.tar.gz
+          echo "1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf  mcp-publisher.tar.gz" | sha256sum --check
+          tar --extract --gzip --file mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+      - name: Publish server metadata to the official MCP Registry
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          REGISTRY_RESPONSE="$(curl --fail --silent --show-error 'https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.sergii-ziborov%2Fweavatrix')"
+          if jq --exit-status --arg version "$VERSION" \
+            '.servers[]?.server | select(.name == "io.github.sergii-ziborov/weavatrix" and .version == $version)' \
+            <<<"$REGISTRY_RESPONSE" >/dev/null; then
+            echo "MCP Registry already contains Weavatrix $VERSION; skipping publish"
+          else
+            ./mcp-publisher login github-oidc
+            ./mcp-publisher publish
+          fi
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: weavatrix-release-${{ github.sha }}
+          path: dist-mcpb
+      - name: Verify bundle checksum
+        run: cd dist-mcpb && sha256sum --check weavatrix.mcpb.sha256
+      - name: Create an immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            mkdir existing-assets
+            gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern 'weavatrix.mcpb*' --dir existing-assets
+            cmp --silent dist-mcpb/weavatrix.mcpb existing-assets/weavatrix.mcpb
+            cmp --silent dist-mcpb/weavatrix.mcpb.sha256 existing-assets/weavatrix.mcpb.sha256
+            echo "Existing release assets match the verified build; leaving them unchanged"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist-mcpb/weavatrix.mcpb \
+              dist-mcpb/weavatrix.mcpb.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi

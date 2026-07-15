@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRepoParts, readCoverageForRepo, pctFromCounts } from "./coverage-reports.js";
 import { bareSymbolName, countLocalRefsOutsideOwnRange, computeSymbolExternalRefs } from "./graph-analysis.refs.js";
+import { createRepoBoundary } from "../repo-path.js";
 
 // Aggregate a built graph.json into the file- and module-level view the UI needs:
 //   - graph-builder nodes are FILES *and* their symbols (functions/methods), linked file→symbol by the
@@ -175,11 +176,14 @@ export function aggregateGraph(graph, repoRoot) {
   const fileLoc = new Map();
   const fileText = new Map();
   if (repoRoot) {
+    const boundary = createRepoBoundary(repoRoot);
     folderLoc = {};
     for (const [sourceFile, mod] of fileModule) {
       let loc = 0;
       try {
-        const txt = readFileSync(join(repoRoot, sourceFile), "utf8");
+        const resolved = boundary.resolve(sourceFile);
+        if (!resolved.ok) throw new Error("source path is outside the repository");
+        const txt = readFileSync(resolved.path, "utf8");
         loc = txt ? txt.split("\n").length : 0;
         fileText.set(sourceFile, txt || "");
       } catch {

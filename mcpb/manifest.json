@@ -1,19 +1,21 @@
 {
-  "dxt_version": "0.1",
+  "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
-  "long_description": "Weavatrix builds a dependency graph of any local repository (tree-sitter WASM, no native toolchain) and serves it over MCP: change_impact, get_dependents, run_audit, find_duplicates (token clones, semantic name-twins, string-literal templates), coverage_map, list_endpoints and more — 23 tools. Languages: JS/TS/TSX/Python/Go/Java/C#/Rust/HTML/CSS. Local-first: source never leaves the machine; the two network-capable tools are an explicit opt-in capability group.",
+  "long_description": "Weavatrix builds a dependency graph of selected local repositories (tree-sitter WASM, no native toolchain) and serves it over MCP: change_impact, get_dependents, run_audit, find_duplicates, coverage_map, list_endpoints and more — 23 tools available, with 21 offline tools enabled by default. Repository retargeting is an explicit local tool call; the two network-capable tools remain a separate opt-in capability group.",
   "author": {
     "name": "Sergii Ziborov",
     "url": "https://weavatrix.com"
   },
   "homepage": "https://weavatrix.com",
   "documentation": "https://github.com/sergii-ziborov/weavatrix#readme",
+  "privacy_policies": ["https://weavatrix.com/privacy"],
   "license": "MIT",
   "keywords": ["code-graph", "impact-analysis", "blast-radius", "static-analysis", "dead-code", "mcp"],
   "icon": "icon.png",
+  "tools_generated": true,
   "server": {
     "type": "node",
     "entry_point": "bin/weavatrix-mcp.mjs",
@@ -21,16 +23,41 @@
       "command": "node",
       "args": [
         "${__dirname}/bin/weavatrix-mcp.mjs",
-        "${user_config.repo_root}"
-      ]
+        "${user_config.repo_root}",
+        "${user_config.capabilities}"
+      ],
+      "env": {
+        "WEAVATRIX_SYNC_URL": "${user_config.sync_url}",
+        "WEAVATRIX_SYNC_TOKEN": "${user_config.sync_token}"
+      }
     }
   },
   "user_config": {
     "repo_root": {
       "type": "directory",
       "title": "Repository to analyze",
-      "description": "The local repository Weavatrix starts with. The running server can retarget any other repo later via the open_repo tool.",
+      "description": "The initial local Git repository. open_repo can switch to another repository through an explicit offline tool call; omit retarget from a custom capability list to pin this boundary.",
       "required": true
+    },
+    "capabilities": {
+      "type": "string",
+      "title": "Capability groups",
+      "description": "Full comma-separated capability set; replaces the default. Allowed: graph,search,source,health,build,retarget,online. Pin one repo with graph,search,source,health,build; add online only when network tools are wanted.",
+      "default": "graph,search,source,health,build,retarget",
+      "required": true
+    },
+    "sync_url": {
+      "type": "string",
+      "title": "Optional graph sync endpoint",
+      "description": "Endpoint you configure and control. Used only when online is enabled and sync_graph is called.",
+      "required": false
+    },
+    "sync_token": {
+      "type": "string",
+      "title": "Optional graph sync token",
+      "description": "Bearer token sent only to the configured sync endpoint by sync_graph.",
+      "sensitive": true,
+      "required": false
     }
   },
   "compatibility": {
