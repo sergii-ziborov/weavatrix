@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.sergii-ziborov/weavatrix",
-  "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection (incl. semantic name-twins and string-literal templates), coverage mapping over any local repository. Local-first; JS/TS/Python/Go/Java/C#/Rust.",
+  "description": "Code graph & blast-radius MCP for AI agents: change impact, dependents, health audit, clones.",
   "repository": {
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
