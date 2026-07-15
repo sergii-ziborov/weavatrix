@@ -25,13 +25,14 @@ If only `refresh_advisories` or `sync_graph` is missing, do not diagnose a broke
   code. A same-name/different-body pair is a divergence candidate, not proof of duplication.
 - **Freshness**: every graph tool appends a staleness warning when the repo has commits newer than
   the graph. Act on it: `rebuild_graph`. A normal `open_repo` builds missing graphs and upgrades
-  pre-`0.1.3` graphs to typed import edges; `build:false` deliberately refuses that upgrade.
+  pre-`0.1.4` graphs to edge metadata v2; `build:false` deliberately refuses that upgrade.
 - **Ambiguity**: `get_node`/`get_neighbors`/`get_dependents` disclose `matched N nodes; using the
   best-connected` — read that note before trusting the answer; pass an exact node id to pin it.
-- **Runtime versus compile time**: keep runtime cycles and TypeScript type-only coupling separate.
-  `module_map` and `change_impact` label the distinction; `god_nodes` ranks unique connectivity and
-  reports repeated references separately. Do not schedule a runtime-cycle refactor from type-only
-  edges alone.
+- **Runtime versus compile time**: keep runtime cycles separate from TypeScript type-only and
+  language compile-only coupling (Rust `mod`/`use`/`pub use`, Java imports). `module_map`,
+  `change_impact` and `graph_diff` label the distinction; `god_nodes` ranks unique connectivity and
+  reports repeated references separately. Do not schedule a runtime-cycle refactor from
+  compile-time-only edges.
 - **Repository universe**: in Git repositories, graph and duplicate scans include tracked plus
   non-ignored untracked files. If an old graph still contains packaged/generated output, rebuild it
   before interpreting the result.
@@ -69,7 +70,7 @@ If only `refresh_advisories` or `sync_graph` is missing, do not diagnose a broke
   `graph_diff` (optionally scoped by `path`). The semantic complement to the textual git diff.
 - **Health sweep**: `run_audit` (filter by `category`/`min_severity`) → `find_duplicates` →
   `coverage_map`. Inspect the source behind shortlisted findings before proposing edits.
-- **API inventory**: `list_endpoints`.
+- **API inventory**: `list_endpoints` (including Next.js App Router, Rust axum and actix-web).
 - **Find code**: `search_code` (regex + glob) → `get_node` → `read_source`.
 - **Another repo**: `list_known_repos` → `open_repo <path>`
   (builds or upgrades the graph when needed; `build:false` probes without building).
@@ -77,13 +78,15 @@ If only `refresh_advisories` or `sync_graph` is missing, do not diagnose a broke
 ## Repository-specific conventions
 
 Weavatrix understands nearest workspace manifests, nested `tsconfig`/`jsconfig` aliases,
-framework-owned runtime peers such as Next.js + `react-dom`, and Next.js App Router route exports.
-For project-specific entry points or Python dependencies supplied by an external runtime, add
-`.weavatrix-deps.json` at the repository root:
+framework-owned runtime peers such as Next.js + `react-dom`, generated NAPI-RS platform loaders,
+and Next.js App Router route exports. For project-specific entry points, reusable template catalogs,
+or Python dependencies supplied by an external runtime, add `.weavatrix-deps.json` at the repository
+root:
 
 ```json
 {
   "entrypoints": ["scripts/publish-release.mjs"],
+  "nonRuntimeRoots": ["library", "catalogs/examples"],
   "python": {
     "managedDependencies": ["numpy", "openvino-genai"],
     "ignoreDependencies": ["vendor-sdk"]
@@ -91,13 +94,17 @@ For project-specific entry points or Python dependencies supplied by an external
 }
 ```
 
-Keep exceptions narrow. `managedDependencies` documents modules provided outside the repo's Python
-manifest; `ignoreDependencies` suppresses intentionally unresolved imports.
+Keep exceptions narrow. `nonRuntimeRoots` (alias `templateRoots`) marks reusable examples that are
+not one deployed application. It suppresses orphan/dead/unused-export noise and missing/unresolved
+dependency findings when every use is inside those roots; graph edges, cycles and boundaries remain
+visible. `managedDependencies` documents modules provided outside the repo's Python manifest;
+`ignoreDependencies` suppresses intentionally unresolved imports.
 
 ## Sync
 
-`sync_graph` uses allowlisted payload v2, including typed-edge metadata but no source bodies. A graph
-built before `0.1.3` must be rebuilt first; normal `open_repo` does this automatically. Sync remains
+`sync_graph` uses allowlisted payload v2, including type-only/compile-only edge metadata but no
+source bodies. A graph built before `0.1.4` must be rebuilt first; normal `open_repo` does this
+automatically. Sync remains
 unavailable until the user opts into `online` and configures `WEAVATRIX_SYNC_URL`.
 
 ## Troubleshooting

@@ -16,7 +16,7 @@ import { scanMalware } from "../security/malware-heuristics.js";
 import { classifyTyposquat } from "../security/typosquat.js";
 import {
   readJson, readRepoText, readRepoJson, collectSourceTexts, collectConfigTexts, workspacePkgNames,
-  collectPackageScopes, collectPyManifest, TEST_FILE_RE,
+  collectPackageScopes, collectPyManifest, collectNonRuntimeRoots, TEST_FILE_RE,
 } from "./internal-audit.collect.js";
 import { entryFiles, computeReachability } from "./internal-audit.reach.js";
 import { createRepoBoundary } from "../repo-path.js";
@@ -40,19 +40,23 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
 
   // Graphs can be stale or miss a helper file; text fallbacks must scan the real repo tree too.
   const sources = collectSourceTexts(repoPath, graph);
+  const nonRuntimeRoots = collectNonRuntimeRoots(repoPath, rules);
 
   const entries = entryFiles(graph, packageScopes, dynamicTargets, {
     declaredEntries: rules.entrypoints || rules.entries || [],
     sources,
   });
+  for (const file of sources.keys()) {
+    if (nonRuntimeRoots.some((root) => file === root || file.startsWith(`${root}/`))) entries.add(file);
+  }
   const dead = computeDead(graph, sources, { entrySet: entries });
   const unusedExports = computeUnusedExports(graph, sources, { dynamicTargets, entrySet: entries });
   const reachable = computeReachability(graph, entries);
   const configTexts = collectConfigTexts(repoPath);
-  const dep = computeScopedDepFindings({ externalImports, packageScopes, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts });
+  const dep = computeScopedDepFindings({ externalImports, packageScopes, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts, nonRuntimeRoots });
   // non-npm ecosystems: Go (go.mod) + Python (requirements/pyproject/Pipfile) — same findings shape
   const goModText = readRepoText(boundary, "go.mod");
-  const goDep = computeGoDepFindings({ externalImports, goMod: goModText != null ? parseGoMod(goModText) : null });
+  const goDep = computeGoDepFindings({ externalImports, goMod: goModText != null ? parseGoMod(goModText) : null, nonRuntimeRoots });
   const asList = (v) => Array.isArray(v) ? v : typeof v === "string" ? [v] : [];
   const pyRules = rules.python || {};
   const depRules = rules.dependencies || {};
@@ -66,7 +70,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   ])];
   const pyDep = computePyDepFindings({
     externalImports, pyManifest: collectPyManifest(repoPath), configTexts,
-    managedDependencies: managedPython, ignoredDependencies: ignoredPython,
+    managedDependencies: managedPython, ignoredDependencies: ignoredPython, nonRuntimeRoots,
   });
 
   // structure: cycles / orphans / boundary rules. Rules come from the repo's optional .weavatrix-deps.json
@@ -229,6 +233,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       malwareStatus: checks.malware.status,
       packageScopes: packageScopes.length,
       managedPythonDependencies: managedPython.length,
+      nonRuntimeRoots,
     },
     summary: summarizeFindings(sorted),
     findings: sorted,

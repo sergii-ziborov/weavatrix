@@ -6,8 +6,8 @@ import {readFileSync, statSync} from 'node:fs'
 import {join} from 'node:path'
 import {spawnSync} from 'node:child_process'
 import {childProcessEnv} from '../child-env.js'
-import {buildFileImportGraph, findSccs} from '../analysis/dep-rules.js'
 import {resolveRepoPath} from '../repo-path.js'
+import {isStructuralRelation} from '../graph/relations.js'
 
 // ---- graph load + indexes -----------------------------------------------------------------------
 export function loadGraph(path) {
@@ -37,6 +37,7 @@ export function loadGraph(path) {
             relation: e.relation,
             confidence: e.confidence,
             ...(e.typeOnly === true ? {typeOnly: true} : {}),
+            ...(e.compileOnly === true ? {compileOnly: true} : {}),
             ...(Number.isInteger(e.line) ? {line: e.line} : {}),
             ...(typeof e.specifier === 'string' ? {specifier: e.specifier} : {}),
         }
@@ -51,15 +52,15 @@ export function loadGraph(path) {
 }
 
 export const isSymbol = (id) => String(id).includes('#')
-export const degreeOf = (g, id) => (g.out.get(id)?.length || 0) + (g.inn.get(id)?.length || 0)
 export const labelOf = (g, id) => {
     const n = g.byId.get(String(id))
     return n ? String(n.label ?? n.id) : String(id)
 }
 
-// "connectivity" degree ignores structural `contains` (parent→symbol nesting) so god_nodes surfaces real
-// call/import/reference hubs, not just files that hold many symbols.
-export const connList = (list) => (list || []).filter((e) => e.relation !== 'contains')
+// Connectivity ignores structural file/symbol and class/method ownership, so runtime/compile-time
+// dependency ranks never treat nesting as a call or import.
+export const connList = (list) => (list || []).filter((e) => !isStructuralRelation(e.relation))
+export const degreeOf = (g, id) => connList(g.out.get(id)).length + connList(g.inn.get(id)).length
 export const uniqueConnCount = (list) => new Set(connList(list).map((e) => String(e.id))).size
 
 // Resolve a user-supplied "label" to a node: exact id → exact label → ci label → substring (best degree).
@@ -203,164 +204,4 @@ export function rawGraph(ctx) {
     return rawGraphCache.data
 }
 
-// ---- graph diff ----------------------------------------------------------------------------------
-// One previous state is enough (4-13 MB per repo — cheap): rebuild_graph snapshots the outgoing
-// graph.json as graph.prev.json and reports the structural delta inline, at the exact moment the fix
-// is being verified. graph_diff re-queries the same pair later. Raw node/edge dumps would be noise —
-// the signal is aggregated: module-dependency drift, cycle count changes, newly orphaned symbols.
-export const prevGraphPathFor = (graphPath) => String(graphPath).replace(/\.json$/, '.prev.json')
-export const edgeEndpoint = (v) => String(v && typeof v === 'object' ? v.id : v)
-export const fileOfId = (id) => { const s = String(id); const h = s.indexOf('#'); return h < 0 ? s : s.slice(0, h) }
-const folderOfFile = (file) => {
-    const dirs = String(file || '').split(/[\\/]/).filter(Boolean).slice(0, -1)
-    return dirs.length ? dirs.slice(0, 2).join('/') : '(root)'
-}
-
-// Works on anything with {nodes, links}: the raw graph.json shape and the loadGraph struct alike.
-export function diffGraphs(oldG, newG) {
-    const oldEdgeTypesV = Number(oldG.edgeTypesV) || 0
-    const newEdgeTypesV = Number(newG.edgeTypesV) || 0
-    const schemaMigration = oldEdgeTypesV !== newEdgeTypesV
-    const nodeIds = (graph) => new Set((graph.nodes || []).map((n) => String(n.id)))
-    const oldNodes = nodeIds(oldG)
-    const newNodes = nodeIds(newG)
-
-    const edgeKey = (l) => `${edgeEndpoint(l.source)}|${l.relation || ''}|${schemaMigration ? 'untyped' : l.typeOnly === true ? 'type' : 'runtime'}|${edgeEndpoint(l.target)}`
-    const edgeSet = (graph) => new Set((graph.links || []).map(edgeKey))
-    const oldEdges = edgeSet(oldG)
-    const newEdges = edgeSet(newG)
-
-    const moduleEdges = (graph, typeOnly) => {
-        const set = new Set()
-        for (const l of graph.links || []) {
-            if (l.relation === 'contains') continue
-            if ((l.typeOnly === true) !== typeOnly) continue
-            const a = folderOfFile(fileOfId(edgeEndpoint(l.source)))
-            const b = folderOfFile(fileOfId(edgeEndpoint(l.target)))
-            if (a !== b) set.add(`${a} → ${b}`)
-        }
-        return set
-    }
-    const combinedModuleEdges = (graph) => {
-        const set = new Set()
-        for (const l of graph.links || []) {
-            if (l.relation === 'contains') continue
-            const a = folderOfFile(fileOfId(edgeEndpoint(l.source)))
-            const b = folderOfFile(fileOfId(edgeEndpoint(l.target)))
-            if (a !== b) set.add(`${a} → ${b}`)
-        }
-        return set
-    }
-    const oldMods = schemaMigration ? combinedModuleEdges(oldG) : moduleEdges(oldG, false)
-    const newMods = schemaMigration ? combinedModuleEdges(newG) : moduleEdges(newG, false)
-    const oldTypeMods = schemaMigration ? new Set() : moduleEdges(oldG, true)
-    const newTypeMods = schemaMigration ? new Set() : moduleEdges(newG, true)
-
-    const incoming = (graph) => {
-        const m = new Map()
-        for (const l of graph.links || []) {
-            if (l.relation === 'contains') continue
-            const t = edgeEndpoint(l.target)
-            m.set(t, (m.get(t) || 0) + 1)
-        }
-        return m
-    }
-    const oldIn = incoming(oldG)
-    const newIn = incoming(newG)
-
-    const cycles = (graph, includeTypeOnly) => {
-        try {
-            const sccs = findSccs(buildFileImportGraph(graph, {includeTypeOnly}).adj)
-                .map((members) => members.map(String).sort())
-                .sort((a, b) => b.length - a.length || a.join('\n').localeCompare(b.join('\n')))
-            return {
-                count: sccs.length,
-                largest: sccs[0]?.length || 0,
-                groups: sccs,
-            }
-        } catch {
-            return null
-        }
-    }
-    const cycleDelta = (before, after) => {
-        if (!before || !after) return null
-        const key = (group) => group.join('|')
-        const beforeKeys = new Set(before.groups.map(key))
-        const afterKeys = new Set(after.groups.map(key))
-        const overlap = (a, b) => {
-            const bSet = new Set(b)
-            return a.reduce((n, member) => n + (bSet.has(member) ? 1 : 0), 0)
-        }
-        const unmatchedBefore = before.groups.filter((group) => !afterKeys.has(key(group)))
-        const unmatchedAfter = after.groups.filter((group) => !beforeKeys.has(key(group)))
-        const changed = unmatchedAfter.filter((group) => unmatchedBefore.some((old) => overlap(group, old) >= 2))
-        const introduced = unmatchedAfter.filter((group) => !unmatchedBefore.some((old) => overlap(group, old) >= 2))
-        const resolved = unmatchedBefore.filter((group) => !unmatchedAfter.some((next) => overlap(group, next) >= 2))
-        return {
-            before: before.count,
-            after: after.count,
-            largestBefore: before.largest,
-            largestAfter: after.largest,
-            introduced: introduced.map(key),
-            resolved: resolved.map(key),
-            membershipChanged: changed.length,
-        }
-    }
-
-    return {
-        schemaMigration: schemaMigration ? {from: oldEdgeTypesV, to: newEdgeTypesV} : null,
-        nodes: {
-            added: [...newNodes].filter((id) => !oldNodes.has(id)),
-            removed: [...oldNodes].filter((id) => !newNodes.has(id))
-        },
-        edges: {
-            added: [...newEdges].filter((k) => !oldEdges.has(k)).length,
-            removed: [...oldEdges].filter((k) => !newEdges.has(k)).length
-        },
-        moduleEdges: {
-            added: [...newMods].filter((k) => !oldMods.has(k)),
-            removed: [...oldMods].filter((k) => !newMods.has(k)),
-            typeAdded: [...newTypeMods].filter((k) => !oldTypeMods.has(k)),
-            typeRemoved: [...oldTypeMods].filter((k) => !newTypeMods.has(k)),
-        },
-        // survived the rebuild but lost every caller/importer — likely made dead by the change
-        orphaned: [...oldIn.keys()].filter((id) => newNodes.has(id) && !newIn.has(id)),
-        cycles: {
-            runtime: schemaMigration ? null : cycleDelta(cycles(oldG, false), cycles(newG, false)),
-            typeInclusive: schemaMigration ? null : cycleDelta(cycles(oldG, true), cycles(newG, true)),
-        }
-    }
-}
-
-export function formatGraphDiff(d) {
-    if (!d.nodes.added.length && !d.nodes.removed.length && !d.edges.added && !d.edges.removed) {
-        return d.schemaMigration
-            ? `Graph edge schema upgraded v${d.schemaMigration.from} → v${d.schemaMigration.to}; typed baseline established. Runtime/type cycle and module classifications are intentionally not compared on this rebuild.`
-            : 'No structural change between the two graph states.'
-    }
-    const cap = (list, n) => list.slice(0, n).map((x) => `  ${x}`).concat(list.length > n ? [`  … +${list.length - n} more`] : [])
-    const lines = [`Structural delta: nodes +${d.nodes.added.length}/−${d.nodes.removed.length}, edges +${d.edges.added}/−${d.edges.removed}.`]
-    if (d.schemaMigration) lines.push(`Graph edge schema upgraded v${d.schemaMigration.from} → v${d.schemaMigration.to}; runtime/type cycle and module classifications are intentionally not compared until the next rebuild.`)
-    const runtime = d.cycles?.runtime
-    if (runtime && (runtime.before !== runtime.after || runtime.largestBefore !== runtime.largestAfter || runtime.introduced.length || runtime.resolved.length || runtime.membershipChanged)) {
-        const changes = []
-        if (runtime.introduced.length) changes.push(`${runtime.introduced.length} genuinely new runtime SCC(s) — review`)
-        if (runtime.resolved.length) changes.push(`${runtime.resolved.length} runtime SCC(s) resolved`)
-        if (runtime.membershipChanged) changes.push(`${runtime.membershipChanged} SCC membership change(s)`)
-        const verdict = changes.length ? `; ${changes.join('; ')}` : ''
-        lines.push(`Runtime import cycles: count ${runtime.before} → ${runtime.after}, largest SCC ${runtime.largestBefore} → ${runtime.largestAfter}${verdict}.`)
-    }
-    const all = d.cycles?.typeInclusive
-    if (all && (all.before !== all.after || all.largestBefore !== all.largestAfter) &&
-        (!runtime || all.before !== runtime.before || all.after !== runtime.after || all.largestBefore !== runtime.largestBefore || all.largestAfter !== runtime.largestAfter)) {
-        lines.push(`Type-inclusive dependency SCCs: count ${all.before} → ${all.after}, largest ${all.largestBefore} → ${all.largestAfter} (compile-time coupling, not necessarily a runtime cycle).`)
-    }
-    if (d.moduleEdges.added.length) lines.push('NEW module dependencies (architecture drift — review):', ...cap(d.moduleEdges.added, 12))
-    if (d.moduleEdges.removed.length) lines.push('Removed module dependencies (decoupling confirmed):', ...cap(d.moduleEdges.removed, 12))
-    if (d.moduleEdges.typeAdded.length) lines.push('New type-only module dependencies (compile-time coupling):', ...cap(d.moduleEdges.typeAdded, 12))
-    if (d.moduleEdges.typeRemoved.length) lines.push('Removed type-only module dependencies:', ...cap(d.moduleEdges.typeRemoved, 12))
-    if (d.orphaned.length) lines.push('Symbols that lost their last caller/importer (now dead?):', ...cap(d.orphaned, 10))
-    if (d.nodes.added.length) lines.push('Added nodes:', ...cap(d.nodes.added, 12))
-    if (d.nodes.removed.length) lines.push('Removed nodes:', ...cap(d.nodes.removed, 12))
-    return lines.join('\n')
-}
+export {prevGraphPathFor, edgeEndpoint, fileOfId, diffGraphs, formatGraphDiff} from './graph-diff.mjs'

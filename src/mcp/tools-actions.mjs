@@ -45,7 +45,7 @@ export async function tOpenRepo(g, args, ctx) {
     if (existsSync(graphPath)) {
         try {
             const saved = JSON.parse(readFileSync(graphPath, 'utf8'))
-            upgrade = !Number.isInteger(saved.edgeTypesV) || saved.edgeTypesV < 1
+            upgrade = !Number.isInteger(saved.edgeTypesV) || saved.edgeTypesV < 2
         } catch {
             upgrade = true
         }
@@ -53,7 +53,7 @@ export async function tOpenRepo(g, args, ctx) {
     if (!existsSync(graphPath) || upgrade) {
         if (args.build === false) {
             return upgrade
-                ? `The existing graph for ${repoPath} predates typed import edges. Re-call without build:false to upgrade it before switching.`
+                ? `The existing graph for ${repoPath} predates compile-only edge metadata (edge schema v2). Re-call without build:false to upgrade it before switching.`
                 : `No graph yet for ${repoPath} (expected at ${graphPath}). Re-call without build:false to build one — large repos can take minutes.`
         }
         const mode = ['no-tests', 'tests-only', 'full'].includes(args.mode) ? args.mode : 'full'
@@ -71,7 +71,7 @@ export async function tOpenRepo(g, args, ctx) {
         ctx.reload()
         return `Failed to load ${graphPath} — still targeting the previous repo (${prev.repoRoot || 'none'}).`
     }
-    const buildNote = built ? (upgrade ? ' (graph upgraded to typed import edges)' : ' (graph built fresh)') : ''
+    const buildNote = built ? (upgrade ? ' (graph upgraded to edge metadata v2)' : ' (graph built fresh)') : ''
     return `Opened ${repoPath}${buildNote}: ${loaded.nodes.length} nodes / ${loaded.links.length} edges. All tools now target this repo.`
 }
 

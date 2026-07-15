@@ -1,6 +1,8 @@
 // Reading a built graph.json and summarizing it for the UI cards: named communities and degree
 // hotspots. Both read the graph file from disk and return [] on any failure.
 import { readFileSync } from "node:fs";
+import { communityTerritoryOf } from "../graph/community.js";
+import { isStructuralRelation } from "../graph/relations.js";
 
 // graph-builder labels communities "Community N" without an LLM. Derive a real name from each
 // community's dominant folder + sample files so the UI shows modules, not bare numbers.
@@ -16,7 +18,7 @@ export function summarizeCommunities(graphJsonPath, max = 40) {
       const entry = byCommunity.get(community);
       entry.size += 1;
       const parts = String(node.source_file || "").split(/[\\/]/).filter(Boolean);
-      const dir = parts.length > 1 ? parts.slice(0, 2).join("/") : "(root)";
+      const dir = communityTerritoryOf(node.source_file);
       entry.dirs.set(dir, (entry.dirs.get(dir) || 0) + 1);
       if (entry.files.length < 4) entry.files.push(parts[parts.length - 1] || node.source_file || "");
     }
@@ -41,6 +43,7 @@ export function summarizeHotspots(graphJsonPath, max = 15) {
     const inDeg = new Map();
     const outDeg = new Map();
     for (const link of graph.links || []) {
+      if (isStructuralRelation(link.relation)) continue;
       const s = endpoint(link.source);
       const t = endpoint(link.target);
       outDeg.set(s, (outDeg.get(s) || 0) + 1);

@@ -1,16 +1,18 @@
 // endpoints.js — detect the repo's OWN HTTP API surface (routes it EXPOSES), so the Health tab can
 // surface endpoints the way infra towers surface the services a repo TALKS TO. Each endpoint carries a
 // best-effort handler NAME so the UI can join it to that method's health (O(n) complexity, criticality,
-// coverage). Covers the common shapes across JS/TS, Python and Go:
+// coverage). Covers the common shapes across JS/TS, Python, Go and Rust:
 //   • object routes (Bun.serve / custom):  "/path": { GET: handler, POST: fn }   |   "/path": handler
 //   • method-call routes (Express/Fastify/Koa/Hono/gin/echo):  app.get("/path", handler)
 //   • decorators (FastAPI/Flask/NestJS):   @app.get("/path")  /  @Get("/path")
 //   • Go net/http:                          mux.HandleFunc("/path", handler)
+//   • Rust axum/actix-web:                  .route("/path", get(handler)) / #[get("/path")]
 import { safeRead } from "../util.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { extractRustEndpoints } from "./endpoints-rust.js";
 
 const MAX_FILES = 3000;
-const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ALL", "ANY"]);
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT", "ALL", "ANY"]);
 // UNAMBIGUOUS HTTP CLIENTS (make requests) vs servers (define routes) — reject `axios.get("/x")`-style client
 // calls in frontend code. Ambiguous names (api/client/service — could be a server router) are NOT listed;
 // they're filtered by the handler requirement instead (a client call has no handler / a config object arg).
@@ -31,7 +33,9 @@ function lineAt(text, index) {
 function handlerName(expr) {
   const s = String(expr || "").trim();
   if (!s) return "";
-  if (/=>/.test(s) || /^\s*(async\s+)?function\b/.test(s)) return "";
+  if (/=>/.test(s) || /^\s*(async\s+)?function\b/.test(s) || /^\s*(?:async\s+)?(?:move\s+)?\|[^|]*\|/.test(s)) return "";
+  const turbofish = /(?:^|::)([A-Za-z_][\w]*)\s*::<[\s\S]*>\s*$/.exec(s);
+  if (turbofish) return turbofish[1];
   const ids = s.match(/[A-Za-z_$][\w$]*/g);
   if (!ids) return "";
   const SKIP = new Set(["async", "function", "await", "req", "res", "ctx", "request", "response", "next", "return"]);
@@ -68,6 +72,7 @@ export function nextRoutePath(file) {
 export function extractEndpointsFromText(text, file) {
   const out = [];
   const py = /\.py$/i.test(file);
+  const rust = /\.rs$/i.test(file);
   const add = (method, path, expr, idx) => {
     const p = cleanPath(path);
     if (!looksLikePath(p)) return;
@@ -100,6 +105,8 @@ export function extractEndpointsFromText(text, file) {
       }
     }
   }
+
+  if (rust) extractRustEndpoints(text, add);
 
   // ---- object routes: "/path": { GET: fn, POST: fn2 }  or  "/path": handler --------------------
   // find each  "…": {  or  "…": expr,  where the key looks like a path
@@ -171,7 +178,7 @@ export function detectEndpoints(repoPath, codeFiles) {
   const boundary = createRepoBoundary(repoPath);
   for (const f of files) {
     const rel = f.path || f;
-    if (!/\.(js|ts|tsx|jsx|cjs|mjs|py|go)$/i.test(rel)) continue;
+    if (!/\.(js|ts|tsx|jsx|cjs|mjs|py|go|rs)$/i.test(rel)) continue;
     const resolved = boundary.resolve(rel);
     if (!resolved.ok) continue;
     const text = safeRead(resolved.path);

@@ -28,7 +28,7 @@ test("god_nodes ranks unique runtime neighbors and does not double-count bidirec
     { source: "TypeHub", target: "T2", relation: "imports", typeOnly: true },
     { source: "TypeHub", target: "T3", relation: "imports", typeOnly: true },
   ];
-  const fx = graphFile({ nodes, links, edgeTypesV: 1 });
+  const fx = graphFile({ nodes, links, edgeTypesV: 2 });
   try {
     const output = tGodNodes(fx.graph, { top_n: 8 });
     const rows = output.split("\n").filter((line) => /^\s*\d+\./.test(line));
@@ -45,7 +45,7 @@ test("god_nodes preserves repeated-call complexity as a secondary lens", () => {
     { source: "Broad", target: "B3", relation: "calls" },
     ...Array.from({ length: 24 }, () => ({ source: "Repeated", target: "Helper", relation: "calls" })),
   ];
-  const fx = graphFile({ nodes, links, edgeTypesV: 1 });
+  const fx = graphFile({ nodes, links, edgeTypesV: 2 });
   try {
     const output = tGodNodes(fx.graph, { top_n: 1 });
     assert.match(output.split("\n")[1], /Broad/, "unique-neighbor coupling stays the primary rank");
@@ -55,7 +55,7 @@ test("god_nodes preserves repeated-call complexity as a secondary lens", () => {
 
 test("get_dependents keeps a real runtime path even when a shorter type-only path exists", () => {
   const fx = graphFile({
-    edgeTypesV: 1,
+    edgeTypesV: 2,
     nodes: ["A", "R", "T"].map((id) => ({ id, label: id })),
     links: [
       { source: "A", target: "T", relation: "imports", typeOnly: true },
@@ -69,10 +69,52 @@ test("get_dependents keeps a real runtime path even when a shorter type-only pat
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test("get_dependents labels Rust compile-only paths without promoting them to runtime impact", () => {
+  const fx = graphFile({
+    edgeTypesV: 2,
+    nodes: ["crate/src/lib.rs", "crate/src/api.rs"].map((id) => ({ id, label: id })),
+    links: [
+      { source: "crate/src/lib.rs", target: "crate/src/api.rs", relation: "imports", compileOnly: true },
+    ],
+  });
+  try {
+    const output = tGetDependents(fx.graph, { label: "crate/src/api.rs", depth: 1 });
+    assert.match(output, /\[d1 compile-time\].*crate\/src\/lib\.rs/);
+    assert.doesNotMatch(output, /\[d1 runtime\]/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("Java method ownership is structural in god_nodes and reverse impact", () => {
+  const fx = graphFile({
+    edgeTypesV: 2,
+    nodes: [
+      { id: "Child.java#Child@1", label: "Child" },
+      { id: "Child.java#work@2", label: "work()" },
+    ],
+    links: [
+      { source: "Child.java#Child@1", target: "Child.java#work@2", relation: "method" },
+    ],
+  });
+  try {
+    const godNodes = tGodNodes(fx.graph, { top_n: 10 });
+    assert.match(godNodes, /Child\s+\(0 unique: 0 runtime, 0 compile-only;[^)]*owns 1 method\)/);
+    assert.doesNotMatch(godNodes, /Child\s+\(1 unique/);
+    assert.match(tGetDependents(fx.graph, { label: "work()", depth: 1 }), /No dependents found/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("graph_diff treats a method with only ownership remaining as newly orphaned", () => {
+  const nodes = ["Child.java#Child@1", "Child.java#work@2", "Caller.java#call@1"].map((id) => ({ id }));
+  const ownership = { source: nodes[0].id, target: nodes[1].id, relation: "method" };
+  const oldGraph = { edgeTypesV: 2, nodes, links: [ownership, { source: nodes[2].id, target: nodes[1].id, relation: "calls" }] };
+  const newGraph = { edgeTypesV: 2, nodes, links: [ownership] };
+  assert.ok(diffGraphs(oldGraph, newGraph).orphaned.includes(nodes[1].id));
+});
+
 test("graph_diff calls an SCC shrink a membership change, not a newly introduced cycle", () => {
   const nodes = ["A", "B", "T"].map((id) => ({ id }));
   const oldGraph = {
-    edgeTypesV: 1, nodes,
+    edgeTypesV: 2, nodes,
     links: [
       { source: "A", target: "B", relation: "imports" },
       { source: "B", target: "T", relation: "imports" },
@@ -80,7 +122,7 @@ test("graph_diff calls an SCC shrink a membership change, not a newly introduced
     ],
   };
   const newGraph = {
-    edgeTypesV: 1, nodes,
+    edgeTypesV: 2, nodes,
     links: [
       { source: "A", target: "B", relation: "imports" },
       { source: "B", target: "A", relation: "imports" },
@@ -94,39 +136,76 @@ test("graph_diff calls an SCC shrink a membership change, not a newly introduced
   assert.doesNotMatch(output, /genuinely new runtime SCC/);
 });
 
-test("graph_diff establishes a typed baseline instead of comparing legacy runtime classifications", () => {
+test("graph_diff establishes a compile-time baseline instead of comparing legacy runtime classifications", () => {
   const nodes = [{ id: "A" }, { id: "B" }];
-  const oldGraph = { edgeTypesV: 0, nodes, links: [{ source: "A", target: "B", relation: "imports" }] };
-  const newGraph = { edgeTypesV: 1, nodes, links: [{ source: "A", target: "B", relation: "imports", typeOnly: true }] };
+  const oldGraph = { edgeTypesV: 1, nodes, links: [{ source: "A", target: "B", relation: "imports" }] };
+  const newGraph = { edgeTypesV: 2, nodes, links: [{ source: "A", target: "B", relation: "imports", compileOnly: true }] };
   const delta = diffGraphs(oldGraph, newGraph);
   assert.equal(delta.edges.added, 0);
   assert.equal(delta.edges.removed, 0);
   assert.equal(delta.cycles.runtime, null);
-  assert.match(formatGraphDiff(delta), /typed baseline established/);
+  assert.match(formatGraphDiff(delta), /compile-time baseline established/);
 });
 
-test("module aggregation and module_map separate runtime from type-only dependencies", () => {
+test("graph_diff does not call newly extractable Rust edges architecture drift during schema migration", () => {
+  const nodes = ["crate/src/lib.rs", "crate/src/api/mod.rs"].map((id) => ({ id }));
+  const oldGraph = { edgeTypesV: 1, nodes, links: [] };
+  const newGraph = {
+    edgeTypesV: 2,
+    nodes,
+    links: [{ source: nodes[0].id, target: nodes[1].id, relation: "imports", compileOnly: true }],
+  };
+  const delta = diffGraphs(oldGraph, newGraph);
+  assert.deepEqual(delta.moduleEdges.added, []);
+  assert.deepEqual(delta.moduleEdges.compileAdded, []);
+  const output = formatGraphDiff(delta);
+  assert.match(output, /schema upgraded/);
+  assert.doesNotMatch(output, /NEW module dependencies|New compile-only module dependencies/);
+});
+
+test("graph_diff reports compile-only module drift separately from runtime architecture", () => {
+  const nodes = ["crate/src/lib.rs", "crate/src/api/mod.rs"].map((id) => ({ id }));
+  const oldGraph = { edgeTypesV: 2, nodes, links: [] };
+  const newGraph = {
+    edgeTypesV: 2,
+    nodes,
+    links: [{ source: nodes[0].id, target: nodes[1].id, relation: "imports", compileOnly: true }],
+  };
+  const delta = diffGraphs(oldGraph, newGraph);
+  assert.deepEqual(delta.moduleEdges.added, []);
+  assert.deepEqual(delta.moduleEdges.compileAdded, ["crate/src → crate/src/api"]);
+  assert.match(formatGraphDiff(delta), /New compile-only module dependencies/);
+  assert.doesNotMatch(formatGraphDiff(delta), /NEW module dependencies/);
+});
+
+test("module aggregation and module_map separate runtime, type-only, and compile-only dependencies", () => {
   const graph = {
-    edgeTypesV: 1,
+    edgeTypesV: 2,
     nodes: [
       { id: "renderer/global.d.ts", source_file: "renderer/global.d.ts", file_type: "code" },
       { id: "main/preload.ts", source_file: "main/preload.ts", file_type: "code" },
       { id: "main/a.ts", source_file: "main/a.ts", file_type: "code" },
       { id: "shared/b.ts", source_file: "shared/b.ts", file_type: "code" },
+      { id: "watcher-rs/src/lib.rs", source_file: "watcher-rs/src/lib.rs", file_type: "code" },
+      { id: "watcher-rs/src/api/mod.rs", source_file: "watcher-rs/src/api/mod.rs", file_type: "code" },
     ],
     links: [
       { source: "renderer/global.d.ts", target: "main/preload.ts", relation: "imports", typeOnly: true },
       { source: "main/a.ts", target: "shared/b.ts", relation: "imports" },
+      { source: "watcher-rs/src/lib.rs", target: "watcher-rs/src/api/mod.rs", relation: "imports", compileOnly: true },
     ],
   };
   const aggregate = aggregateGraph(graph, null);
   assert.deepEqual(aggregate.moduleEdges, [{ from: "main", to: "shared", count: 1 }]);
   assert.deepEqual(aggregate.typeOnlyModuleEdges, [{ from: "renderer", to: "main", count: 1 }]);
+  assert.deepEqual(aggregate.compileOnlyModuleEdges, [{ from: "watcher-rs/src", to: "watcher-rs/src/api", count: 1 }]);
+  assert.equal(aggregate.totals.compileTimeModuleEdges, 2);
 
   const fx = graphFile(graph);
   try {
     const output = tModuleMap(fx.graph, { top_n: 10 }, { graphPath: fx.path });
     assert.match(output, /Strongest runtime module dependencies:[\s\S]*main → shared/);
-    assert.match(output, /Type-only module dependencies[\s\S]*renderer → main/);
+    assert.match(output, /Compile-time module dependencies[\s\S]*renderer → main  \(1; 1 type-only, 0 compile-only\)/);
+    assert.match(output, /watcher-rs\/src → watcher-rs\/src\/api  \(1; 0 type-only, 1 compile-only\)/);
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });

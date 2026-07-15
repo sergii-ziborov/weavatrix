@@ -44,6 +44,68 @@ test("endpoints: Go net/http — mux.HandleFunc(\"/x\", handler) → ANY method"
   assert.ok(find(eps, "ANY", "/healthz"));
 });
 
+test("endpoints: Rust axum route builders and chained MethodRouter methods", () => {
+  const text = `let app = Router::new()
+    .route("/", get(root))
+    .route("/users", get(list_users).post(create_user))
+    .route("/users/{id}", axum::routing::get(show_user::<AppState>).delete(delete_user))
+    .route("/probe", any(probe))
+    .route("/inline", post(|| async { StatusCode::NO_CONTENT }));`;
+  const eps = extractEndpointsFromText(text, "src/http.rs");
+  assert.equal(find(eps, "GET", "/").handler, "root");
+  assert.equal(find(eps, "GET", "/users").handler, "list_users");
+  assert.equal(find(eps, "POST", "/users").handler, "create_user");
+  assert.equal(find(eps, "GET", "/users/{id}").handler, "show_user");
+  assert.equal(find(eps, "DELETE", "/users/{id}").handler, "delete_user");
+  assert.equal(find(eps, "ANY", "/probe").handler, "probe");
+  assert.equal(find(eps, "POST", "/inline").handler, "", "a Rust closure is an inline handler, not a made-up symbol");
+});
+
+test("endpoints: Rust actix-web route macros, route builders and resources", () => {
+  const text = `
+    #[get("/health")]
+    async fn health() -> impl Responder { "ok" }
+
+    #[actix_web::post("/items", guard = "is_authorized")]
+    async fn create_item() -> impl Responder { "created" }
+
+    #[route("/status", method = "GET", method = "HEAD")]
+    async fn status() -> impl Responder { "ok" }
+
+    let app = App::new()
+      .route("/manual", web::put().to(update_item))
+      .service(web::resource("/items/{id}")
+        .route(web::get().to(show_item))
+        .route(actix_web::web::delete().to(delete_item)));`;
+  const eps = extractEndpointsFromText(text, "src/server.rs");
+  assert.equal(find(eps, "GET", "/health").handler, "health");
+  assert.equal(find(eps, "POST", "/items").handler, "create_item");
+  assert.equal(find(eps, "GET", "/status").handler, "status");
+  assert.equal(find(eps, "HEAD", "/status").handler, "status");
+  assert.equal(find(eps, "PUT", "/manual").handler, "update_item");
+  assert.equal(find(eps, "GET", "/items/{id}").handler, "show_item");
+  assert.equal(find(eps, "DELETE", "/items/{id}").handler, "delete_item");
+});
+
+test("endpoints: Rust route-like APIs without axum/actix method shapes are ignored", () => {
+  const text = `
+    config.route("/not-http", RouteConfig::new());
+    db.route("/also-not-http", lookup_record);
+    const DOC: &str = "/not-a-route";`;
+  assert.deepEqual(extractEndpointsFromText(text, "src/config.rs"), []);
+});
+
+test("detectEndpoints: Rust files participate in the repository endpoint inventory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eps-rust-"));
+  try {
+    writeFileSync(join(dir, "server.rs"), `use axum::{routing::get, Router};\nfn app() { Router::new().route("/ready", get(ready)); }`);
+    const eps = detectEndpoints(dir, [{ path: "server.rs" }]);
+    assert.equal(find(eps, "GET", "/ready").handler, "ready");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("endpoints: non-route strings and URLs are not mistaken for endpoints", () => {
   const text = `const url = "https://api.example.com/v1/users";\n  const label = { title: "hello" };\n  fetch("/not-a-route-but-a-string");`;
   const eps = extractEndpointsFromText(text, "misc.js");

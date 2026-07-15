@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
   "long_description": "Weavatrix builds a dependency graph of selected local repositories (tree-sitter WASM, no native toolchain) and serves it over MCP: change_impact, get_dependents, run_audit, find_duplicates, coverage_map, list_endpoints and more — 23 tools available, with 21 offline tools enabled by default. Repository retargeting is an explicit local tool call; the two network-capable tools remain a separate opt-in capability group.",
   "author": {

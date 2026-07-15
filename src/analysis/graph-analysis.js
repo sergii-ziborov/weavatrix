@@ -4,4 +4,4 @@
 // Facade: implementation lives in graph-analysis.summaries.js and graph-analysis.aggregate.js
 // (with internal helpers in graph-analysis.refs.js).
 export { summarizeCommunities, summarizeHotspots } from "./graph-analysis.summaries.js";
-export { analyzeGraph, aggregateGraph } from "./graph-analysis.aggregate.js";
+export { analyzeGraph, aggregateGraph, folderModuleOf } from "./graph-analysis.aggregate.js";

@@ -47,7 +47,7 @@ const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\
 //   configTexts     — Map<fileName, text> of root config files + CI workflows (mention scanning)
 export function computeDepFindings({
   externalImports = [], pkg = {}, workspacePkgNames = new Set(), configTexts = new Map(),
-  aliases = [], scope = "", manifest = "package.json",
+  aliases = [], scope = "", manifest = "package.json", nonRuntimeRoots = [],
 } = {}) {
   const findings = [];
   const meta = { scope: scope || ".", manifest };
@@ -68,6 +68,32 @@ export function computeDepFindings({
   };
   const allDeclared = new Set(Object.values(sections).flatMap((s) => Object.keys(s)));
   const selfName = String(pkg.name || "");
+  const normRoots = (nonRuntimeRoots || []).map((root) => String(root || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "")).filter(Boolean);
+  const isNonRuntimeFile = (file) => {
+    const normalized = String(file || "").replace(/\\/g, "/").replace(/^\.\//, "");
+    return normRoots.some((root) => normalized === root || normalized.startsWith(`${root}/`));
+  };
+  const npmNameParts = (name) => {
+    const value = String(name || "");
+    const slash = value.startsWith("@") ? value.indexOf("/") : -1;
+    return slash > 0 ? { scope: value.slice(0, slash), base: value.slice(slash + 1) } : { scope: "", base: value };
+  };
+  const selfParts = npmNameParts(selfName);
+  const configuredNapi = npmNameParts(pkg.napi?.name || selfName);
+  const napiBinding = {
+    scope: configuredNapi.scope || (configuredNapi.base === selfParts.base ? selfParts.scope : ""),
+    base: configuredNapi.base,
+  };
+  const NAPI_PLATFORM_SUFFIX = /^(?:android-(?:arm64|arm-eabi)|win32-(?:x64|ia32|arm64)-msvc|darwin-(?:universal|x64|arm64)|freebsd-(?:x64|arm64)|linux-(?:x64|arm64|arm|riscv64|s390x|ppc64|loong64)-(?:gnu|musl|gnueabihf|musleabihf)|aix-ppc64|sunos-x64|wasm32-wasi(?:-preview1-threads)?)$/;
+  const isGeneratedNapiPackage = (name, files) => {
+    if (!pkg.napi || !napiBinding.base || !files.every((file) => /(^|\/)index\.[cm]?js$/i.test(String(file || "").replace(/\\/g, "/")))) return false;
+    const candidate = npmNameParts(name);
+    if (candidate.scope !== napiBinding.scope || !candidate.base.startsWith(`${napiBinding.base}-`)) return false;
+    return NAPI_PLATFORM_SUFFIX.test(candidate.base.slice(napiBinding.base.length + 1));
+  };
+  const isGeneratedNapiBinary = (entry) => !!pkg.napi
+    && /(^|\/)index\.[cm]?js$/i.test(String(entry.file || "").replace(/\\/g, "/"))
+    && /^\.\/[^/]+\.node$/i.test(String(entry.spec || ""));
   // Some frameworks consume required peers internally, so application source legitimately never imports
   // them. Keep this deliberately narrow: react-dom is a required Next.js runtime peer in the same package
   // scope, not a general React exemption and not a repo-wide whitelist.
@@ -134,6 +160,7 @@ export function computeDepFindings({
   for (const [name, use] of usedPackages) {
     if (allDeclared.has(name) || name === selfName || workspacePkgNames.has(name)) continue;
     const files = [...use.files];
+    if (files.every(isNonRuntimeFile) || isGeneratedNapiPackage(name, files)) continue;
     const testOnly = files.every((f) => /(^|[/\\])(test|tests|__tests__|spec|e2e|__mocks__)([/\\]|$)|[._-](test|spec)\.[a-z]+$/i.test(f));
     findings.push(makeFinding({
       category: "unused",
@@ -176,6 +203,7 @@ export function computeDepFindings({
   let unresolvedCount = 0;
   for (const e of externalImports) {
     if (!e.unresolved) continue;
+    if (isNonRuntimeFile(e.file) || isGeneratedNapiBinary(e)) continue;
     unresolvedCount++;
     const key = e.file + "|" + e.spec;
     if (unresolvedSeen.has(key) || unresolvedSeen.size >= 100) continue; // cap the findings, keep the count honest
@@ -216,6 +244,7 @@ const ownsFile = (scope, file) => !scope || file === scope || String(file || "")
 // Node's package scope and prevents nested Next/Vite apps from inheriting the root manifest by accident.
 export function computeScopedDepFindings({
   externalImports = [], packageScopes = [], workspacePkgNames = new Set(), configTexts = new Map(),
+  nonRuntimeRoots = [],
 } = {}) {
   const scopes = packageScopes.length
     ? packageScopes.map((s) => ({ ...s, root: normScope(s.root) })).sort((a, b) => b.root.length - a.root.length)
@@ -233,6 +262,7 @@ export function computeScopedDepFindings({
     const r = computeDepFindings({
       externalImports: importsByScope.get(s), pkg: s.pkg || {}, workspacePkgNames, configTexts: scopeConfig,
       aliases: s.aliases || [], scope: s.root, manifest: s.manifest || (s.root ? `${s.root}/package.json` : "package.json"),
+      nonRuntimeRoots,
     });
     findings.push(...r.findings);
     for (const [name, use] of r.usedPackages) usedPackages.set(`${s.root || "."}:${name}`, use);
@@ -241,146 +271,4 @@ export function computeScopedDepFindings({
   return { findings, usedPackages, declared };
 }
 
-const TEST_PATH_RE = /(^|[/\\])(test|tests|__tests__|spec|e2e|__mocks__)([/\\]|$)|[._-](test|spec)\.[a-z0-9]+$|_test\.go$/i;
-
-// ---- Go: set math over ecosystem:"Go" externalImports vs go.mod requires ----
-// goMod = parseGoMod() output. Only DIRECT requires can be "unused" (indirect ones belong to `go mod
-// tidy`); replace targets and the own module never count. Missing = imported module with no require
-// prefix — rare in Go (builds fail), so it usually flags vendored/replaced setups: keep it medium.
-export function computeGoDepFindings({ externalImports = [], goMod = null } = {}) {
-  const findings = [];
-  if (!goMod || !goMod.module) return { findings, declared: new Set() };
-  const requires = goMod.requires || [];
-  const declared = new Set(requires.map((r) => r.path));
-  const replaced = new Set((goMod.replaces || []).map((r) => r.from));
-  const moduleOf = (spec) => { let best = ""; for (const p of declared) if ((spec === p || spec.startsWith(p + "/")) && p.length > best.length) best = p; return best; };
-
-  const usedModules = new Set();
-  const missing = new Map(); // pkg → { files:Set, lines:Map }
-  for (const e of externalImports) {
-    if (e.ecosystem !== "Go" || e.builtin || e.unresolved || !e.pkg) continue;
-    const mod = moduleOf(e.spec || e.pkg) || (declared.has(e.pkg) ? e.pkg : "");
-    if (mod) { usedModules.add(mod); continue; }
-    let m = missing.get(e.pkg);
-    if (!m) missing.set(e.pkg, (m = { files: new Set(), lines: new Map() }));
-    m.files.add(e.file);
-    if (!m.lines.has(e.file)) m.lines.set(e.file, e.line || 0);
-  }
-
-  for (const r of requires) {
-    if (r.indirect || usedModules.has(r.path)) continue;
-    findings.push(makeFinding({
-      category: "unused",
-      rule: "unused-dep",
-      severity: "low",
-      confidence: "medium",
-      title: `Unused Go module: ${r.path}`,
-      detail: `"${r.path}" is required (direct) in go.mod but no .go file imports it or any of its packages. Build-tag-guarded files can hide usage — confirm with \`go mod tidy\` before removing.`,
-      package: r.path,
-      version: r.version,
-      source: "internal",
-      fixHint: "go mod tidy (drops requires nothing imports)",
-    }));
-  }
-  for (const [pkg, use] of missing) {
-    if (replaced.has(pkg)) continue;
-    const files = [...use.files];
-    findings.push(makeFinding({
-      category: "unused",
-      rule: "missing-dep",
-      severity: "medium",
-      confidence: "medium",
-      title: `Missing Go module: ${pkg}`,
-      detail: `"${pkg}" is imported by ${files.length} file(s) but go.mod has no matching require — a replace/workspace/vendor setup, or the module was never added.`,
-      package: pkg,
-      file: files[0],
-      line: use.lines.get(files[0]) || 0,
-      evidence: files.slice(0, 5).map((f) => ({ file: f, line: use.lines.get(f) || 0, snippet: "" })),
-      source: "internal",
-      fixHint: `go get ${pkg}`,
-    }));
-  }
-  return { findings, declared };
-}
-
-// ---- Python: ecosystem:"PyPI" externalImports vs requirements/pyproject/Pipfile ----
-// Import→dist naming is heuristic (yaml→PyYAML, python-X/X-python variants), so matching is GENEROUS for
-// suppression and every unused finding stays low-confidence. CLI-only tools (pytest, black, gunicorn …)
-// and stub/plugin conventions (types-*, *-stubs, pytest-*, flake8-*) are never flagged unused.
-const PY_TOOL_DISTS = new Set(("pytest tox nox black ruff flake8 pylint mypy pyright isort bandit coverage pre-commit pip setuptools wheel build twine poetry poetry-core " +
-  "pip-tools uv virtualenv pipenv gunicorn uwsgi supervisor ipython jupyter jupyterlab notebook ipykernel codecov autopep8 yapf commitizen detect-secrets safety pip-audit hatchling flit flit-core pdm").split(" "));
-const pyNorm = (n) => String(n || "").toLowerCase().replace(/[-_.]+/g, "-");
-
-export function computePyDepFindings({
-  externalImports = [], pyManifest = null, configTexts = new Map(),
-  managedDependencies = [], ignoredDependencies = [],
-} = {}) {
-  const findings = [];
-  const deps = (pyManifest && pyManifest.deps) || [];
-  const present = !!(pyManifest && pyManifest.present);
-  const declared = new Set(deps.map((d) => pyNorm(d.name)));
-  const managed = new Set((managedDependencies || []).map(pyNorm));
-  const ignored = new Set((ignoredDependencies || []).map(pyNorm));
-  for (const name of managed) declared.add(name);
-
-  const used = new Map(); // top import → { dist, files:Set, lines:Map }
-  for (const e of externalImports) {
-    if (e.ecosystem !== "PyPI" || e.builtin || e.unresolved || !e.pkg) continue;
-    const top = String(e.spec || e.pkg).split(".")[0];
-    let u = used.get(top);
-    if (!u) used.set(top, (u = { dist: e.pkg, files: new Set(), lines: new Map() }));
-    u.files.add(e.file);
-    if (!u.lines.has(e.file)) u.lines.set(e.file, e.line || 0);
-  }
-  // generous match: does declared dist D cover import top t (dist guess g)?
-  const covers = (D, t, g) => {
-    const d = pyNorm(D), nt = pyNorm(t), ng = pyNorm(g);
-    return d === nt || d === ng || d === `python-${nt}` || d === `${nt}-python` || d === `${nt}-binary` || d.replace(/\d+$/, "") === nt.replace(/\d+$/, "");
-  };
-
-  const configBlob = [...configTexts.values()].join("\n");
-  if (present) {
-    for (const d of deps) {
-      const n = pyNorm(d.name);
-      if (managed.has(n) || ignored.has(n)) continue;
-      if (d.buildSystem || PY_TOOL_DISTS.has(n) || /^types-|-stubs$|^pytest-|^flake8-|^sphinx/.test(n)) continue;
-      let hit = false;
-      for (const [top, u] of used) if (covers(d.name, top, u.dist)) { hit = true; break; }
-      if (hit || mentioned(configBlob, d.name)) continue;
-      findings.push(makeFinding({
-        category: "unused",
-        rule: "unused-dep",
-        severity: d.dev ? "info" : "low",
-        confidence: "low",
-        title: `Unused Python dependency: ${d.name}`,
-        detail: `"${d.name}" is declared but no .py file imports a module that maps to it. Import-name↔package-name mapping is heuristic and plugins/CLI tools load dynamically — review before removing.`,
-        package: d.name,
-        source: "internal",
-        fixHint: `remove "${d.name}" from the manifest after confirming nothing imports or shells out to it`,
-      }));
-    }
-  }
-  for (const [top, u] of used) {
-    if (ignored.has(pyNorm(top)) || ignored.has(pyNorm(u.dist)) || managed.has(pyNorm(top)) || managed.has(pyNorm(u.dist))) continue;
-    let hit = false;
-    for (const D of declared) if (covers(D, top, u.dist)) { hit = true; break; }
-    if (hit) continue;
-    const files = [...u.files];
-    const testOnly = files.every((f) => TEST_PATH_RE.test(f));
-    findings.push(makeFinding({
-      category: "unused",
-      rule: "missing-dep",
-      severity: present ? (testOnly ? "low" : "medium") : "low",
-      confidence: present ? "medium" : "low",
-      title: `Missing Python dependency: ${u.dist}`,
-      detail: `"${top}" is imported by ${files.length} file(s) but ${present ? "no declared dependency provides it" : "the repo has no Python dependency manifest (requirements.txt / pyproject / Pipfile); a bundled or managed runtime may provide it"}${u.dist !== top ? ` (PyPI package is likely "${u.dist}")` : ""}.${present ? "" : " If this is intentional, declare it under python.managedDependencies in .weavatrix-deps.json."}`,
-      package: u.dist,
-      file: files[0],
-      line: u.lines.get(files[0]) || 0,
-      evidence: files.slice(0, 5).map((f) => ({ file: f, line: u.lines.get(f) || 0, snippet: "" })),
-      source: "internal",
-      fixHint: present ? `pip install ${u.dist}  (and add it to requirements.txt / pyproject)` : `add ${u.dist} to a Python manifest, or declare it as a managed runtime dependency`,
-    }));
-  }
-  return { findings, declared, managed };
-}
+export { computeGoDepFindings, computePyDepFindings } from "./dep-check-ecosystems.js";

@@ -59,6 +59,34 @@ test("dep-rules: type-only edges create info coupling, not a runtime cycle or bo
   assert.match(coupling.title, /no runtime cycle/i);
 });
 
+test("dep-rules: Rust compile-only edges create compile-time coupling, not runtime cycles or boundaries", () => {
+  const rustImp = (a, b) => ({ ...imp(a, b), compileOnly: true, specifier: "crate::module" });
+  const graph = {
+    nodes: ["crate/src/lib.rs", "crate/src/api.rs", "crate/src/model.rs"].map(fileNode),
+    links: [
+      rustImp("crate/src/lib.rs", "crate/src/api.rs"),
+      rustImp("crate/src/api.rs", "crate/src/model.rs"),
+      rustImp("crate/src/model.rs", "crate/src/lib.rs"),
+    ],
+  };
+  const runtime = buildFileImportGraph(graph);
+  const inclusive = buildFileImportGraph(graph, { includeCompileOnly: true });
+  assert.equal(findSccs(runtime.adj).length, 0);
+  assert.equal(findSccs(inclusive.adj).length, 1);
+  const result = computeStructureFindings(graph, {
+    rules: { forbidden: [{ name: "runtime-only", from: "crate/src/**", to: "crate/src/**", severity: "high" }] },
+  });
+  assert.equal(result.stats.runtimeCycles, 0);
+  assert.equal(result.stats.compileTimeCouplings, 1);
+  assert.equal(result.stats.runtimeImportEdges, 0);
+  assert.equal(result.stats.compileOnlyImportEdges, 3);
+  assert.equal(result.stats.boundaryViolations, 0);
+  const coupling = result.findings.find((finding) => finding.rule === "compile-time-coupling");
+  assert.equal(coupling.severity, "info");
+  assert.match(coupling.title, /no runtime cycle/i);
+  assert.equal(result.findings.some((finding) => finding.rule === "circular-dep"), false);
+});
+
 test("dep-rules: Go same-directory edges are excluded from the cycle graph", () => {
   const graph = {
     nodes: ["pkg/a.go", "pkg/b.go"].map(fileNode),
