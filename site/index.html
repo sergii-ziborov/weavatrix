@@ -83,7 +83,7 @@
       <a href="#features">Tools</a>
       <a href="#privacy">Privacy</a>
       <a href="#roadmap">Roadmap</a>
-      <a class="soon" title="Coming soon">GitHub ·soon</a>
+      <a href="https://github.com/sergii-ziborov/weavatrix">GitHub</a>
     </nav>
   </header>
 
@@ -99,8 +99,8 @@
     </div>
     <div class="term" id="install">
       <div class="term-bar"><i></i><i></i><i></i></div>
-      <pre><span class="c"># pre-release — npm package landing soon</span>
-<span class="g">$</span> claude mcp add -s user weavatrix -- npx weavatrix-mcp <span class="p">&lt;graph.json&gt; &lt;repoRoot&gt;</span>
+      <pre><span class="c"># register once — one server covers every repo on your machine</span>
+<span class="g">$</span> claude mcp add -s user weavatrix -- npx -y github:sergii-ziborov/weavatrix <span class="p">&lt;repoRoot&gt;</span>
 
 <span class="c"># then, inside Claude Code:</span>
 <span class="g">›</span> what breaks if I change the auth middleware?
@@ -117,12 +117,12 @@
       <div class="card"><h3><span class="dot"></span>Change impact</h3><p><code>change_impact</code> diffs your branch (staged, unstaged, untracked included) and lists everything that depends on what you touched — with test coverage attached and untested hotspots called out.</p></div>
       <div class="card"><h3><span class="dot t"></span>Blast radius per symbol</h3><p><code>get_dependents</code> walks reverse edges transitively: every caller, importer and subclass that can feel your refactor, ranked by proximity and connectivity.</p></div>
       <div class="card"><h3><span class="dot"></span>Health audit</h3><p><code>run_audit</code> finds dead code, unused exports, missing and unused dependencies, import cycles, orphans — plus offline OSV vulnerability, typosquat and lockfile-drift checks.</p></div>
-      <div class="card"><h3><span class="dot t"></span>Clone detection</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies — catches copy-paste even after variables were renamed, not just identical text.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Clone detection, three lenses</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies — catches copy-paste even after variables were renamed. Semantic mode surfaces same-name symbols that drifted apart (the future-bug kind), and <code>include_strings</code> finds copy-paste inside embedded SQL/C#/PowerShell templates.</p></div>
       <div class="card"><h3><span class="dot"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: new module dependencies, broken or introduced cycles, symbols that lost their last caller.</p></div>
       <div class="card"><h3><span class="dot t"></span>Every repo, one server</h3><p><code>open_repo</code> retargets the running server at any local repository and builds missing graphs; <code>list_known_repos</code> shows what's ready. Register once, use everywhere.</p></div>
     </div>
     <div class="langs">
-      <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>HTML</span><span>CSS</span><span style="opacity:.5">Rust — roadmap</span>
+      <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>C#</span><span>HTML</span><span>CSS</span><span style="opacity:.5">Rust — roadmap</span>
     </div>
   </section>
 
@@ -142,7 +142,7 @@
     <h2>Roadmap</h2>
     <p class="lead">The MCP server is free and MIT — forever. The hosted layer comes next.</p>
     <div class="road">
-      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server</h3><p>23 tools over your local code graph. Pre-release; npm publish imminent.</p></div>
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server</h3><p>23 tools over your local code graph. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a>; npm publish imminent.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Hosted graph view</h3><p>Your interactive dependency map on weavatrix.com — sync with one tool call, share with your team. Paid.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
       <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>
