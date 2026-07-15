@@ -3,12 +3,46 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Weavatrix — code graph &amp; blast-radius MCP for AI coding agents</title>
-<meta name="description" content="Weavatrix builds a code graph of any local repository and serves it to Claude Code & Codex over MCP: change impact, transitive dependents, health audit, clone detection, coverage mapping. Local-first — your code never leaves your machine.">
+<title>Weavatrix — code graph &amp; blast-radius MCP server for AI coding agents</title>
+<meta name="description" content="Open-source MCP server that gives Claude Code, Codex and any AI coding agent a dependency graph of your local repository: change impact, transitive dependents, health audit, clone detection, coverage mapping. JavaScript, TypeScript, Python, Go, Java, C#, Rust. Local-first — your code never leaves your machine. npx -y weavatrix.">
+<meta name="keywords" content="MCP server, Model Context Protocol, code graph, blast radius, change impact analysis, AI coding agent, Claude Code, Codex, dependency graph, dead code, clone detection, static analysis, tree-sitter, Rust, C#">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://weavatrix.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Weavatrix">
 <meta property="og:title" content="Weavatrix — give your AI agent blast-radius vision">
-<meta property="og:description" content="Code graph & blast-radius MCP server for AI coding agents. Local-first, MIT.">
-<meta property="og:url" content="https://weavatrix.com">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='30' cy='30' r='12' fill='%237c6cff'/><circle cx='72' cy='44' r='9' fill='%2340e0c8'/><circle cx='44' cy='74' r='9' fill='%23f0f2f8'/><line x1='30' y1='30' x2='72' y2='44' stroke='%237c6cff' stroke-width='4'/><line x1='30' y1='30' x2='44' y2='74' stroke='%2340e0c8' stroke-width='4'/></svg>">
+<meta property="og:description" content="Open-source code graph & blast-radius MCP server for AI coding agents. 23 tools, 8 languages, local-first, MIT. npx -y weavatrix.">
+<meta property="og:url" content="https://weavatrix.com/">
+<meta property="og:image" content="https://weavatrix.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Weavatrix — code graph &amp; blast-radius MCP for AI coding agents">
+<meta name="twitter:description" content="Change impact, dependents, health audit, clone detection over any local repo. Local-first, MIT.">
+<meta name="twitter:image" content="https://weavatrix.com/og-image.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Weavatrix",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "description": "Code graph & blast-radius MCP server for AI coding agents: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository.",
+  "url": "https://weavatrix.com",
+  "downloadUrl": "https://www.npmjs.com/package/weavatrix",
+  "softwareVersion": "0.1.1",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Sergii Ziborov", "url": "https://github.com/sergii-ziborov" },
+  "sameAs": [
+    "https://github.com/sergii-ziborov/weavatrix",
+    "https://www.npmjs.com/package/weavatrix"
+  ]
+}
+</script>
 <style>
   :root {
     --bg: #0b0d14; --bg2: #101322; --panel: #141830; --line: #23284a;
@@ -124,7 +158,7 @@
       <div class="card"><h3><span class="dot t"></span>Every repo, one server</h3><p><code>open_repo</code> retargets the running server at any local repository and builds missing graphs; <code>list_known_repos</code> shows what's ready. Register once, use everywhere.</p></div>
     </div>
     <div class="langs">
-      <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>C#</span><span>HTML</span><span>CSS</span><span style="opacity:.5">Rust — roadmap</span>
+      <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>C#</span><span>Rust</span><span>HTML</span><span>CSS</span>
     </div>
   </section>
 
