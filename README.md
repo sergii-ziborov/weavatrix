@@ -10,7 +10,7 @@ never leaves it.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
 - Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
-- Status: **pre-release** — npm publish imminent; API may still shift before v0.1.
+- npm: [`weavatrix`](https://www.npmjs.com/package/weavatrix) — `npx -y weavatrix <repoRoot>`
 
 ## Why
 

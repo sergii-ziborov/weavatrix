@@ -100,7 +100,7 @@
     <div class="term" id="install">
       <div class="term-bar"><i></i><i></i><i></i></div>
       <pre><span class="c"># register once — one server covers every repo on your machine</span>
-<span class="g">$</span> claude mcp add -s user weavatrix -- npx -y github:sergii-ziborov/weavatrix <span class="p">&lt;repoRoot&gt;</span>
+<span class="g">$</span> claude mcp add -s user weavatrix -- npx -y weavatrix <span class="p">&lt;repoRoot&gt;</span>
 
 <span class="c"># then, inside Claude Code:</span>
 <span class="g">›</span> what breaks if I change the auth middleware?
@@ -142,7 +142,7 @@
     <h2>Roadmap</h2>
     <p class="lead">The MCP server is free and MIT — forever. The hosted layer comes next.</p>
     <div class="road">
-      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server</h3><p>23 tools over your local code graph. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a>; npm publish imminent.</p></div>
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server</h3><p>23 tools over your local code graph. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Hosted graph view</h3><p>Your interactive dependency map on weavatrix.com — sync with one tool call, share with your team. Paid.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
       <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>

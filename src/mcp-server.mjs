@@ -23,7 +23,7 @@ import {loadGraph} from './mcp/graph-context.mjs'
 import {loadHotApi, HOT_FILES} from './mcp/catalog.mjs'
 import {graphOutDirForRepo} from './graph/layout.js'
 
-const SERVER_INFO = {name: 'weavatrix', version: '0.0.1'}
+const SERVER_INFO = {name: 'weavatrix', version: '0.1.0'}
 const DEFAULT_PROTOCOL = '2024-11-05'
 const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 
