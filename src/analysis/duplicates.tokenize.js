@@ -96,6 +96,57 @@ export function bodyEndLineCount(bodyLines, py) {
   return bodyLines.length;
 }
 
+// Large multi-line string literals — the OPPOSITE selection to stripNonCode: everything the code
+// scan throws away. Embedded DSLs (inline C#/SQL/PowerShell templates) are invisible to the normal
+// clone pass because their bodies are stripped; this extractor feeds them back in as their own
+// fragments when the caller opts in (find_duplicates include_strings). Comment/regex handling
+// mirrors stripNonCode so a quote inside a comment never opens a phantom literal.
+export function extractLargeStrings(text, { py = false, cs = false, minLines = 6 } = {}) {
+  const s = String(text || "");
+  const out = [];
+  let i = 0, line = 1, prevSig = "";
+  const capture = (from, to, startLine) => {
+    const content = s.slice(from, to);
+    const nl = (content.match(/\n/g) || []).length;
+    if (nl + 1 >= minLines) out.push({ start: startLine, end: startLine + nl, content });
+  };
+  while (i < s.length) {
+    const ch = s[i], two = s.slice(i, i + 2), three = s.slice(i, i + 3);
+    if (ch === "\n") { line++; i++; continue; }
+    if (py && ch === "#") { while (i < s.length && s[i] !== "\n") i++; continue; }
+    if (py && (three === "'''" || three === '"""')) {
+      const startLine = line; i += 3; const from = i;
+      while (i < s.length && s.slice(i, i + 3) !== three) { if (s[i] === "\n") line++; i++; }
+      capture(from, i, startLine); i += 3; continue;
+    }
+    if (!py && two === "//") { while (i < s.length && s[i] !== "\n") i++; continue; }
+    if (!py && two === "/*") { i += 2; while (i < s.length && s.slice(i, i + 2) !== "*/") { if (s[i] === "\n") line++; i++; } i += 2; continue; }
+    if (!py && ch === "/" && REGEX_PREV.has(prevSig)) {
+      i++; let inClass = false;
+      while (i < s.length && s[i] !== "\n") { const c = s[i]; if (c === "\\") { i += 2; continue; } if (c === "[") inClass = true; else if (c === "]") inClass = false; else if (c === "/" && !inClass) { i++; break; } i++; }
+      prevSig = "/"; continue;
+    }
+    if (cs && two === '@"') { // C# verbatim string; "" is the escaped quote
+      const startLine = line; i += 2; const from = i;
+      while (i < s.length) { if (s.slice(i, i + 2) === '""') { i += 2; continue; } if (s[i] === '"') break; if (s[i] === "\n") line++; i++; }
+      capture(from, i, startLine); i++; continue;
+    }
+    if (!py && ch === "`") { // JS/TS template literal — the main multi-line carrier
+      const startLine = line; i++; const from = i;
+      while (i < s.length && s[i] !== "`") { if (s[i] === "\\") { i++; if (s[i] === "\n") line++; i++; continue; } if (s[i] === "\n") line++; i++; }
+      capture(from, i, startLine); i++; continue;
+    }
+    if (ch === '"' || ch === "'") { // single-line strings can't span minLines — just skip past
+      const q = ch; i++;
+      while (i < s.length && s[i] !== q && s[i] !== "\n") { if (s[i] === "\\") i++; i++; }
+      if (s[i] === q) i++; continue;
+    }
+    if (ch.trim()) prevSig = ch;
+    i++;
+  }
+  return out;
+}
+
 // one raw token stream; the two modes differ only in identifier canonicalization
 export function tokenize(text) {
   const raw = text.match(/[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|[^\s\w]/g) || [];

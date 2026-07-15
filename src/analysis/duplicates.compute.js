@@ -3,7 +3,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 import { isTestPath } from "../graph/graph-filter.js";
-import { stripNonCode, bodyEndLineCount, tokenize, fingerprints } from "./duplicates.tokenize.js";
+import { stripNonCode, bodyEndLineCount, tokenize, fingerprints, extractLargeStrings } from "./duplicates.tokenize.js";
 
 const FLOOR_TOKENS = 30;   // fragments below this never enter the index (UI slider min)
 const FLOOR_SIM = 0.5;     // pairs below this are not reported (UI slider min)
@@ -85,7 +85,8 @@ function symbolRanges(graph) {
   return byFile;
 }
 
-export function computeDuplicates(repoPath, graphJsonPath) {
+export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
+  const includeStrings = !!opts.includeStrings;
   const graph = JSON.parse(readFileSync(graphJsonPath, "utf8"));
   const byFile = symbolRanges(graph);
   // total symbol nodes in the graph — 0 means a file-only graph (built by an older builder before
@@ -118,6 +119,36 @@ export function computeDuplicates(repoPath, graphJsonPath) {
         test: isTestPath(file),
         fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
       });
+    }
+    // ---- opt-in: large multi-line string literals as their own fragments. The code pass above strips
+    // string bodies (correctly — content isn't code), which makes embedded DSL templates (inline
+    // C#/SQL/PowerShell) invisible to clone detection. Tokenized RAW: the content IS the payload.
+    if (includeStrings) {
+      const base = file.split("/").pop();
+      const pushStr = (startLine, endLine, content) => {
+        const toks = tokenize(content);
+        if (toks.strict.length < FLOOR_TOKENS) return;
+        frags.push({
+          id: `${file}#str@${startLine}`, label: `${base}:${startLine} ~${endLine - startLine + 1}-line string`,
+          file, start: startLine, end: endLine, n: toks.strict.length, test: isTestPath(file), kind: "string",
+          fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
+        });
+      };
+      for (const str of extractLargeStrings(lines.join("\n"), { py, cs: /\.cs$/i.test(file) })) {
+        const strLines = str.content.split(/\r?\n/).slice(0, MAX_BODY_LINES);
+        // A SECTION shared between two big templates dilutes below the similarity floor when the whole
+        // literals are compared (70 shared lines inside 220- and 107-line strings ≈ 27% jaccard). Big
+        // literals therefore get the same WINDOW treatment as CSS/HTML files; small ones stay whole.
+        if (strLines.length <= WINDOW_LINES * 2) {
+          pushStr(str.start, str.start + strLines.length - 1, strLines.join("\n"));
+        } else {
+          for (let off = 0; off < strLines.length; off += WINDOW_LINES) {
+            const chunk = strLines.slice(off, off + WINDOW_LINES);
+            if (chunk.length < 3) break;
+            pushStr(str.start + off, str.start + off + chunk.length - 1, chunk.join("\n"));
+          }
+        }
+      }
     }
   }
   // ---- windowed fragments for symbol-less file types (CSS/HTML/MD/…), found by walking the repo (NOT the

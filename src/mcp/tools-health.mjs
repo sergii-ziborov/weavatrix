@@ -32,16 +32,18 @@ export function tFindDuplicates(g, args, ctx) {
     const tokMin = Math.min(400, Math.max(30, Number(args.min_tokens) || 50))
     const mode = args.mode === 'strict' ? 'strict' : 'renamed'
     const skipTests = args.include_tests ? false : true
-    const data = computeDuplicates(ctx.repoRoot, ctx.graphPath)
+    const includeStrings = !!args.include_strings
+    const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {includeStrings})
     const groups = groupClones(data, {simMin, tokMin, mode, skipTests})
     if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.`
     const top = groups.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
     const lines = top.map((grp, k) => {
-        const head = `${k + 1}. ${grp.members.length}× "${grp.members[0].label}" — ≤${grp.maxSim}% similar, ${grp.tokens} duplicated tokens`
+        const isStr = grp.members.some((f) => f.kind === 'string')
+        const head = `${k + 1}. ${grp.members.length}× "${grp.members[0].label}"${isStr ? ' [string literal]' : ''} — ≤${grp.maxSim}% similar, ${grp.tokens} duplicated tokens`
         const sites = grp.members.slice(0, 8).map((f) => `     ${f.file}:${f.start}-${f.end}`)
         return [head, ...sites].join('\n')
     })
-    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.`
+    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.`
 }
 
 const SEVERITY_RANK = {critical: 0, high: 1, medium: 2, low: 3, info: 4}
