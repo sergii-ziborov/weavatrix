@@ -39,7 +39,7 @@ jobs:
         run: cd dist-mcpb && sha256sum weavatrix.mcpb > weavatrix.mcpb.sha256
       - run: npm pack --dry-run --json
       - name: Preserve the verified release bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: weavatrix-release-${{ github.sha }}
           path: |
@@ -72,7 +72,7 @@ jobs:
           NPM_VERSION="$(npm --version)"
           node -e "const [major, minor] = process.argv[1].split('.').map(Number); if (major < 11 || (major === 11 && minor < 5)) throw new Error('npm 11.5.1+ required, found ' + process.argv[1])" "$NPM_VERSION"
       - name: Download the verified release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: weavatrix-release-${{ github.sha }}
           path: dist-mcpb
@@ -95,11 +95,12 @@ jobs:
           PUBLISHED_HEAD=""
           PREDICATE=""
           for attempt in $(seq 1 24); do
-            PUBLISHED_HEAD="$(npm view "weavatrix@$VERSION" gitHead --json 2>/dev/null | tr -d '\"\r\n')"
-            PREDICATE="$(npm view "weavatrix@$VERSION" dist.attestations.provenance.predicateType --json 2>/dev/null | tr -d '\"\r\n')"
+            PUBLISHED_HEAD="$(npm view "weavatrix@$VERSION" gitHead --json 2>/dev/null | tr -d '\"\r\n' || true)"
+            PREDICATE="$(npm view "weavatrix@$VERSION" dist.attestations.provenance.predicateType --json 2>/dev/null | tr -d '\"\r\n' || true)"
             if [[ "$PUBLISHED_HEAD" == "$GITHUB_SHA" && "$PREDICATE" == "https://slsa.dev/provenance/v1" ]]; then
               break
             fi
+            echo "Waiting for npm registry consistency (attempt $attempt/24)"
             sleep 5
           done
           [[ "$PUBLISHED_HEAD" == "$GITHUB_SHA" ]] || { echo "npm gitHead $PUBLISHED_HEAD does not match tag commit $GITHUB_SHA" >&2; exit 1; }
@@ -134,7 +135,7 @@ jobs:
       contents: write
     steps:
       - name: Download the verified release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: weavatrix-release-${{ github.sha }}
           path: dist-mcpb
@@ -146,17 +147,40 @@ jobs:
         shell: bash
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            mkdir existing-assets
-            gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern 'weavatrix.mcpb*' --dir existing-assets
-            cmp --silent dist-mcpb/weavatrix.mcpb existing-assets/weavatrix.mcpb
-            cmp --silent dist-mcpb/weavatrix.mcpb.sha256 existing-assets/weavatrix.mcpb.sha256
-            echo "Existing release assets match the verified build; leaving them unchanged"
+            IS_DRAFT="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if [[ "$IS_DRAFT" == "true" ]]; then
+              gh release upload "$GITHUB_REF_NAME" \
+                dist-mcpb/weavatrix.mcpb \
+                dist-mcpb/weavatrix.mcpb.sha256 \
+                --repo "$GITHUB_REPOSITORY" \
+                --clobber
+              gh release edit "$GITHUB_REF_NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft=false \
+                --latest
+            else
+              mkdir existing-assets
+              gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern 'weavatrix.mcpb*' --dir existing-assets
+              cmp --silent dist-mcpb/weavatrix.mcpb existing-assets/weavatrix.mcpb
+              cmp --silent dist-mcpb/weavatrix.mcpb.sha256 existing-assets/weavatrix.mcpb.sha256
+              echo "Existing release assets match the verified build; leaving them unchanged"
+            fi
           else
             gh release create "$GITHUB_REF_NAME" \
-              dist-mcpb/weavatrix.mcpb \
-              dist-mcpb/weavatrix.mcpb.sha256 \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --generate-notes \
-              --title "$GITHUB_REF_NAME"
+              --title "$GITHUB_REF_NAME" \
+              --draft
+            gh release upload "$GITHUB_REF_NAME" \
+              dist-mcpb/weavatrix.mcpb \
+              dist-mcpb/weavatrix.mcpb.sha256 \
+              --repo "$GITHUB_REPOSITORY"
+            gh release edit "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --latest
           fi
+
+          RELEASE_IMMUTABLE="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .immutable)"
+          [[ "$RELEASE_IMMUTABLE" == "true" ]] || { echo "GitHub release is not immutable" >&2; exit 1; }
