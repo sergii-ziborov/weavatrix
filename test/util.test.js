@@ -1,30 +1,38 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { unique, stripQuotes } from "../src/util.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { safeRead, MAX_FILE_BYTES } from "../src/util.js";
 
-test("unique: dedupes, trims, and drops falsy/empty values", () => {
-  assert.deepEqual(unique(["a", " a ", "b", null, undefined, "", "  ", "b"]), ["a", "b"]);
+test("safeRead: returns file content for a normal file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-util-"));
+  try {
+    const f = join(dir, "a.txt");
+    writeFileSync(f, "hello");
+    assert.equal(safeRead(f), "hello");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test("unique: returns [] for no/garbage input", () => {
-  assert.deepEqual(unique(), []);
-  assert.deepEqual(unique([false, 0, "", null]), []);
+test("safeRead: returns '' for missing paths and directories", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-util-"));
+  try {
+    assert.equal(safeRead(join(dir, "nope.txt")), "");
+    assert.equal(safeRead(dir), ""); // a directory is not a file
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test("unique: coerces non-strings then trims", () => {
-  assert.deepEqual(unique([1, " 1 ", 2]), ["1", "2"]);
-});
-
-test("stripQuotes: removes a single surrounding double- or single-quote pair", () => {
-  assert.equal(stripQuotes('"x"'), "x");
-  assert.equal(stripQuotes("'y'"), "y");
-});
-
-test("stripQuotes: trims surrounding whitespace before stripping", () => {
-  assert.equal(stripQuotes('  "z"  '), "z");
-});
-
-test("stripQuotes: leaves unquoted values untouched and tolerates empty input", () => {
-  assert.equal(stripQuotes("plain"), "plain");
-  assert.equal(stripQuotes(), "");
+test("safeRead: skips oversized files entirely instead of truncating", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-util-"));
+  try {
+    const f = join(dir, "big.txt");
+    writeFileSync(f, "x".repeat(MAX_FILE_BYTES + 1));
+    assert.equal(safeRead(f), "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

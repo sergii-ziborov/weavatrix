@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { uniqueBy } from "../util.js";
 
 export const DEFAULT_STORE = join(homedir(), ".weavatrix", "advisories.json");
 const OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch";
@@ -19,15 +20,7 @@ export const OSV_SUPPORTED_ECOSYSTEMS = new Set(["npm", "PyPI", "Go"]);
 
 const keyOf = (ecosystem, name) => `${ecosystem}|${ecosystem === "PyPI" ? String(name).toLowerCase().replace(/[-_.]+/g, "-") : name}`;
 
-function uniquePackages(pkgs) {
-  const seen = new Set();
-  return pkgs.filter((p) => {
-    const k = `${p.ecosystem}|${p.name}|${p.version}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
+const uniquePackages = (pkgs) => uniqueBy(pkgs, (p) => `${p.ecosystem}|${p.name}|${p.version}`);
 
 async function fetchJson(fetcher, url, options, timeoutMs) {
   const timeout = Math.max(50, Number(timeoutMs) || DEFAULT_FETCH_TIMEOUT_MS);

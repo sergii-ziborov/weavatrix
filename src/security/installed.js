@@ -5,13 +5,11 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
+import { uniqueBy } from "../util.js";
 
 const pep503 = (name) => String(name).toLowerCase().replace(/[-_.]+/g, "-"); // PyPI canonical name
 
-const dedupe = (list) => {
-  const seen = new Set();
-  return list.filter((p) => { const k = `${p.ecosystem}|${p.name}|${p.version}`; if (seen.has(k)) return false; seen.add(k); return true; });
-};
+const dedupe = (list) => uniqueBy(list, (p) => `${p.ecosystem}|${p.name}|${p.version}`);
 
 export function parsePackageLock(json) {
   const out = [];

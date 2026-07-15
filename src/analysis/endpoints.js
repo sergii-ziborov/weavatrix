@@ -6,10 +6,9 @@
 //   • method-call routes (Express/Fastify/Koa/Hono/gin/echo):  app.get("/path", handler)
 //   • decorators (FastAPI/Flask/NestJS):   @app.get("/path")  /  @Get("/path")
 //   • Go net/http:                          mux.HandleFunc("/path", handler)
-import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { safeRead } from "../util.js";
 
-const MAX_FILE_BYTES = 512 * 1024;
 const MAX_FILES = 3000;
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ALL", "ANY"]);
 // UNAMBIGUOUS HTTP CLIENTS (make requests) vs servers (define routes) — reject `axios.get("/x")`-style client
@@ -17,15 +16,6 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
 // they're filtered by the handler requirement instead (a client call has no handler / a config object arg).
 const HTTP_CLIENT_CALLER = /^(axios|https?|fetch|ky|got|superagent|needle|undici|xhr|\$http|http[Cc]lient|api[Cc]lient|rest[Cc]lient)$/;
 
-function safeRead(path) {
-  try {
-    const st = statSync(path);
-    if (!st.isFile() || st.size > MAX_FILE_BYTES) return "";
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
-}
 
 // 1-based line of a string index
 function lineAt(text, index) {

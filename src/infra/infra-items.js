@@ -1,21 +1,12 @@
 // infra-items.js — extract concrete infra items (DB tables, cache keysets, queue topics, cloud files, SQL
 // tables, env-declared endpoints) from source text for the detected services. Split out of infra.js; it owns
 // the shared leaf helpers (lc/safeRead/size caps) as the lower module — infra.js imports them back.
-import { readFileSync, statSync } from "node:fs";
+import { safeRead, MAX_FILE_BYTES } from "../util.js";
 
-const MAX_FILE_BYTES = 512 * 1024;
 const IMPORT_SCAN_MAX_FILES = 2000; // cap the synchronous import-scan pass (connector attribution only) so the
 const lc = (s) => String(s || "").toLowerCase();
 
-export function safeRead(path) {
-  try {
-    const st = statSync(path);
-    if (!st.isFile() || st.size > MAX_FILE_BYTES) return "";
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
-}
+export { safeRead };
 
 const ITEM_META = {
   db: { label: "TABLES", unit: "rows" },
@@ -65,18 +56,19 @@ function addInfraItem(map, raw, weight = 1, sourcePath = "", op = "") {
   map.set(name, cur);
 }
 
-function addMatches(map, text, re, group = 1, weight = 1, sourcePath = "", op = "") {
-  for (const m of text.matchAll(re)) addInfraItem(map, m[group], weight, sourcePath, op);
-}
+// One regex-walk adder factory shared by the two matchers below — the only difference is how a
+// captured group becomes items (a single name vs a string-array body).
+const matchAdder = (add) => (map, text, re, group = 1, weight = 1, sourcePath = "", op = "") => {
+  for (const m of text.matchAll(re)) add(map, m[group], weight, sourcePath, op);
+};
 
 function addStringArrayItems(map, raw, weight = 1, sourcePath = "", op = "") {
   const body = String(raw || "");
   for (const m of body.matchAll(/["'`]([^"'`]+)["'`]/g)) addInfraItem(map, m[1], weight, sourcePath, op);
 }
 
-function addStructArrayMatches(map, text, re, group = 1, weight = 1, sourcePath = "", op = "") {
-  for (const m of text.matchAll(re)) addStringArrayItems(map, m[group], weight, sourcePath, op);
-}
+const addMatches = matchAdder(addInfraItem);
+const addStructArrayMatches = matchAdder(addStringArrayItems);
 
 function addSqlTableMatches(map, text, re, cteAliases, group = 1, weight = 1, sourcePath = "", op = "") {
   for (const m of String(text || "").matchAll(re)) {

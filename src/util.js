@@ -1,26 +1,27 @@
-// Generic helpers (Node). Trimmed for weavatrix — only what process.js / graph-builder need.
-import { existsSync } from "node:fs";
+// Shared fs/text helpers.
+import { readFileSync, statSync } from "node:fs";
 
-export function unique(values = []) {
-  return [...new Set(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean))];
+// Bounded, never-throwing file read shared by the source scanners (infra, endpoints): oversized
+// files are skipped, not truncated — a partial read would produce misleading matches.
+export const MAX_FILE_BYTES = 512 * 1024;
+
+// Order-preserving dedupe by a derived key — first occurrence wins.
+export function uniqueBy(list, keyFn) {
+  const seen = new Set();
+  return list.filter((item) => {
+    const k = keyFn(item);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
-export async function fileExists(path) {
+export function safeRead(path) {
   try {
-    return Boolean(path && existsSync(path));
+    const st = statSync(path);
+    if (!st.isFile() || st.size > MAX_FILE_BYTES) return "";
+    return readFileSync(path, "utf8");
   } catch {
-    return false;
+    return "";
   }
-}
-
-export async function pathExists(path) {
-  try {
-    return Boolean(path && existsSync(path));
-  } catch {
-    return false;
-  }
-}
-
-export function stripQuotes(value = "") {
-  return String(value).trim().replace(/^["']|["']$/g, "");
 }
