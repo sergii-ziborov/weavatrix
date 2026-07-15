@@ -98,27 +98,36 @@ export function searchCode({ repoRoot, resolveRg }, { query, is_regex = false, m
     ].join('\n')
 }
 
-export function readSource({ repoRoot, resolveNode, isSymbol }, g, { label, path, before = 3, after = 40 } = {}) {
+export function readSource({ repoRoot, resolveNode, isSymbol }, g, { label, path, start_line, before = 3, after = 40 } = {}) {
     if (!repoRoot || !existsSync(repoRoot)) return 'Source read unavailable: repo root not provided to this MCP server.'
-    let file
+    let file = null
     let focusLine = null
     let title
-    if (path) {
+    // label resolves first; a path alongside it narrows rather than overrides — the node's focus line
+    // survives when both point at the same file (label+path used to silently return the file head).
+    const n = label && g ? resolveNode(g, label) : null
+    if (n) {
+        const nodeFile = String(n.source_file || (isSymbol(n.id) ? String(n.id).split('#')[0] : n.id))
+        if (!path || nodeFile.replace(/\\/g, '/') === String(path).replace(/\\/g, '/')) {
+            file = nodeFile
+            const match = String(n.source_location || '').match(/L(\d+)/)
+            focusLine = match ? Number(match[1]) : null
+            title = `${n.label ?? n.id}  [${n.id}]`
+        }
+    }
+    if (!file) {
+        if (!path) return label ? `No node found matching "${label}".` : 'Provide "label" or "path".'
         file = String(path)
         title = file
-    } else {
-        const n = resolveNode(g, label)
-        if (!n) return `No node found matching "${label}".`
-        file = String(n.source_file || (isSymbol(n.id) ? String(n.id).split('#')[0] : n.id))
-        const match = String(n.source_location || '').match(/L(\d+)/)
-        focusLine = match ? Number(match[1]) : null
-        title = `${n.label ?? n.id}  [${n.id}]`
     }
+    // explicit anchor wins: window = start_line-before .. start_line+after (how a path read escapes the file head)
+    if (start_line != null && Number(start_line) > 0) focusLine = Math.floor(Number(start_line))
     const abs = join(repoRoot, file)
     if (!existsSync(abs)) return `File not found: ${file}`
     let text
     try { text = readFileSync(abs, 'utf8') } catch (e) { return `Could not read ${file}: ${e.message}` }
     const lines = text.split(/\r?\n/)
+    if (focusLine) focusLine = Math.min(focusLine, lines.length) // an anchor past EOF shows the tail, not nothing
     const b = Math.max(0, Number(before) || 0)
     const a = Math.max(1, Number(after) || 40)
     const start = focusLine ? Math.max(1, focusLine - b) : 1
