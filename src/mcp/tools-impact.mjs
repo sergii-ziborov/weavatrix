@@ -10,6 +10,46 @@ import {
 } from './graph-context.mjs'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
 
+function reverseReach(g, seeds, maxDepth) {
+    const states = new Map([...seeds].map((id) => [String(id), {
+        runtimeDepth: 0, runtimeRelation: null, compileDepth: null, compileRelation: null,
+    }]))
+    const frontier = [...seeds].map((id) => ({id: String(id), depth: 0, compileOnly: false}))
+    for (let cursor = 0; cursor < frontier.length; cursor++) {
+        const current = frontier[cursor]
+        if (current.depth >= maxDepth) continue
+        for (const e of g.inn.get(current.id) || []) {
+            if (e.relation === 'contains') continue
+            const id = String(e.id)
+            const compileOnly = current.compileOnly || e.typeOnly === true
+            const depth = current.depth + 1
+            const entry = states.get(id) || {
+                runtimeDepth: null, runtimeRelation: null, compileDepth: null, compileRelation: null,
+            }
+            const depthKey = compileOnly ? 'compileDepth' : 'runtimeDepth'
+            const relationKey = compileOnly ? 'compileRelation' : 'runtimeRelation'
+            if (entry[depthKey] != null && entry[depthKey] <= depth) continue
+            entry[depthKey] = depth
+            entry[relationKey] = e.relation || 'rel'
+            states.set(id, entry)
+            frontier.push({id, depth, compileOnly})
+        }
+    }
+    return new Map([...states].map(([id, entry]) => [id, {
+        ...entry,
+        depth: entry.runtimeDepth ?? entry.compileDepth ?? 0,
+        compileOnly: entry.runtimeDepth == null,
+        relation: entry.runtimeDepth != null ? entry.runtimeRelation : entry.compileRelation,
+    }]))
+}
+
+const impactKind = (entry) => {
+    if (entry?.runtimeDepth != null) {
+        return entry.compileDepth != null ? `runtime + compile-time(d${entry.compileDepth})` : 'runtime'
+    }
+    return 'compile-time'
+}
+
 // Transitive blast-radius: who is affected if this node changes. Walks REVERSE dependency edges
 // (calls/imports/inherits — not structural `contains`) out to `depth`. For a symbol, also seeds its
 // containing file, because importers depend on the file rather than the individual symbol.
@@ -30,26 +70,10 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
             seeds.add(containingFile)
         }
     }
-    const depthOf = new Map([...seeds].map((s) => [s, 0]))
-    const relOf = new Map()
-    let frontier = [...seeds]
-    for (let d = 0; d < maxDepth && frontier.length; d++) {
-        const next = []
-        for (const cur of frontier) {
-            for (const e of g.inn.get(cur) || []) {
-                if (e.relation === 'contains') continue // structural nesting is not a dependency
-                const nid = String(e.id)
-                if (depthOf.has(nid)) continue
-                depthOf.set(nid, d + 1)
-                relOf.set(nid, e.relation || 'rel')
-                next.push(nid)
-            }
-        }
-        frontier = next
-    }
-    const ranked = [...depthOf.entries()]
+    const reached = reverseReach(g, seeds, maxDepth)
+    const ranked = [...reached.entries()]
         .filter(([nid]) => !seeds.has(nid))
-        .map(([nid, d]) => ({id: nid, d, deg: degreeOf(g, nid)}))
+        .map(([nid, entry]) => ({id: nid, d: entry.depth, entry, deg: degreeOf(g, nid)}))
         .sort((a, b) => a.d - b.d || b.deg - a.deg)
     if (!ranked.length) return [note, `No dependents found for ${n.label ?? id} within depth ${maxDepth} — nothing in the graph calls, imports, or inherits it.`].filter(Boolean).join('\n')
     const shown = ranked.slice(0, cap)
@@ -57,7 +81,7 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
         note,
         `Dependents of ${n.label ?? id} (reverse calls/imports/inherits, depth ≤${maxDepth}): ${ranked.length} found, showing ${shown.length} by proximity + connectivity.`,
         containingFile ? `Includes importers of its containing file ${labelOf(g, containingFile)}.` : null,
-        ...shown.map((r) => `  [d${r.d}] ${relOf.get(r.id) || 'rel'}  ${labelOf(g, r.id)}  (deg ${r.deg})  [${r.id}]`),
+        ...shown.map((r) => `  [d${r.d} ${impactKind(r.entry)}] ${r.entry.relation || 'rel'}  ${labelOf(g, r.id)}  (deg ${r.deg})  [${r.id}]`),
     ].filter(Boolean).join('\n')
 }
 
@@ -72,7 +96,8 @@ export function tGraphDiff(g, args, ctx) {
     const filter = args.path ? String(args.path).replace(/\\/g, '/') : null
     const scope = (graph) => filter ? {
         nodes: (graph.nodes || []).filter((n) => String(n.id).startsWith(filter)),
-        links: (graph.links || []).filter((l) => String(edgeEndpoint(l.source)).startsWith(filter) || String(edgeEndpoint(l.target)).startsWith(filter))
+        links: (graph.links || []).filter((l) => String(edgeEndpoint(l.source)).startsWith(filter) || String(edgeEndpoint(l.target)).startsWith(filter)),
+        edgeTypesV: graph.edgeTypesV || 0,
     } : graph
     return [
         `Graph diff (previous rebuild state → current)${filter ? `, scoped to ${filter}` : ''}:`,
@@ -144,27 +169,11 @@ export function tChangeImpact(g, args, ctx) {
 
     const maxDepth = Math.max(1, Math.min(4, Number(args.depth) || 2))
     const cap = Math.max(5, Math.min(120, Number(args.max_nodes) || 40))
-    const depthOf = new Map([...seeds].map((s) => [s, 0]))
-    const relOf = new Map()
-    let frontier = [...seeds]
-    for (let d = 0; d < maxDepth && frontier.length; d++) {
-        const next = []
-        for (const cur of frontier) {
-            for (const e of g.inn.get(cur) || []) {
-                if (e.relation === 'contains') continue
-                const nid = String(e.id)
-                if (depthOf.has(nid)) continue
-                depthOf.set(nid, d + 1)
-                relOf.set(nid, e.relation || 'rel')
-                next.push(nid)
-            }
-        }
-        frontier = next
-    }
+    const reached = reverseReach(g, seeds, maxDepth)
     const fileOfNode = (id) => { const s = String(id); const h = s.indexOf('#'); return h < 0 ? s : s.slice(0, h) }
-    const impacted = [...depthOf.entries()]
+    const impacted = [...reached.entries()]
         .filter(([nid]) => !seeds.has(nid) && !changedSet.has(fileOfNode(nid)))
-        .map(([nid, d]) => ({id: nid, d, deg: degreeOf(g, nid), file: fileOfNode(nid)}))
+        .map(([nid, entry]) => ({id: nid, d: entry.depth, entry, deg: degreeOf(g, nid), file: fileOfNode(nid)}))
         .sort((a, b) => a.d - b.d || b.deg - a.deg)
 
     // coverage overlay from EXISTING reports (fractions 0..1) — see coverage_map for details
@@ -172,6 +181,7 @@ export function tChangeImpact(g, args, ctx) {
     const coverage = readCoverageForRepo(ctx.repoRoot, knownFiles)
     const covOf = (file) => coverage.get(String(file).replace(/\\/g, '/'))?.pct ?? null
     const pctStr = (v) => (v == null ? 'cov n/a' : `cov ${Math.round(v * 100)}%`)
+    const hasCoverage = coverage.size > 0
 
     const shown = impacted.slice(0, cap)
     const untestedHotspots = shown.filter((n) => { const c = covOf(n.file); return c != null && c < 0.5 && n.deg >= 5 })
@@ -180,7 +190,8 @@ export function tChangeImpact(g, args, ctx) {
         impacted.length
             ? `${impacted.length} impacted node(s) within ${maxDepth} reverse hop(s), showing ${shown.length}:`
             : `Nothing else in the graph depends on the changed code within ${maxDepth} hop(s).`,
-        ...shown.map((n) => `  [d${n.d}] ${relOf.get(n.id) || 'rel'}  ${labelOf(g, n.id)}  (deg ${n.deg}, ${pctStr(covOf(n.file))})  [${n.id}]`),
+        hasCoverage ? `Coverage: existing report mapped where available.` : `Coverage: unavailable (no supported report found); per-node coverage labels omitted.`,
+        ...shown.map((n) => `  [d${n.d} ${impactKind(n.entry)}] ${n.entry.relation || 'rel'}  ${labelOf(g, n.id)}  (deg ${n.deg}${hasCoverage ? `, ${pctStr(covOf(n.file))}` : ''})  [${n.id}]`),
         untestedHotspots.length ? `` : null,
         untestedHotspots.length ? `Untested hotspots in the blast radius (<50% coverage, deg ≥5) — cover these before shipping:` : null,
         ...untestedHotspots.slice(0, 10).map((n) => `  ${labelOf(g, n.id)}  (${pctStr(covOf(n.file))}, deg ${n.deg})  ${n.file}`),

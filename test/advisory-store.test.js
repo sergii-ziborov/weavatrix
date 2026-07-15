@@ -83,7 +83,9 @@ test("advisory-store: repoKeys[] stamps every covered repo in one refresh (the c
   assert.equal(r.ok, true);
   const store = loadStore(storePath);
   assert.deepEqual(Object.keys(store.meta.repos).sort(), ["C:/a", "C:/b"]);
-  assert.equal(store.meta.repos["C:/a"], store.meta.fetched_at);
+  assert.equal(store.meta.repos["C:/a"].fetched_at, store.meta.fetched_at);
+  assert.equal(store.meta.repos["C:/a"].status, "OK");
+  assert.match(store.meta.repos["C:/a"].query_fingerprint, /^[a-f0-9]{64}$/);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -140,5 +142,96 @@ test("advisory-store: OSV request timeout returns a clean failure and does not s
     assert.equal(loadStore(storePath).meta.fetched_at, null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("advisory-store: partial OSV coverage is persisted as PARTIAL, never certified OK", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "weavatrix-adv-partial-"));
+  const storePath = join(dir, "advisories.json");
+  const repoKey = "C:/partial-repo";
+  const fetcher = async (url, opts) => {
+    if (!String(url).endsWith("/querybatch")) return fakeFetcher(url, opts);
+    const { queries } = JSON.parse(opts.body);
+    if (queries[0].package.name === "broken-pkg") throw new Error("batch unavailable");
+    return fakeFetcher(url, opts);
+  };
+  try {
+    const result = await refreshAdvisories({
+      storePath, repoKey, batchSize: 1, fetcher,
+      installed: [
+        { ecosystem: "npm", name: "lodash", version: "4.17.20" },
+        { ecosystem: "npm", name: "broken-pkg", version: "1.0.0" },
+      ],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "PARTIAL");
+    assert.equal(result.queriedOk, 1);
+    assert.equal(loadStore(storePath).meta.repos[repoKey].status, "PARTIAL");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("advisory-store: malformed or truncated OSV batch responses cannot certify coverage", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "weavatrix-adv-malformed-"));
+  const storePath = join(dir, "advisories.json");
+  try {
+    const result = await refreshAdvisories({
+      storePath,
+      repoKey: "C:/malformed",
+      installed: [{ ecosystem: "npm", name: "lodash", version: "4.17.20" }],
+      fetcher: async () => ({ ok: true, json: async () => ({}) }),
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /returned no result/);
+    assert.equal(loadStore(storePath).meta.fetched_at, null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("advisory-store: malformed querybatch entries cannot certify a clean result", async () => {
+  for (const [label, result] of [
+    ["null result", null],
+    ["non-array vulns", { vulns: "bad" }],
+    ["missing advisory id", { vulns: [{}] }],
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), "weavatrix-adv-batch-entry-"));
+    const storePath = join(dir, "advisories.json");
+    try {
+      const refresh = await refreshAdvisories({
+        storePath,
+        repoKey: `C:/batch-${label.replace(/ /g, "-")}`,
+        installed: [{ ecosystem: "npm", name: "lodash", version: "4.17.20" }],
+        fetcher: async () => ({ ok: true, json: async () => ({ results: [result] }) }),
+      });
+      assert.equal(refresh.ok, false, label);
+      assert.equal(loadStore(storePath).meta.fetched_at, null, label);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test("advisory-store: malformed or unrelated advisory details remain PARTIAL", async () => {
+  for (const [label, detail] of [
+    ["missing id", { affected: LODASH_REC.affected }],
+    ["wrong id", { ...LODASH_REC, id: "GHSA-wrong-detail" }],
+    ["wrong package", { ...LODASH_REC, affected: [{ package: { ecosystem: "npm", name: "other-pkg" } }] }],
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), "weavatrix-adv-detail-"));
+    const storePath = join(dir, "advisories.json");
+    const repoKey = `C:/detail-${label.replace(/ /g, "-")}`;
+    try {
+      const result = await refreshAdvisories({
+        storePath,
+        repoKey,
+        installed: [{ ecosystem: "npm", name: "lodash", version: "4.17.20" }],
+        fetcher: async (url, opts) => String(url).endsWith("/querybatch")
+          ? fakeFetcher(url, opts)
+          : { ok: true, json: async () => detail },
+      });
+      assert.equal(result.ok, true, label);
+      assert.equal(result.status, "PARTIAL", label);
+      assert.equal(result.fetched, 0, label);
+      assert.ok(result.errors.length, label);
+      const store = loadStore(storePath);
+      assert.equal(store.meta.repos[repoKey].status, "PARTIAL", label);
+      assert.equal(queryStore(store, "npm", "lodash").length, 0, label);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 });

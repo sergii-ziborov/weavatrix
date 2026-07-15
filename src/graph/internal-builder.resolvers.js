@@ -47,29 +47,98 @@ export function buildResolvers(repoDir, fileSet) {
     return cands.find((f) => f === full || f.endsWith("/" + full)) || cands[0] || null;
   };
 
-  // path aliases (tsconfig compilerOptions.paths + vite/webpack alias) — without these, @components/@/etc
-  // imports are missed and their targets look falsely DEAD.
-  const aliasList = [];
-  const addAlias = (a, t) => {
-    a = String(a).replace(/\/\*$/, "").replace(/\/$/, "");
-    t = String(t).replace(/\/\*$/, "").replace(/^\.\//, "").replace(/\/$/, "");
-    if (a && t && !aliasList.some((x) => x.alias === a)) aliasList.push({ alias: a, target: t });
+  // Path aliases (tsconfig compilerOptions.paths + vite/webpack alias) are scoped to their config folder.
+  // Without nearest-config resolution, a monorepo's root `@/*` can hijack the same alias in web/.
+  const aliasContexts = new Map();
+  const cleanRel = (p) => String(p || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/, "").replace(/^\.$/, "");
+  const contextFor = (dir) => {
+    dir = cleanRel(dir);
+    let ctx = aliasContexts.get(dir);
+    if (!ctx) aliasContexts.set(dir, (ctx = { dir, aliases: [], baseUrls: [] }));
+    return ctx;
   };
-  const jsBaseUrls = []; // tsconfig/jsconfig baseUrl roots — bare "components/Button" may be baseUrl-rooted, not an npm package
-  for (const cfg of ["tsconfig.json", "tsconfig.app.json", "tsconfig.base.json", "jsconfig.json"]) {
+  const addAlias = (ctx, a, t) => {
+    a = String(a).replace(/\/\*$/, "").replace(/\/$/, "");
+    t = cleanRel(String(t)).replace(/\/\*$/, "");
+    if (a && t && !ctx.aliases.some((x) => x.alias === a)) ctx.aliases.push({ alias: a, target: t });
+  };
+  const parseJsonc = (raw) => {
+    // Regex comment stripping corrupts perfectly valid path strings such as `"@/*"` followed later by
+    // `"**/*.ts"`. Strip comments/trailing commas only while outside JSON strings.
+    raw = String(raw).replace(/^\uFEFF/, "");
+    let clean = ""; let inString = false; let escaped = false;
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i], next = raw[i + 1];
+      if (inString) {
+        clean += ch;
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; clean += ch; continue; }
+      if (ch === "/" && next === "/") { while (i < raw.length && raw[i] !== "\n") i++; clean += "\n"; continue; }
+      if (ch === "/" && next === "*") {
+        i += 2;
+        while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) { if (raw[i] === "\n") clean += "\n"; i++; }
+        i++;
+        continue;
+      }
+      clean += ch;
+    }
+    let withoutTrailing = ""; inString = false; escaped = false;
+    for (let i = 0; i < clean.length; i++) {
+      const ch = clean[i];
+      if (inString) {
+        withoutTrailing += ch;
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; withoutTrailing += ch; continue; }
+      if (ch === ",") {
+        let j = i + 1; while (/\s/.test(clean[j] || "")) j++;
+        if (clean[j] === "}" || clean[j] === "]") continue;
+      }
+      withoutTrailing += ch;
+    }
+    return JSON.parse(withoutTrailing);
+  };
+  const configRank = (fr) => /(^|\/)tsconfig\.json$/i.test(fr) ? 0 : /(^|\/)jsconfig\.json$/i.test(fr) ? 1 : 2;
+  const configFiles = [...fileSet]
+    .filter((fr) => /(^|\/)(?:tsconfig(?:\.[^/]+)?|jsconfig)\.json$/i.test(fr))
+    .sort((a, b) => dirname(a).localeCompare(dirname(b)) || configRank(a) - configRank(b) || a.localeCompare(b));
+  for (const cfg of configFiles) {
     try {
-      const raw = readLocal(cfg).replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/,(\s*[}\]])/g, "$1");
-      const tj = JSON.parse(raw); const co = tj.compilerOptions || {}; const paths = co.paths || {};
-      const baseUrl = String(co.baseUrl || ".").replace(/^\.\/?/, "").replace(/\/$/, "");
-      if (co.baseUrl != null && !jsBaseUrls.includes(baseUrl)) jsBaseUrls.push(baseUrl);
-      for (const [k, v] of Object.entries(paths)) { const t = Array.isArray(v) ? v[0] : v; if (t) addAlias(k, (baseUrl && !String(t).startsWith("./") ? baseUrl + "/" : "") + t); }
+      const tj = parseJsonc(readLocal(cfg)); const co = tj.compilerOptions || {}; const paths = co.paths || {};
+      const cfgDir = cleanRel(dirname(cfg)); const ctx = contextFor(cfgDir);
+      const baseRoot = cleanRel(join(cfgDir || ".", String(co.baseUrl || ".")));
+      if (co.baseUrl != null && !ctx.baseUrls.includes(baseRoot)) ctx.baseUrls.push(baseRoot);
+      for (const [k, v] of Object.entries(paths)) {
+        const t = Array.isArray(v) ? v[0] : v;
+        if (t) addAlias(ctx, k, join(baseRoot || ".", String(t)));
+      }
     } catch { /* no/invalid tsconfig */ }
   }
-  for (const vc of ["vite.config.ts", "vite.config.js", "vite.config.mjs", "webpack.config.js"]) {
-    try { const src = readLocal(vc); for (const m of src.matchAll(/['"`]([^'"`]+)['"`]\s*:\s*path\.resolve\([^,]+,\s*['"`]([^'"`]+)['"`]\s*\)/g)) addAlias(m[1], m[2]); } catch { /* no bundler config */ }
+  for (const vc of [...fileSet].filter((fr) => /(^|\/)(?:vite\.config\.(?:ts|js|mjs)|webpack\.config\.js)$/.test(fr))) {
+    try {
+      const cfgDir = cleanRel(dirname(vc)); const ctx = contextFor(cfgDir); const src = readLocal(vc);
+      for (const m of src.matchAll(/['"`]([^'"`]+)['"`]\s*:\s*path\.resolve\([^,]+,\s*['"`]([^'"`]+)['"`]\s*\)/g)) addAlias(ctx, m[1], join(cfgDir || ".", m[2]));
+    } catch { /* no/invalid bundler config */ }
   }
-  aliasList.sort((a, b) => b.alias.length - a.alias.length);
-  const resolveAlias = (spec) => { for (const { alias, target } of aliasList) { if (spec === alias) return target; if (spec.startsWith(alias + "/")) return target + spec.slice(alias.length); } return null; };
+  for (const ctx of aliasContexts.values()) ctx.aliases.sort((a, b) => b.alias.length - a.alias.length);
+  const contextsForFile = (fromRel) => [...aliasContexts.values()]
+    .filter((ctx) => !ctx.dir || fromRel === ctx.dir || fromRel.startsWith(ctx.dir + "/"))
+    .sort((a, b) => b.dir.length - a.dir.length);
+  const resolveAlias = (fromRel, spec) => {
+    if (spec === undefined) { spec = fromRel; fromRel = ""; }
+    for (const ctx of contextsForFile(fromRel)) for (const { alias, target } of ctx.aliases) {
+      if (spec === alias) return target;
+      if (spec.startsWith(alias + "/")) return target + spec.slice(alias.length);
+    }
+    return null;
+  };
 
   const JS_EXTS = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".json", "/index.js", "/index.ts", "/index.jsx", "/index.tsx"];
   const resolveJsImport = (fromRel, spec) => {
@@ -77,10 +146,10 @@ export function buildResolvers(repoDir, fileSet) {
     let base;
     if (spec.startsWith(".")) base = join(dirname(fromRel), spec).replace(/\\/g, "/").replace(/^\.\//, "");
     else {
-      base = resolveAlias(spec);
+      base = resolveAlias(fromRel, spec);
       if (base == null) {
         // baseUrl-rooted internal import ("components/Button" with baseUrl:"src") — try before calling it an npm package
-        for (const b of jsBaseUrls) {
+        for (const ctx of contextsForFile(fromRel)) for (const b of ctx.baseUrls) {
           const root = (b ? b + "/" : "") + spec;
           for (const e of JS_EXTS) { const cand = (root + e).replace(/\/+/g, "/"); if (fileSet.has(cand)) return cand; }
         }

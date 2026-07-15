@@ -55,6 +55,8 @@ test("find_duplicates semantic: same-name cross-file symbols surface with low si
     assert.ok(twin, "uniqueStrings name-twin group found");
     assert.equal(twin.files, 2);
     assert.equal(twin.members.length, 2);
+    assert.equal(twin.pairs.length, 1);
+    assert.equal(twin.pairs[0].similarity, twin.simMax);
     assert.ok(twin.simMax < 60, `divergent bodies score low similarity (got ${twin.simMax}%)`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

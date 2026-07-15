@@ -131,6 +131,9 @@ async function main() {
             if (!graph && tool.cap !== 'build' && tool.cap !== 'retarget') return reply(id, {content: [{type: 'text', text: `Graph unavailable: ${graphError}`}], isError: true})
             try {
                 let text = String(await tool.run(graph, params?.arguments || {}, ctx))
+                if (graph && graph.edgeTypesV < 1 && (tool.cap === 'graph' || tool.cap === 'health')) {
+                    text += '\n\nWarning: this saved graph predates typed import edges, so type-only imports cannot be separated from runtime dependencies. Call rebuild_graph once before acting on cycle, boundary, dependency, or blast-radius findings.'
+                }
                 // Graph answers silently reflect a point-in-time build — surface staleness on every graph tool.
                 if (tool.cap === 'graph') {
                     const warn = api.stalenessLine(ctx)

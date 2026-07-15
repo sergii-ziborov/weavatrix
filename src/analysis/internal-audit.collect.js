@@ -1,9 +1,11 @@
 // internal-audit.collect.js — filesystem collection helpers for the internal audit: source/config
 // text gathering, workspace package names, and the Python manifest reader. Split from internal-audit.js.
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps } from "./manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { childProcessEnv } from "../child-env.js";
 
 export const readText = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 export const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
@@ -18,9 +20,35 @@ export const readRepoJson = (boundary, relativePath) => {
 const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|py|go|vue|svelte)$/i;
 const SOURCE_SKIP_DIRS = new Set([
   ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", ".next", "out",
-  "weavatrix-graphs", "weavatrix-graphs", "__pycache__", ".venv", "venv", "env", ".tox", "site-packages",
+  "release", "weavatrix-graphs", "__pycache__", ".venv", "venv", "env", ".tox", "site-packages",
   ".mypy_cache", ".pytest_cache",
 ]);
+
+// One file universe for every filesystem-backed audit. In Git repos this exactly matches tracked files
+// plus untracked/non-ignored work, so release bundles and other .gitignore outputs cannot re-enter through
+// text/config/manifest fallback collectors after the graph builder correctly omitted them.
+export function listRepoFiles(repoRoot) {
+  try {
+    const r = spawnSync("git", ["-C", repoRoot, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+      encoding: "utf8", windowsHide: true, timeout: 15_000, maxBuffer: 32 * 1024 * 1024,
+      env: childProcessEnv(),
+    });
+    if (r.status === 0) return String(r.stdout || "").split("\0").filter(Boolean).map((f) => f.replace(/\\/g, "/"));
+  } catch { /* non-Git repo or git unavailable: use the bounded walker below */ }
+
+  const files = [];
+  const walk = (abs, parts = []) => {
+    let entries = [];
+    try { entries = readdirSync(abs, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!SOURCE_SKIP_DIRS.has(entry.name)) walk(join(abs, entry.name), [...parts, entry.name]);
+      } else if (entry.isFile()) files.push([...parts, entry.name].join("/"));
+    }
+  };
+  walk(repoRoot);
+  return files;
+}
 
 export function collectSourceTexts(repoRoot, graph) {
   const sources = new Map();
@@ -36,19 +64,7 @@ export function collectSourceTexts(repoRoot, graph) {
 
   for (const n of graph.nodes || []) add(n.source_file);
 
-  const walk = (abs, parts = []) => {
-    let entries = [];
-    try { entries = readdirSync(abs, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        if (!SOURCE_SKIP_DIRS.has(entry.name)) walk(join(abs, entry.name), [...parts, entry.name]);
-        continue;
-      }
-      if (!entry.isFile() || !SOURCE_EXT_RE.test(entry.name)) continue;
-      add([...parts, entry.name].join("/"));
-    }
-  };
-  walk(repoRoot);
+  for (const file of listRepoFiles(repoRoot)) if (SOURCE_EXT_RE.test(file)) add(file);
   return sources;
 }
 
@@ -62,7 +78,8 @@ const CONFIG_FILES = [
   "jest.config.js", "jest.config.ts", "jest.config.cjs", "jest.config.mjs",
   "vite.config.js", "vite.config.ts", "vite.config.mjs", "vitest.config.js", "vitest.config.ts",
   "webpack.config.js", "rollup.config.js", "esbuild.config.js",
-  "postcss.config.js", "postcss.config.cjs", "tailwind.config.js", "tailwind.config.ts",
+  "postcss.config.js", "postcss.config.cjs", "postcss.config.mjs", "postcss.config.ts",
+  "tailwind.config.js", "tailwind.config.cjs", "tailwind.config.mjs", "tailwind.config.ts",
   ".prettierrc", ".prettierrc.json", "prettier.config.js",
   "playwright.config.js", "playwright.config.ts", "cypress.config.js", "cypress.config.ts",
   "next.config.js", "next.config.mjs", "nuxt.config.ts", "svelte.config.js", "astro.config.mjs",
@@ -76,17 +93,96 @@ const CONFIG_FILES = [
 export function collectConfigTexts(repoRoot) {
   const map = new Map();
   const boundary = createRepoBoundary(repoRoot);
-  for (const f of CONFIG_FILES) { const t = readRepoText(boundary, f); if (t != null) map.set(f, t); }
-  try {
-    const workflows = boundary.resolve(".github/workflows");
-    if (!workflows.ok) throw new Error("workflows directory is outside the repository");
-    for (const wf of readdirSync(workflows.path)) {
-      if (!/\.ya?ml$/i.test(wf)) continue;
-      const t = readRepoText(boundary, `.github/workflows/${wf}`);
-      if (t != null) map.set(`.github/workflows/${wf}`, t);
-    }
-  } catch { /* no workflows */ }
+  const names = new Set(CONFIG_FILES.map((f) => f.toLowerCase()));
+  for (const f of listRepoFiles(repoRoot)) {
+    const base = f.slice(f.lastIndexOf("/") + 1).toLowerCase();
+    if (!names.has(base) && !/^\.github\/workflows\/.*\.ya?ml$/i.test(f)) continue;
+    const t = readRepoText(boundary, f);
+    if (t != null) map.set(f, t);
+  }
   return map;
+}
+
+function readJsonc(text) {
+  if (text == null) return null;
+  try {
+    const input = String(text).replace(/^\uFEFF/, "");
+    let clean = "", inString = false, escaped = false;
+    for (let i = 0; i < input.length; i++) {
+      const ch = input[i], next = input[i + 1];
+      if (inString) {
+        clean += ch;
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; clean += ch; continue; }
+      if (ch === "/" && next === "/") {
+        while (i < input.length && input[i] !== "\n") i++;
+        clean += "\n";
+        continue;
+      }
+      if (ch === "/" && next === "*") {
+        i += 2;
+        while (i < input.length && !(input[i] === "*" && input[i + 1] === "/")) i++;
+        i++;
+        continue;
+      }
+      clean += ch;
+    }
+    clean = clean.replace(/,\s*([}\]])/g, "$1");
+    return JSON.parse(clean);
+  } catch { return null; }
+}
+
+const normRoot = (root) => {
+  const value = String(root || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+  return value === "." ? "" : value;
+};
+const inScope = (file, root) => !root || file === root || file.startsWith(`${root}/`);
+
+function aliasesForScope(repoRoot, root, files, boundary, scopeRoots) {
+  const ownerOf = (file) => scopeRoots.find((candidate) => inScope(file, candidate)) ?? "";
+  const configs = files
+    .filter((f) => ownerOf(f) === root && /(^|\/)(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/i.test(f))
+    .filter((f) => normRoot(dirname(f)) === root)
+    .sort((a, b) => Number(!/(^|\/)(?:tsconfig|jsconfig)\.json$/i.test(a)) - Number(!/(^|\/)(?:tsconfig|jsconfig)\.json$/i.test(b)) || a.localeCompare(b));
+  const aliases = new Map();
+  for (const config of configs) {
+    const cfg = readJsonc(readRepoText(boundary, config));
+    const paths = cfg?.compilerOptions?.paths || {};
+    for (const key of Object.keys(paths)) if (!aliases.has(key)) aliases.set(key, {
+      key,
+      prefix: String(key).replace(/\*.*$/, ""),
+      suffix: String(key).includes("*") ? String(key).slice(String(key).indexOf("*") + 1) : "",
+      config,
+    });
+  }
+  return [...aliases.values()];
+}
+
+// Every package.json defines a dependency scope. The nearest ancestor manifest owns an import, matching
+// npm workspace/package semantics. Aliases are collected from that scope's tsconfig/jsconfig so `@/*`
+// remains local rather than becoming a phantom npm package.
+export function collectPackageScopes(repoRoot, rootPkg = null) {
+  const boundary = createRepoBoundary(repoRoot);
+  const files = listRepoFiles(repoRoot);
+  const manifests = files.filter((f) => /(^|\/)package\.json$/i.test(f));
+  if (!manifests.includes("package.json") && rootPkg) manifests.unshift("package.json");
+  const uniqueManifests = [...new Set(manifests)];
+  const scopeRoots = uniqueManifests
+    .map((manifest) => manifest === "package.json" ? "" : normRoot(dirname(manifest)))
+    .sort((a, b) => b.length - a.length);
+  const scopes = [];
+  for (const manifest of uniqueManifests) {
+    const root = manifest === "package.json" ? "" : normRoot(dirname(manifest));
+    const pkg = manifest === "package.json" && rootPkg ? rootPkg : readRepoJson(boundary, manifest);
+    if (!pkg || typeof pkg !== "object") continue;
+    scopes.push({ root, manifest, pkg, aliases: aliasesForScope(repoRoot, root, files, boundary, scopeRoots) });
+  }
+  if (!scopes.some((s) => !s.root)) scopes.push({ root: "", manifest: "package.json", pkg: rootPkg || {}, aliases: aliasesForScope(repoRoot, "", files, boundary, [...scopeRoots, ""]) });
+  return scopes.sort((a, b) => b.root.length - a.root.length);
 }
 
 // Monorepo-local package names: "packages/*"-style workspace globs → each child's package.json name.
@@ -111,6 +207,7 @@ export function workspacePkgNames(repoRoot, pkg) {
       if (p && p.name) names.add(p.name);
     }
   }
+  for (const scope of collectPackageScopes(repoRoot, pkg)) if (scope.pkg?.name) names.add(scope.pkg.name);
   return names;
 }
 

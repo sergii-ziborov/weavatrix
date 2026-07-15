@@ -12,9 +12,11 @@ export function tGraphStats(g, ctx) {
     const symbols = g.nodes.length - files
     const relCount = {}
     const confCount = {}
+    let typeOnlyEdges = 0
     for (const e of g.links) {
         relCount[e.relation ?? '?'] = (relCount[e.relation ?? '?'] || 0) + 1
         if (e.confidence != null) confCount[e.confidence] = (confCount[e.confidence] || 0) + 1
+        if (e.typeOnly === true) typeOnlyEdges++
     }
     const comm = new Map()
     for (const n of g.nodes) {
@@ -33,6 +35,7 @@ export function tGraphStats(g, ctx) {
         ctx?.repoRoot ? `- Repo: ${ctx.repoRoot}` : null,
         `- Nodes: ${g.nodes.length} (${files} files, ${symbols} symbols)`,
         `- Edges: ${g.links.length}`,
+        g.edgeTypesV ? `- Typed-edge metadata: v${g.edgeTypesV} (${typeOnlyEdges} type-only edges)` : `- Typed-edge metadata: unavailable (rebuild_graph with Weavatrix 0.1.3+)`,
         `- Relations: ${fmt(relCount)}`,
         Object.keys(confCount).length ? `- Confidence: ${fmt(confCount)}` : null,
         `- Communities: ${comm.size} (top by size: ${topComm.map(([c, n]) => `#${c}=${n}`).join(', ')})`,
@@ -77,10 +80,10 @@ export function tGetNode(g, {label} = {}, ctx) {
 function dedupeEdges(list) {
     const grouped = new Map()
     for (const e of list) {
-        const key = `${e.relation || 'rel'}|${e.id}`
+        const key = `${e.relation || 'rel'}|${e.typeOnly === true ? 'type' : 'runtime'}|${e.id}`
         const cur = grouped.get(key)
         if (cur) cur.count += 1
-        else grouped.set(key, {id: e.id, relation: e.relation, count: 1})
+        else grouped.set(key, {id: e.id, relation: e.relation, typeOnly: e.typeOnly === true, count: 1})
     }
     return [...grouped.values()]
 }
@@ -99,7 +102,7 @@ export function tGetNeighbors(g, {label, relation_filter} = {}, ctx) {
     const outs = dedupeEdges(outsRaw)
     const ins = dedupeEdges(insRaw)
     const line = (e, dir) =>
-        `  ${dir === 'out' ? '→' : '←'} ${e.relation || 'rel'}  ${labelOf(g, e.id)}  [${e.id}]${e.count > 1 ? `  (${e.count} sites)` : ''}`
+        `  ${dir === 'out' ? '→' : '←'} ${e.typeOnly ? 'type-only ' : ''}${e.relation || 'rel'}  ${labelOf(g, e.id)}  [${e.id}]${e.count > 1 ? `  (${e.count} sites)` : ''}`
     return [
         note,
         `Neighbors of ${n.label ?? id}${rf ? ` (relation=${rf})` : ''}: ${outs.length + ins.length} unique (${outsRaw.length + insRaw.length} edges)`,
@@ -113,21 +116,52 @@ export function tGetNeighbors(g, {label, relation_filter} = {}, ctx) {
 
 export function tGodNodes(g, {top_n = 10} = {}) {
     const n = Math.max(1, Math.min(100, Number(top_n) || 10))
-    const ranked = g.nodes
+    const scored = g.nodes
         .map((node) => {
-            const o = connList(g.out.get(String(node.id))).length
-            const i = connList(g.inn.get(String(node.id))).length
-            return {node, deg: o + i, out: o, in: i}
+            const outs = connList(g.out.get(String(node.id)))
+            const ins = connList(g.inn.get(String(node.id)))
+            const outIds = new Set(outs.map((e) => String(e.id)))
+            const inIds = new Set(ins.map((e) => String(e.id)))
+            const allIds = new Set([...outIds, ...inIds])
+            const runtimeIds = new Set([...outs, ...ins].filter((e) => e.typeOnly !== true).map((e) => String(e.id)))
+            const compileOnlyIds = new Set([...outs, ...ins].filter((e) => e.typeOnly === true).map((e) => String(e.id)))
+            for (const id of runtimeIds) compileOnlyIds.delete(id)
+            const occurrences = outs.length + ins.length
+            return {
+                node,
+                deg: allIds.size,
+                runtime: runtimeIds.size,
+                compileOnly: compileOnlyIds.size,
+                out: outIds.size,
+                in: inIds.size,
+                occurrences,
+            }
         })
-        .sort((a, b) => b.deg - a.deg)
-        .slice(0, n)
+        .filter((entry) => entry.deg > 0)
+        .sort((a, b) => b.runtime - a.runtime || b.deg - a.deg || b.occurrences - a.occurrences)
+    const ranked = scored.slice(0, n)
+    const rankedIds = new Set(ranked.map((entry) => String(entry.node.id)))
+    // Unique neighbors measure coupling, but a large component repeatedly calling the same helper (for
+    // example i18n) can still be a valuable complexity hotspot. Preserve that second lens explicitly
+    // instead of letting repeated sites inflate the coupling rank.
+    const occurrenceHotspots = scored
+        .filter((entry) => !rankedIds.has(String(entry.node.id)))
+        .filter((entry) => entry.occurrences >= 20 && entry.occurrences - entry.deg >= 10)
+        .sort((a, b) => (b.occurrences - b.deg) - (a.occurrences - a.deg) || b.occurrences - a.occurrences)
+        .slice(0, Math.min(5, n))
     return [
-        `Top ${n} most-connected nodes (call/import/reference edges, excluding structural containment):`,
+        `Top ${ranked.length} connectivity hubs (ranked by unique runtime call/import/reference neighbors; structural containment excluded):`,
         ...ranked.map(
             (r, i) =>
-                `${String(i + 1).padStart(2)}. ${r.node.label ?? r.node.id}  (${r.deg} edges: out ${r.out}, in ${r.in})  [${r.node.id}]`
+                `${String(i + 1).padStart(2)}. ${r.node.label ?? r.node.id}  (${r.deg} unique: ${r.runtime} runtime, ${r.compileOnly} compile-only; out ${r.out}, in ${r.in}; ${r.occurrences} edge occurrence${r.occurrences === 1 ? '' : 's'})  [${r.node.id}]`
         ),
-    ].join('\n')
+        `Repeated call sites affect the occurrence count, not the connectivity rank; compile-only neighbors are secondary to runtime coupling.`,
+        occurrenceHotspots.length ? `` : null,
+        occurrenceHotspots.length ? `High occurrence hotspots outside the connectivity rank (repeated call/reference sites; complexity signal, not broader coupling):` : null,
+        ...occurrenceHotspots.map((r) =>
+            `  ${r.node.label ?? r.node.id}  (${r.occurrences} occurrences across ${r.deg} unique neighbors; ${r.occurrences - r.deg} repeats)  [${r.node.id}]`
+        ),
+    ].filter((line) => line != null).join('\n')
 }
 
 export function tGetCommunity(g, {community_id} = {}) {

@@ -26,6 +26,16 @@ const BIN_PKG = {
   playwright: "@playwright/test",
 };
 
+// Required peers consumed inside a framework/build tool rather than imported by application source.
+// These contracts are package-scope local and deliberately narrow; declaring the provider is required
+// for suppression, so an unrelated app still gets the normal unused-dependency finding.
+const FRAMEWORK_RUNTIME_PEERS = new Map([
+  ["next", ["react-dom"]],
+  ["vinext", ["@vitejs/plugin-react", "@vitejs/plugin-rsc", "react-server-dom-webpack", "vite"]],
+  ["electron-vite", ["vite"]],
+  ["@cloudflare/vite-plugin", ["vite", "wrangler"]],
+]);
+
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // word-ish mention: the name not embedded inside a longer identifier/path segment
 const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\w.-])`).test(blob);
@@ -35,8 +45,21 @@ const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\
 //   pkg             — parsed package.json ({} for non-JS repos → no dep findings)
 //   workspacePkgNames — Set of monorepo-local package names (never "missing")
 //   configTexts     — Map<fileName, text> of root config files + CI workflows (mention scanning)
-export function computeDepFindings({ externalImports = [], pkg = {}, workspacePkgNames = new Set(), configTexts = new Map() } = {}) {
+export function computeDepFindings({
+  externalImports = [], pkg = {}, workspacePkgNames = new Set(), configTexts = new Map(),
+  aliases = [], scope = "", manifest = "package.json",
+} = {}) {
   const findings = [];
+  const meta = { scope: scope || ".", manifest };
+  const isAliasSpec = (spec) => aliases.some((a) => {
+    const s = String(spec || "");
+    const key = typeof a === "string" ? a : String(a?.key || "");
+    const prefix = typeof a === "string" ? a.replace(/\*.*$/, "") : String(a?.prefix || "");
+    const suffix = key.includes("*") ? key.slice(key.indexOf("*") + 1) : String(a?.suffix || "");
+    return key.includes("*")
+      ? !!prefix && s.startsWith(prefix) && (!suffix || s.endsWith(suffix))
+      : !!key && s === key;
+  });
   const sections = {
     dependencies: pkg.dependencies || {},
     devDependencies: pkg.devDependencies || {},
@@ -45,12 +68,20 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
   };
   const allDeclared = new Set(Object.values(sections).flatMap((s) => Object.keys(s)));
   const selfName = String(pkg.name || "");
+  // Some frameworks consume required peers internally, so application source legitimately never imports
+  // them. Keep this deliberately narrow: react-dom is a required Next.js runtime peer in the same package
+  // scope, not a general React exemption and not a repo-wide whitelist.
+  const frameworkRuntime = new Set();
+  for (const [provider, peers] of FRAMEWORK_RUNTIME_PEERS) {
+    if (allDeclared.has(provider)) for (const peer of peers) frameworkRuntime.add(peer);
+  }
 
   // ---- usage index from the graph's recorded imports ----
   const usedPackages = new Map(); // pkgName -> { files:Set, lines:Map(file→first line), kinds:Set }
   let builtinUsed = false;
   for (const e of externalImports) {
     if (e.ecosystem && e.ecosystem !== "npm") continue; // go/python imports have their own checkers
+    if (isAliasSpec(e.spec)) continue;
     if (e.unresolved) continue;
     if (e.builtin) { builtinUsed = true; continue; }
     if (!e.pkg) continue;
@@ -75,10 +106,10 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
   for (const [section, deps] of Object.entries(sections)) {
     if (section === "peerDependencies") continue; // peers are consumer-facing contracts, not usage
     for (const name of Object.keys(deps)) {
-      if (name === selfName || usedPackages.has(name)) continue;
+      if (name === selfName || usedPackages.has(name) || frameworkRuntime.has(name)) continue;
       const tb = typesBase(name);
       if (tb) { // @types/x is used iff x is used (or it types the Node builtins)
-        if (tb === "node" ? builtinUsed : usedPackages.has(tb) || mentioned(configBlob, tb)) continue;
+        if (tb === "node" ? builtinUsed : usedPackages.has(tb) || frameworkRuntime.has(tb) || mentioned(configBlob, tb)) continue;
       }
       if (binReferenced(name) || mentioned(configBlob, name)) continue; // scripts/config keep it alive
       const ecosystem = CONFIG_ECOSYSTEM_RE.test(name);
@@ -94,6 +125,7 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
         package: name,
         source: "internal",
         fixHint: `npm uninstall ${name} (after confirming no config/CLI usage)`,
+        ...meta,
       }));
     }
   }
@@ -109,13 +141,14 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
       severity: testOnly ? "low" : "medium",
       confidence: "high",
       title: `Missing dependency: ${name}`,
-      detail: `"${name}" is imported by ${files.length} file(s) but not declared in package.json — it only works via a transitive install (phantom dependency) and can break on any lockfile change.`,
+      detail: `"${name}" is imported by ${files.length} file(s) in scope ${meta.scope} but not declared in ${manifest} — it only works via a transitive install (phantom dependency) and can break on any lockfile change.`,
       package: name,
       file: files[0],
       line: use.lines.get(files[0]) || 0,
       evidence: files.slice(0, 5).map((f) => ({ file: f, line: use.lines.get(f) || 0, snippet: "" })),
       source: "internal",
       fixHint: `npm install ${testOnly ? "--save-dev " : ""}${name}`,
+      ...meta,
     }));
   }
 
@@ -134,6 +167,7 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
       detail: `"${name}" is declared in ${ss.join(" + ")} — npm resolves one of them; keep a single section.`,
       package: name,
       source: "internal",
+      ...meta,
     }));
   }
 
@@ -156,6 +190,7 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
       file: e.file,
       line: e.line || 0,
       source: "internal",
+      ...meta,
     }));
   }
   if (unresolvedCount > unresolvedSeen.size) {
@@ -167,10 +202,43 @@ export function computeDepFindings({ externalImports = [], pkg = {}, workspacePk
       title: `…and ${unresolvedCount - unresolvedSeen.size} more unresolved imports`,
       detail: "Finding list capped at 100 unique unresolved imports; the count above is the true total.",
       source: "internal",
+      ...meta,
     }));
   }
 
   return { findings, usedPackages, declared: allDeclared };
+}
+
+const normScope = (root) => String(root || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+const ownsFile = (scope, file) => !scope || file === scope || String(file || "").startsWith(`${scope}/`);
+
+// Judge every import against its nearest ancestor package.json. This is the dependency equivalent of
+// Node's package scope and prevents nested Next/Vite apps from inheriting the root manifest by accident.
+export function computeScopedDepFindings({
+  externalImports = [], packageScopes = [], workspacePkgNames = new Set(), configTexts = new Map(),
+} = {}) {
+  const scopes = packageScopes.length
+    ? packageScopes.map((s) => ({ ...s, root: normScope(s.root) })).sort((a, b) => b.root.length - a.root.length)
+    : [{ root: "", manifest: "package.json", pkg: {}, aliases: [] }];
+  const importsByScope = new Map(scopes.map((s) => [s, []]));
+  for (const e of externalImports) {
+    const owner = scopes.find((s) => ownsFile(s.root, e.file)) || scopes[scopes.length - 1];
+    importsByScope.get(owner).push(e);
+  }
+  const configOwner = new Map();
+  for (const [file] of configTexts) configOwner.set(file, scopes.find((scope) => ownsFile(scope.root, file)) || scopes[scopes.length - 1]);
+  const findings = [], usedPackages = new Map(), declared = new Set();
+  for (const s of scopes) {
+    const scopeConfig = new Map([...configTexts].filter(([f]) => configOwner.get(f) === s));
+    const r = computeDepFindings({
+      externalImports: importsByScope.get(s), pkg: s.pkg || {}, workspacePkgNames, configTexts: scopeConfig,
+      aliases: s.aliases || [], scope: s.root, manifest: s.manifest || (s.root ? `${s.root}/package.json` : "package.json"),
+    });
+    findings.push(...r.findings);
+    for (const [name, use] of r.usedPackages) usedPackages.set(`${s.root || "."}:${name}`, use);
+    for (const name of r.declared) declared.add(`${s.root || "."}:${name}`);
+  }
+  return { findings, usedPackages, declared };
 }
 
 const TEST_PATH_RE = /(^|[/\\])(test|tests|__tests__|spec|e2e|__mocks__)([/\\]|$)|[._-](test|spec)\.[a-z0-9]+$|_test\.go$/i;
@@ -243,11 +311,17 @@ const PY_TOOL_DISTS = new Set(("pytest tox nox black ruff flake8 pylint mypy pyr
   "pip-tools uv virtualenv pipenv gunicorn uwsgi supervisor ipython jupyter jupyterlab notebook ipykernel codecov autopep8 yapf commitizen detect-secrets safety pip-audit hatchling flit flit-core pdm").split(" "));
 const pyNorm = (n) => String(n || "").toLowerCase().replace(/[-_.]+/g, "-");
 
-export function computePyDepFindings({ externalImports = [], pyManifest = null, configTexts = new Map() } = {}) {
+export function computePyDepFindings({
+  externalImports = [], pyManifest = null, configTexts = new Map(),
+  managedDependencies = [], ignoredDependencies = [],
+} = {}) {
   const findings = [];
   const deps = (pyManifest && pyManifest.deps) || [];
   const present = !!(pyManifest && pyManifest.present);
   const declared = new Set(deps.map((d) => pyNorm(d.name)));
+  const managed = new Set((managedDependencies || []).map(pyNorm));
+  const ignored = new Set((ignoredDependencies || []).map(pyNorm));
+  for (const name of managed) declared.add(name);
 
   const used = new Map(); // top import → { dist, files:Set, lines:Map }
   for (const e of externalImports) {
@@ -268,6 +342,7 @@ export function computePyDepFindings({ externalImports = [], pyManifest = null, 
   if (present) {
     for (const d of deps) {
       const n = pyNorm(d.name);
+      if (managed.has(n) || ignored.has(n)) continue;
       if (d.buildSystem || PY_TOOL_DISTS.has(n) || /^types-|-stubs$|^pytest-|^flake8-|^sphinx/.test(n)) continue;
       let hit = false;
       for (const [top, u] of used) if (covers(d.name, top, u.dist)) { hit = true; break; }
@@ -286,6 +361,7 @@ export function computePyDepFindings({ externalImports = [], pyManifest = null, 
     }
   }
   for (const [top, u] of used) {
+    if (ignored.has(pyNorm(top)) || ignored.has(pyNorm(u.dist)) || managed.has(pyNorm(top)) || managed.has(pyNorm(u.dist))) continue;
     let hit = false;
     for (const D of declared) if (covers(D, top, u.dist)) { hit = true; break; }
     if (hit) continue;
@@ -297,14 +373,14 @@ export function computePyDepFindings({ externalImports = [], pyManifest = null, 
       severity: present ? (testOnly ? "low" : "medium") : "low",
       confidence: present ? "medium" : "low",
       title: `Missing Python dependency: ${u.dist}`,
-      detail: `"${top}" is imported by ${files.length} file(s) but ${present ? "no declared dependency provides it" : "the repo declares no Python dependencies at all (no requirements.txt / pyproject / Pipfile)"} — it only works because the environment happens to have it${u.dist !== top ? ` (PyPI package is likely "${u.dist}")` : ""}.`,
+      detail: `"${top}" is imported by ${files.length} file(s) but ${present ? "no declared dependency provides it" : "the repo has no Python dependency manifest (requirements.txt / pyproject / Pipfile); a bundled or managed runtime may provide it"}${u.dist !== top ? ` (PyPI package is likely "${u.dist}")` : ""}.${present ? "" : " If this is intentional, declare it under python.managedDependencies in .weavatrix-deps.json."}`,
       package: u.dist,
       file: files[0],
       line: u.lines.get(files[0]) || 0,
       evidence: files.slice(0, 5).map((f) => ({ file: f, line: u.lines.get(f) || 0, snippet: "" })),
       source: "internal",
-      fixHint: `pip install ${u.dist}  (and add it to requirements.txt / pyproject)`,
+      fixHint: present ? `pip install ${u.dist}  (and add it to requirements.txt / pyproject)` : `add ${u.dist} to a Python manifest, or declare it as a managed runtime dependency`,
     }));
   }
-  return { findings, declared };
+  return { findings, declared, managed };
 }

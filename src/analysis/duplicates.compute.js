@@ -1,9 +1,9 @@
 // duplicates.compute.js — fragment extraction, inverted-index pairing, and the computeDuplicates
 // pipeline (split from duplicates.js; see the facade there for the full algorithm overview).
-import { readFileSync, readdirSync } from "node:fs";
-import { join, extname } from "node:path";
+import { readFileSync } from "node:fs";
 import { isTestPath } from "../graph/graph-filter.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { listRepoFiles } from "./internal-audit.collect.js";
 import { stripNonCode, bodyEndLineCount, tokenize, fingerprints, extractLargeStrings } from "./duplicates.tokenize.js";
 
 const FLOOR_TOKENS = 30;   // fragments below this never enter the index (UI slider min)
@@ -17,20 +17,7 @@ const WINDOW_EXTS = /\.(css|scss|sass|less|styl|html?|md|markdown|mdx|vue|svelte
 const WINDOW_LINES = 24;   // non-overlapping block size for windowed files
 // Asset files are DEDUP-ONLY — they are NOT put in the code graph (that would score md/css as fake
 // "methods" in Health and clutter the GUI board), so the clone scanner finds them by walking the repo.
-const WALK_SKIP = new Set(["node_modules", ".git", "dist", "build", "coverage", "vendor", "weavatrix-graphs", ".next", "out", "__pycache__", ".venv", "venv", "site-packages"]);
 const MAX_ASSET_FILES = 4000;
-function walkAssets(root, dir, acc, depth) {
-  if (depth > 40 || acc.length >= MAX_ASSET_FILES) return acc;
-  let entries; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return acc; }
-  for (const e of entries) {
-    if (acc.length >= MAX_ASSET_FILES) break;
-    if (e.name.startsWith(".") || WALK_SKIP.has(e.name)) continue;
-    const full = join(dir, e.name);
-    if (e.isDirectory()) walkAssets(root, full, acc, depth + 1);
-    else if (WINDOW_EXTS.test(e.name)) acc.push(full.slice(root.length + 1).replace(/\\/g, "/"));
-  }
-  return acc;
-}
 // Fingerprints shared by MORE than this many fragments are ubiquitous boilerplate and are excluded
 // from BOTH the shared count AND the union (so jaccard stays honest — see pairsForMode). Set well
 // above realistic clone multiplicity: N byte-identical copies each put all their fingerprints in
@@ -55,7 +42,7 @@ function computeNameTwins(frags) {
   frags.forEach((f, i) => {
     if (f.kind === "string") return;
     const name = String(f.label || "").trim().replace(/\(\)$/, "");
-    if (name.length < 5 || !/^[A-Za-z_$][\w$]*$/.test(name) || TWIN_STOP.has(name.toLowerCase())) return;
+    if (name.length < 5 || !/^[A-Za-z_$][\w$]*$/.test(name) || TWIN_STOP.has(name.toLowerCase()) || /^do_(?:get|post|put|patch|delete|head|options)$/i.test(name)) return;
     const key = name.toLowerCase();
     let a = byName.get(key); if (!a) byName.set(key, (a = []));
     a.push(i);
@@ -66,15 +53,18 @@ function computeNameTwins(frags) {
     const files = new Set(idxs.map((i) => frags[i].file));
     if (files.size < 2 || idxs.length > 12) continue; // single-file overloads / framework-name explosions
     let simMin = 1, simMax = 0;
+    const pairs = [];
     for (let a = 0; a < idxs.length; a++) for (let b = a + 1; b < idxs.length; b++) {
       if (frags[idxs[a]].file === frags[idxs[b]].file) continue;
       const s = jac(frags[idxs[a]].fp.renamed, frags[idxs[b]].fp.renamed);
       if (s < simMin) simMin = s;
       if (s > simMax) simMax = s;
+      pairs.push({ a: idxs[a], b: idxs[b], similarity: Math.round(s * 100) });
     }
     out.push({
       label: String(frags[idxs[0]].label || "").replace(/\(\)$/, ""), members: idxs, files: files.size,
       simMin: Math.round(simMin * 100), simMax: Math.round(simMax * 100),
+      pairs,
       tokens: idxs.reduce((n, i) => n + frags[i].n, 0),
     });
   }
@@ -130,11 +120,14 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   // total symbol nodes in the graph — 0 means a file-only graph (built by an older builder before
   // symbol extraction, or a stale graph): clone detection has nothing to work with, and the UI must
   // say "rebuild the graph" instead of the misleading "no clones at these thresholds".
+  const repoFiles = listRepoFiles(repoPath);
+  const allowedFiles = new Set(repoFiles);
   let graphSymbols = 0;
-  for (const arr of byFile.values()) graphSymbols += arr.length;
+  for (const [file, arr] of byFile) if (allowedFiles.has(file)) graphSymbols += arr.length;
   const frags = [];
   const boundary = createRepoBoundary(repoPath);
   for (const [file, syms] of byFile) {
+    if (!allowedFiles.has(file)) continue;
     const resolved = boundary.resolve(file);
     if (!resolved.ok) continue;
     const full = resolved.path;
@@ -195,7 +188,8 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   // ---- windowed fragments for symbol-less file types (CSS/HTML/MD/…), found by walking the repo (NOT the
   // graph — assets are dedup-only). Each file is sliced into WINDOW_LINES blocks and fingerprinted.
   const symFiles = new Set(byFile.keys());
-  for (const file of walkAssets(repoPath, repoPath, [], 0)) {
+  const assetFiles = repoFiles.filter((file) => WINDOW_EXTS.test(file)).slice(0, MAX_ASSET_FILES);
+  for (const file of assetFiles) {
     if (symFiles.has(file)) continue;
     const resolved = boundary.resolve(file);
     if (!resolved.ok) continue;

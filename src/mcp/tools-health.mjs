@@ -38,19 +38,38 @@ export function tFindDuplicates(g, args, ctx) {
     if (args.mode === 'semantic') {
         const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {nameTwins: true})
         const frags = data.frags
-        const groups = (data.nameTwins || [])
-            .map((t) => ({...t, members: t.members.filter((i) => (!skipTests || !frags[i].test) && frags[i].n >= tokMin)}))
-            .map((t) => ({...t, fileCount: new Set(t.members.map((i) => frags[i].file)).size}))
-            .filter((t) => t.members.length >= 2 && t.fileCount >= 2)
-        if (!groups.length) return 'No same-name symbol groups across files (semantic mode).'
-        const top = groups.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
-        const lines = top.map((t, k) => {
-            const verdict = t.simMax < 60 ? '  ⚠ DIVERGENT — same name, different bodies (drift hazard)' : t.simMin >= 90 ? '  near-identical — extract a shared module' : ''
-            const head = `${k + 1}. "${t.label}" — ${t.members.length} definitions in ${t.fileCount} files, similarity ${t.simMin}–${t.simMax}%${verdict}`
-            const sites = t.members.slice(0, 8).map((i) => `     ${frags[i].file}:${frags[i].start}-${frags[i].end}  (${frags[i].n} tok)`)
-            return [head, ...sites].join('\n')
+        const candidates = []
+        for (const twin of data.nameTwins || []) {
+            const allowed = new Set(twin.members.filter((i) => (!skipTests || !frags[i].test) && frags[i].n >= tokMin))
+            const pairs = (twin.pairs || []).filter((p) => allowed.has(p.a) && allowed.has(p.b))
+            if (!pairs.length) continue
+            const closest = pairs.slice().sort((a, b) => b.similarity - a.similarity)[0]
+            const farthest = pairs.slice().sort((a, b) => a.similarity - b.similarity)[0]
+            if (closest.similarity >= 85) candidates.push({kind: 'clone', label: twin.label, pair: closest})
+            if (farthest.similarity <= 45) candidates.push({kind: 'collision', label: twin.label, pair: farthest})
+        }
+        for (const item of candidates) item.tokens = frags[item.pair.a].n + frags[item.pair.b].n
+        candidates.sort((a, b) => {
+            if (a.kind !== b.kind) return a.kind === 'clone' ? -1 : 1
+            return a.kind === 'clone'
+                ? b.pair.similarity - a.pair.similarity || b.tokens - a.tokens
+                : b.tokens - a.tokens || a.pair.similarity - b.pair.similarity
         })
-        return `Found ${groups.length} same-name symbol group(s) across files (semantic mode; similarity = renamed-token jaccard, LOW = divergent copies). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nLow-similarity groups are the risky ones — same name, drifted behavior. read_source both sites to compare.`
+        if (!candidates.length) return 'No actionable same-name pairs across files (semantic mode; ambiguous middle-similarity pairs are suppressed).'
+        const top = candidates.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
+        const lines = top.map((item, k) => {
+            const a = frags[item.pair.a]
+            const b = frags[item.pair.b]
+            const verdict = item.kind === 'clone'
+                ? 'near-identical duplicate candidate — review, then extract shared logic if the contract is truly shared'
+                : 'name collision, not a duplicate — inspect only if these definitions should share a contract'
+            return [
+                `${k + 1}. "${item.label}" — ${item.pair.similarity}% similar; ${verdict}`,
+                `     ${a.file}:${a.start}-${a.end}  (${a.n} tok)`,
+                `     ${b.file}:${b.start}-${b.end}  (${b.n} tok)`,
+            ].join('\n')
+        })
+        return `Found ${candidates.length} actionable same-name pair(s) across files (semantic mode; one closest clone and/or farthest collision per name). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nThese are review candidates, not automatic refactors. Use read_source on both sites before changing code.`
     }
     const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {includeStrings})
     const groups = groupClones(data, {simMin, tokMin, mode, skipTests})
@@ -87,14 +106,15 @@ export async function tRunAudit(g, args, ctx) {
     const sev = audit.summary.bySeverity
     const bycat = audit.summary.byCategory
     const line = (f) => {
-        const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''})` : ''
+        const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''}${f.manifest ? `; ${f.manifest}` : ''})` : ''
         return `  [${f.severity}/${f.confidence || '?'}] ${f.rule}: ${f.title}${where}${f.fixHint ? `\n      fix: ${f.fixHint}` : ''}`
     }
+    const check = (name, state) => `${name} ${state?.status || 'ERROR'}${state?.detail ? ` — ${state.detail}` : ''}`
     return [
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         `Severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
-        `Structure: ${audit.structureReport?.cycles ?? 0} cycle(s), ${audit.structureReport?.orphans ?? 0} orphan(s). Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
-        audit.scanned.advisoryDbDate ? `Advisory DB: ${audit.scanned.advisoryDbDate}.` : 'Advisory DB: never refreshed for this repo — known-vuln matching skipped (see refresh_advisories).',
+        `Structure: ${audit.structureReport?.runtimeCycles ?? audit.structureReport?.cycles ?? 0} runtime cycle(s), ${audit.structureReport?.typeCouplings ?? 0} type-induced coupling group(s), ${audit.structureReport?.orphans ?? 0} orphan(s); import edges: ${audit.structureReport?.runtimeImportEdges ?? audit.structureReport?.importEdges ?? 0} runtime + ${audit.structureReport?.typeOnlyImportEdges ?? 0} type-only. Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
+        `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`,
         ``,
         `Showing ${shown.length} of ${filtered.length} finding(s)${cat ? ` in category "${cat}"` : ''}${args.min_severity ? ` at ≥${args.min_severity}` : ''}:`,
         ...shown.map(line),
@@ -120,13 +140,17 @@ export function tModuleMap(g, args, ctx) {
     const topN = Math.max(1, Math.min(60, Number(args.top_n) || 25))
     const mods = agg.modules.slice(0, topN)
     const edges = agg.moduleEdges.slice(0, Math.min(50, topN * 2))
+    const typeEdges = (agg.typeOnlyModuleEdges || []).slice(0, Math.min(50, topN * 2))
     return [
-        `Module map: ${agg.totals.files} files in ${agg.modules.length} folder-modules, ${agg.totals.moduleEdges} module edges. Top ${mods.length}:`,
+        `Module map: ${agg.totals.files} files in ${agg.modules.length} folder-modules, ${agg.totals.moduleEdges} runtime module dependencies and ${agg.totals.typeOnlyModuleEdges || 0} type-only dependencies. Top ${mods.length}:`,
         ...mods.map((m) => `  ${m.name} — ${m.fileCount} files, ${m.symbolCount} symbols`),
         ``,
-        `Strongest module dependencies:`,
+        `Strongest runtime module dependencies:`,
         ...edges.map((e) => `  ${e.from} → ${e.to}  (${e.count})`),
-    ].join('\n')
+        typeEdges.length ? `` : null,
+        typeEdges.length ? `Type-only module dependencies (compile-time contracts, not runtime coupling):` : null,
+        ...typeEdges.map((e) => `  ${e.from} → ${e.to}  (${e.count})`),
+    ].filter((line) => line != null).join('\n')
 }
 
 // Coverage × graph: map an EXISTING coverage report (istanbul/lcov/coverage.py/Go — read offline,

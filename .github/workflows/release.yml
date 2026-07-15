@@ -134,6 +134,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out tagged source for release notes
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Download the verified release bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -141,6 +145,22 @@ jobs:
           path: dist-mcpb
       - name: Verify bundle checksum
         run: cd dist-mcpb && sha256sum --check weavatrix.mcpb.sha256
+      - name: Compose checked-in and generated release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          NOTES_PATH="docs/releases/${GITHUB_REF_NAME}.md"
+          [[ -s "$NOTES_PATH" ]] || { echo "Missing release notes: $NOTES_PATH" >&2; exit 1; }
+
+          GENERATED_NOTES="$(gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            --raw-field tag_name="$GITHUB_REF_NAME" \
+            --jq .body)"
+          cp "$NOTES_PATH" release-notes.md
+          if [[ -n "$GENERATED_NOTES" ]]; then
+            printf '\n\n%s\n' "$GENERATED_NOTES" >> release-notes.md
+          fi
       - name: Create an immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,6 +176,8 @@ jobs:
                 --clobber
               gh release edit "$GITHUB_REF_NAME" \
                 --repo "$GITHUB_REPOSITORY" \
+                --notes-file release-notes.md \
+                --title "$GITHUB_REF_NAME" \
                 --draft=false \
                 --latest
             else
@@ -169,7 +191,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
-              --generate-notes \
+              --notes-file release-notes.md \
               --title "$GITHUB_REF_NAME" \
               --draft
             gh release upload "$GITHUB_REF_NAME" \

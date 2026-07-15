@@ -6,6 +6,7 @@
 // `analyzeDeadCode(graph, repoRoot)` is the thin fs wrapper. Works on ANY graph-builder-schema graph (built-in OR
 // graph-builder) — it only needs {nodes, links} + the source text. See [[graph-builder-internalization]].
 import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import { createRepoBoundary } from "../repo-path.js";
 
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
@@ -15,7 +16,80 @@ const bareName = (label) => String(label || "").replace(/\s*\(.*$/, "").replace(
 export const ENTRY_FILE = /(^|[\\/])(index|main|app|server|cli|cmd|bootstrap|entry|run|__main__|manage|wsgi|asgi|setup|conftest)\.[a-z0-9]+$|(^|[\\/])(bin|cmd)[\\/]|(^|[\\/])main\.go$/i;
 const TEST_FILE = /(^|[\\/])[^\\/]*[._-](test|spec)\.[a-z0-9]+$|(^|[\\/])(test|tests|__tests__|spec)[\\/]/i;
 
-export function computeDead(graph, sources) {
+// Framework-owned entry modules are invoked by convention rather than a source import. Keep this narrow:
+// these are Next.js App/Pages Router surfaces and framework metadata files, not every file under `app/`.
+export const NEXT_ENTRY_FILE = /(^|\/)(?:src\/)?app\/(?:.*\/)?(?:page|layout|template|loading|error|global-error|not-found|default|route|robots|sitemap|manifest|opengraph-image|twitter-image|icon|apple-icon)\.[cm]?[jt]sx?$|(^|\/)(?:src\/)?pages\/(?!.*\/(?:components?|lib|utils?)\/).+\.[cm]?[jt]sx?$|(^|\/)(?:middleware|instrumentation)\.[cm]?[jt]s$/i;
+export const isFrameworkEntryFile = (file) => NEXT_ENTRY_FILE.test(String(file || "").replace(/\\/g, "/"));
+
+const lineOfNode = (n) => {
+  const m = /@(\d+)$/.exec(String(n.id || "")) || /L(\d+)/.exec(String(n.source_location || ""));
+  return m ? Number(m[1]) : 0;
+};
+
+// Older graphs marked every method of an exported class as exported. Verify that an `exported` node is
+// actually a module-surface declaration before reporting it. New graphs expose symbol_kind/member_of and
+// already keep members unexported, but the source check preserves correctness for cached v0.1.2 graphs.
+function hasModuleExport(source, node, name) {
+  if (node.member_of || node.symbol_kind === "method") return false;
+  const lines = String(source || "").split(/\r?\n/);
+  const line = lines[Math.max(0, lineOfNode(node) - 1)] || "";
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const direct = new RegExp(`\\bexport\\s+(?:default\\s+)?(?:(?:declare|abstract|async)\\s+)*(?:function|class|const|let|var|enum|interface|type|namespace)\\s+${escaped}\\b`);
+  if (direct.test(line) || direct.test(String(source || ""))) return true;
+  const exportDefault = new RegExp(`\\bexport\\s+default\\s+${escaped}\\b`);
+  if (exportDefault.test(String(source || ""))) return true;
+  // `export { local }`, `export { local as publicName }` and CommonJS explicit exports.
+  const exportList = new RegExp(`\\bexport\\s*\\{[^}]*\\b${escaped}\\b[^}]*\\}`, "s");
+  const commonJs = new RegExp(`(?:module\\.exports\\s*=\\s*\\{[^}]*\\b${escaped}\\b|(?:module\\.exports|exports)\\.${escaped}\\s*=)`, "s");
+  return exportList.test(String(source || "")) || commonJs.test(String(source || ""));
+}
+
+function namespaceConsumedFiles(sources, graph) {
+  const files = new Set(sources.keys());
+  const consumed = new Set();
+  const extensions = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
+  const resolve = (from, spec) => {
+    if (!spec.startsWith(".")) return "";
+    const base = posix.normalize(posix.join(posix.dirname(from.replace(/\\/g, "/")), spec));
+    for (const ext of extensions) {
+      const p = `${base}${ext}`;
+      if (files.has(p)) return p;
+    }
+    for (const ext of extensions.slice(1)) {
+      const p = `${base}/index${ext}`;
+      if (files.has(p)) return p;
+    }
+    return "";
+  };
+  for (const [file, textValue] of sources) {
+    const text = String(textValue || "");
+    const patterns = [
+      /\bimport\s+\*\s+as\s+[A-Za-z_$][\w$]*\s+from\s*(["'])([^"']+)\1/g,
+      /\bexport\s+\*\s+from\s*(["'])([^"']+)\1/g,
+      /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*require\(\s*(["'])([^"']+)\1\s*\)/g,
+    ];
+    for (const re of patterns) {
+      let m;
+      while ((m = re.exec(text))) {
+        const target = resolve(file, m[2]);
+        if (target) consumed.add(target);
+      }
+    }
+  }
+  // New graphs retain the exact specifier on file import edges, which also resolves namespace imports
+  // expressed through tsconfig aliases (the relative-path fallback above intentionally cannot guess those).
+  for (const link of graph.links || []) {
+    if (link.relation !== "imports" && link.relation !== "re_exports") continue;
+    const from = String(link.source?.id || link.source || ""), target = String(link.target?.id || link.target || "");
+    if (!link.specifier || from.includes("#") || target.includes("#") || !sources.has(from)) continue;
+    const spec = String(link.specifier).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const text = String(sources.get(from) || "");
+    if (new RegExp(`(?:import\\s+\\*\\s+as\\s+[A-Za-z_$][\\w$]*\\s+from|export\\s+\\*\\s+from)\\s*["']${spec}["']`).test(text)) consumed.add(target);
+  }
+  return consumed;
+}
+
+export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   const nodes = graph.nodes || [], links = graph.links || [];
   const ep = (v) => (v && typeof v === "object" ? v.id : v);
   const inbound = new Set();
@@ -73,7 +147,7 @@ export function computeDead(graph, sources) {
   const deadFiles = [];
   for (const n of nodes) {
     if (String(n.id).includes("#")) continue;                   // file nodes only
-    if (inbound.has(n.id) || ENTRY_FILE.test(n.source_file)) continue;
+    if (inbound.has(n.id) || ENTRY_FILE.test(n.source_file) || isFrameworkEntryFile(n.source_file) || entrySet.has(n.source_file)) continue;
     const syms = symsByFile.get(n.source_file) || [];
     if (syms.length && syms.every((s) => deadSet.has(s.id))) deadFiles.push({ file: n.source_file, reason: "not imported; all symbols unreferenced" });
   }
@@ -90,19 +164,21 @@ export function computeDead(graph, sources) {
 // with no inbound non-contains edge whose bare name occurs in NO file other than its own. Same-file-only
 // usage means the symbol is alive but the export is not — still worth surfacing. Pure like computeDead.
 // dynamicTargets = files reached via dynamic import() — their exports are consumed at runtime, skip them.
-export function computeUnusedExports(graph, sources, { dynamicTargets = new Set() } = {}) {
+export function computeUnusedExports(graph, sources, { dynamicTargets = new Set(), entrySet = new Set() } = {}) {
   const nodes = graph.nodes || [], links = graph.links || [];
   const ep = (v) => (v && typeof v === "object" ? v.id : v);
   const inbound = new Set();
   for (const l of links) if (l.relation !== "contains") inbound.add(ep(l.target));
 
+  const namespaceConsumed = namespaceConsumedFiles(sources, graph);
   const candidates = [];
   const wanted = new Set();
   for (const n of nodes) {
     if (!n.exported || !String(n.id).includes("#") || inbound.has(n.id)) continue;
-    if (ENTRY_FILE.test(n.source_file) || dynamicTargets.has(n.source_file)) continue;
+    if (ENTRY_FILE.test(n.source_file) || isFrameworkEntryFile(n.source_file) || entrySet.has(n.source_file) || dynamicTargets.has(n.source_file) || namespaceConsumed.has(n.source_file)) continue;
     const nm = bareName(n.label);
     if (!nm || !/^[A-Za-z_$]/.test(nm)) continue;
+    if (!hasModuleExport(sources.get(n.source_file), n, nm)) continue;
     candidates.push({ n, nm });
     wanted.add(nm);
   }

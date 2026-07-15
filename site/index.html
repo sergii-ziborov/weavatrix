@@ -33,7 +33,7 @@
   "description": "Code graph & blast-radius MCP server for AI coding agents: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository.",
   "url": "https://weavatrix.com",
   "downloadUrl": "https://www.npmjs.com/package/weavatrix",
-  "softwareVersion": "0.1.2",
+  "softwareVersion": "0.1.3",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Sergii Ziborov", "url": "https://github.com/sergii-ziborov" },
@@ -147,15 +147,15 @@
 
   <section id="features">
     <h2>The graph your agent is missing</h2>
-    <p class="lead">Grep sees text. Weavatrix sees structure: files, symbols, and the imports, calls
-      and inheritance connecting them — built with tree-sitter, no native toolchain.</p>
+    <p class="lead">Grep sees text. Weavatrix sees structure: files, symbols, and the runtime and
+      type-only edges connecting them — built with tree-sitter, no native toolchain.</p>
     <div class="grid">
       <div class="card"><h3><span class="dot"></span>Change impact</h3><p><code>change_impact</code> diffs your branch (staged, unstaged, untracked included) and lists everything that depends on what you touched — with test coverage attached and untested hotspots called out.</p></div>
       <div class="card"><h3><span class="dot t"></span>Blast radius per symbol</h3><p><code>get_dependents</code> walks reverse edges transitively: every caller, importer and subclass that can feel your refactor, ranked by proximity and connectivity.</p></div>
-      <div class="card"><h3><span class="dot"></span>Health audit</h3><p><code>run_audit</code> finds dead code, unused exports, missing and unused dependencies, import cycles, orphans — plus offline OSV vulnerability, typosquat and lockfile-drift checks.</p></div>
-      <div class="card"><h3><span class="dot t"></span>Clone detection, three lenses</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies — catches copy-paste even after variables were renamed. Semantic mode surfaces same-name symbols that drifted apart (the future-bug kind), and <code>include_strings</code> finds copy-paste inside embedded SQL/C#/PowerShell templates.</p></div>
-      <div class="card"><h3><span class="dot"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: new module dependencies, broken or introduced cycles, symbols that lost their last caller.</p></div>
-      <div class="card"><h3><span class="dot t"></span>One-call multi-repo mode</h3><p><code>open_repo</code> switches the active local repository and builds missing graphs through an explicit offline tool call. It is available by default; omit <code>retarget</code> in a custom capability list to pin one repository.</p></div>
+      <div class="card"><h3><span class="dot"></span>Signal-aware health audit</h3><p><code>run_audit</code> finds dead code, dependency mistakes and orphans, separates runtime cycles from type-only coupling, and makes incomplete OSV coverage explicit instead of reporting a clean zero.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Clone detection, three lenses</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies and embedded strings. It ranks near-clones and same-name divergence as candidates for source review — evidence, not an automatic refactor verdict.</p></div>
+      <div class="card"><h3><span class="dot"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: runtime versus type-only dependencies, changed cycle membership, and symbols that lost their last caller.</p></div>
+      <div class="card"><h3><span class="dot t"></span>One-call multi-repo mode</h3><p><code>open_repo</code> switches the active local repository and builds missing graphs through an explicit offline tool call. It also upgrades legacy graphs to typed edges; omit <code>retarget</code> to pin one repository.</p></div>
     </div>
     <div class="langs">
       <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>C#</span><span>Rust</span><span>HTML</span><span>CSS</span>
@@ -170,9 +170,9 @@
        <code style="font-family:var(--mono);color:var(--accent2)">online</code> capability group, which is
        disabled by default: <code style="font-family:var(--mono);color:var(--accent2)">refresh_advisories</code>
       (queries OSV.dev with package names + versions) and
-      <code style="font-family:var(--mono);color:var(--accent2)">sync_graph</code> (pushes a versioned
+      <code style="font-family:var(--mono);color:var(--accent2)">sync_graph</code> (pushes a versioned v2
        allowlist of graph metadata — relative paths, symbols and line ranges, dependency identifiers,
-       edges and numeric metrics — to an endpoint you configure; unknown fields are discarded and
+       typed edges and numeric metrics — to an endpoint you configure; unknown fields are discarded and
        source file bodies are not read for sync). Add
        <code style="font-family:var(--mono);color:var(--accent2)">online</code> explicitly and invoke a
        tool before any request can occur.</p>

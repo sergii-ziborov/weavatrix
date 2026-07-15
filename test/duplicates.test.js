@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { computeDuplicates, runDuplicates } from "../src/analysis/duplicates.js";
 
 const CLONE = `function collectRows(items) {
@@ -122,6 +123,20 @@ test("duplicates: symbol-less CSS/HTML/MD files are window-fragmented and their 
     const cssPair = r.modes.strict.find(([i, j]) => [name(i), name(j)].sort().join("+") === "styles/a.css+styles/b.css");
     assert.ok(cssPair, "the two identical CSS files pair as a clone");
     assert.equal(cssPair[2], 100, "identical stylesheets are a 100% clone");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("duplicates: Git-ignored release assets never enter the clone universe", () => {
+  const dir = mkdtempSync(join(tmpdir(), "weavatrix-dup-ignore-"));
+  const block = Array.from({ length: 40 }, (_, i) => `<p data-row="${i}">Chromium license boilerplate ${i}</p>`).join("\n");
+  try {
+    execFileSync("git", ["init", "-q", dir], { windowsHide: true });
+    writeFileSync(join(dir, ".gitignore"), "release/\n");
+    mkdirSync(join(dir, "release", "win-unpacked"), { recursive: true });
+    writeFileSync(join(dir, "release", "win-unpacked", "LICENSES.chromium.html"), block);
+    writeFileSync(join(dir, "graph.json"), JSON.stringify({ nodes: [], links: [] }));
+    const result = computeDuplicates(dir, join(dir, "graph.json"));
+    assert.equal(result.frags.some((fragment) => fragment.file.startsWith("release/")), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
