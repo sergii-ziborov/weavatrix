@@ -12,8 +12,8 @@ sibling repo.
 ## Step 0 — if the tools are missing
 
 Tools are named `mcp__weavatrix__…`. If none are available, ask the user to register the server
-(`claude mcp add -s user weavatrix -- npx -y github:sergii-ziborov/weavatrix <repoRoot>`),
-then retry.
+(`claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot>`; Codex:
+`codex mcp add weavatrix -- npx -y weavatrix <repoRoot>`), then retry.
 
 ## Ground rules
 

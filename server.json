@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.sergii-ziborov/weavatrix",
+  "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection (incl. semantic name-twins and string-literal templates), coverage mapping over any local repository. Local-first; JS/TS/Python/Go/Java/C#/Rust.",
+  "repository": {
+    "url": "https://github.com/sergii-ziborov/weavatrix",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "websiteUrl": "https://weavatrix.com",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "weavatrix",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "valueHint": "repoRoot",
+          "description": "Absolute path to the repository to analyze (the graph location is derived automatically; open_repo can retarget any other repo later)",
+          "isRequired": true
+        }
+      ]
+    }
+  ]
+}

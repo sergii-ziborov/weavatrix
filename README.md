@@ -29,11 +29,26 @@ answers grep can't produce:
 
 ## Quick start
 
-Requires Node ≥ 18. One command, straight from GitHub (npm package coming):
+Requires Node ≥ 18. One command:
 
 ```sh
 # Claude Code — one user-level registration serves every repo on the machine:
-claude mcp add -s user weavatrix -- npx -y github:sergii-ziborov/weavatrix <repoRoot>
+claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot>
+```
+
+Codex CLI:
+
+```sh
+codex mcp add weavatrix -- npx -y weavatrix <repoRoot>
+```
+
+```toml
+# or in ~/.codex/config.toml
+[mcp_servers.weavatrix]
+command = "npx"
+args = ["-y", "weavatrix", "C:/path/to/repo"]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
 ```
 
 Or clone it:
@@ -97,9 +112,9 @@ don't exist for that client.
 
 ## Languages
 
-JavaScript · TypeScript · TSX · Python · Go · Java · C# · HTML · CSS — parsed with
+JavaScript · TypeScript · TSX · Python · Go · Java · C# · Rust · HTML · CSS — parsed with
 [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) WASM grammars; no Python install, no
-native compilation. Rust is on the roadmap.
+native compilation.
 
 ## On-disk layout
 
@@ -120,13 +135,11 @@ entry `src/mcp-server.mjs`.
 
 ## Roadmap
 
-- **npm package** (`npx weavatrix-mcp`) — imminent
 - **Hosted graph view** on [weavatrix.com](https://weavatrix.com) — sync with one tool call, share
   the interactive map with your team
 - **Graph-anchored memory** — agent notes pinned to nodes/modules, staleness-tracked as the code
   under them changes
 - **CI blast radius** — `change_impact` as a PR comment
-- **Rust** grammar support
 
 ## License
 

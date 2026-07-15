@@ -109,7 +109,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   // C# gets the same treatment: one folder ≈ one namespace by convention, and `using` names namespaces,
   // not files, so the folder map is the only reliable cross-file resolver) ----
   const goDirSymbols = new Map();
-  const sharesDirScope = (fr) => fr.endsWith(".go") || fr.endsWith(".cs");
+  const sharesDirScope = (fr) => fr.endsWith(".go") || fr.endsWith(".cs") || fr.endsWith(".rs");
   for (const [fr, m] of symByFileName) {
     if (!sharesDirScope(fr)) continue;
     const d = fr.includes("/") ? fr.slice(0, fr.lastIndexOf("/")) : "";
