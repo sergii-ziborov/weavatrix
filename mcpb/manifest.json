@@ -1,0 +1,41 @@
+{
+  "dxt_version": "0.1",
+  "name": "weavatrix",
+  "display_name": "Weavatrix",
+  "version": "0.1.0",
+  "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
+  "long_description": "Weavatrix builds a dependency graph of any local repository (tree-sitter WASM, no native toolchain) and serves it over MCP: change_impact, get_dependents, run_audit, find_duplicates (token clones, semantic name-twins, string-literal templates), coverage_map, list_endpoints and more — 23 tools. Languages: JS/TS/TSX/Python/Go/Java/C#/Rust/HTML/CSS. Local-first: source never leaves the machine; the two network-capable tools are an explicit opt-in capability group.",
+  "author": {
+    "name": "Sergii Ziborov",
+    "url": "https://weavatrix.com"
+  },
+  "homepage": "https://weavatrix.com",
+  "documentation": "https://github.com/sergii-ziborov/weavatrix#readme",
+  "license": "MIT",
+  "keywords": ["code-graph", "impact-analysis", "blast-radius", "static-analysis", "dead-code", "mcp"],
+  "server": {
+    "type": "node",
+    "entry_point": "bin/weavatrix-mcp.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/bin/weavatrix-mcp.mjs",
+        "${user_config.repo_root}"
+      ]
+    }
+  },
+  "user_config": {
+    "repo_root": {
+      "type": "directory",
+      "title": "Repository to analyze",
+      "description": "The local repository Weavatrix starts with. The running server can retarget any other repo later via the open_repo tool.",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}
