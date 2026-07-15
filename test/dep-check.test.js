@@ -96,6 +96,52 @@ test("dep-check: unresolved imports become structure findings, capped with a tru
   assert.match(u[u.length - 1].title, /20 more/);
 });
 
+test("dep-check: generated NAPI-RS platform fallbacks are optional build artifacts", () => {
+  const result = computeDepFindings({
+    pkg: { name: "native-addon", napi: { name: "native-addon" } },
+    scope: "native-addon",
+    externalImports: [
+      ext("native-addon/index.js", "native-addon-win32-x64-msvc", { kind: "cjs" }),
+      ext("native-addon/index.js", "native-addon-utils", { kind: "cjs" }),
+      { file: "native-addon/index.js", spec: "./native-addon.win32-x64-msvc.node", kind: "cjs", unresolved: true, line: 8 },
+      ext("native-addon/src/manual.js", "native-addon-surprise"),
+      { file: "native-addon/src/manual.js", spec: "./missing.node", kind: "cjs", unresolved: true, line: 3 },
+    ],
+  });
+  assert.ok(!result.findings.some((finding) => finding.package === "native-addon-win32-x64-msvc"));
+  assert.ok(result.findings.some((finding) => finding.package === "native-addon-utils" && finding.rule === "missing-dep"), "a shared prefix is not platform-loader evidence");
+  assert.ok(!result.findings.some((finding) => finding.file === "native-addon/index.js" && finding.rule === "unresolved-import"));
+  assert.ok(result.findings.some((finding) => finding.package === "native-addon-surprise" && finding.rule === "missing-dep"), "custom source is not globally exempted");
+  assert.ok(result.findings.some((finding) => finding.file === "native-addon/src/manual.js" && finding.rule === "unresolved-import"), "custom missing binaries still surface");
+});
+
+test("dep-check: generated NAPI-RS package matching preserves npm scope", () => {
+  const result = computeDepFindings({
+    pkg: { name: "@scope/native-addon", napi: { name: "native-addon" } },
+    externalImports: [
+      ext("index.js", "@scope/native-addon-linux-x64-gnu", { kind: "cjs" }),
+      ext("index.js", "@other/native-addon-linux-x64-gnu", { kind: "cjs" }),
+    ],
+  });
+  assert.ok(!result.findings.some((finding) => finding.package === "@scope/native-addon-linux-x64-gnu"));
+  assert.ok(result.findings.some((finding) => finding.package === "@other/native-addon-linux-x64-gnu" && finding.rule === "missing-dep"));
+});
+
+test("dep-check: non-runtime catalogs do not create phantom or unresolved runtime findings", () => {
+  const result = computeDepFindings({
+    pkg: {},
+    nonRuntimeRoots: ["library"],
+    externalImports: [
+      ext("library/components/Card.tsx", "react"),
+      { file: "library/components/Card.tsx", spec: "./consumer.css", kind: "esm", unresolved: true, line: 2 },
+      ext("src/app.ts", "phantom-runtime"),
+    ],
+  });
+  assert.ok(!result.findings.some((finding) => finding.package === "react"));
+  assert.ok(!result.findings.some((finding) => finding.file === "library/components/Card.tsx" && finding.rule === "unresolved-import"));
+  assert.ok(result.findings.some((finding) => finding.package === "phantom-runtime" && finding.rule === "missing-dep"));
+});
+
 test("dep-check: an alias-shaped import with no local target remains unresolved", () => {
   const result = computeDepFindings({
     externalImports: [{ file: "web/app/page.tsx", spec: "@/missing", pkg: "@/missing", unresolved: true, line: 4 }],

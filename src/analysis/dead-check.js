@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { createRepoBoundary } from "../repo-path.js";
+import { isStructuralRelation } from "../graph/relations.js";
 
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
 const bareName = (label) => String(label || "").replace(/\s*\(.*$/, "").replace(/[()]/g, "").trim();
@@ -19,7 +20,11 @@ const TEST_FILE = /(^|[\\/])[^\\/]*[._-](test|spec)\.[a-z0-9]+$|(^|[\\/])(test|t
 // Framework-owned entry modules are invoked by convention rather than a source import. Keep this narrow:
 // these are Next.js App/Pages Router surfaces and framework metadata files, not every file under `app/`.
 export const NEXT_ENTRY_FILE = /(^|\/)(?:src\/)?app\/(?:.*\/)?(?:page|layout|template|loading|error|global-error|not-found|default|route|robots|sitemap|manifest|opengraph-image|twitter-image|icon|apple-icon)\.[cm]?[jt]sx?$|(^|\/)(?:src\/)?pages\/(?!.*\/(?:components?|lib|utils?)\/).+\.[cm]?[jt]sx?$|(^|\/)(?:middleware|instrumentation)\.[cm]?[jt]s$/i;
-export const isFrameworkEntryFile = (file) => NEXT_ENTRY_FILE.test(String(file || "").replace(/\\/g, "/"));
+export const RUST_ENTRY_FILE = /(^|\/)(?:build\.rs|src\/(?:lib|main)\.rs)$/i;
+export const isFrameworkEntryFile = (file) => {
+  const normalized = String(file || "").replace(/\\/g, "/");
+  return NEXT_ENTRY_FILE.test(normalized) || RUST_ENTRY_FILE.test(normalized);
+};
 
 const lineOfNode = (n) => {
   const m = /@(\d+)$/.exec(String(n.id || "")) || /L(\d+)/.exec(String(n.source_location || ""));
@@ -93,7 +98,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   const nodes = graph.nodes || [], links = graph.links || [];
   const ep = (v) => (v && typeof v === "object" ? v.id : v);
   const inbound = new Set();
-  for (const l of links) if (l.relation !== "contains") inbound.add(ep(l.target));
+  for (const l of links) if (!isStructuralRelation(l.relation)) inbound.add(ep(l.target));
 
   // whole-repo identifier frequency: a symbol whose name appears MORE than once total (its definition + at least
   // one use, same-file OR cross-file) is referenced. Errs toward "alive" (common-named symbols never flagged).
@@ -168,7 +173,7 @@ export function computeUnusedExports(graph, sources, { dynamicTargets = new Set(
   const nodes = graph.nodes || [], links = graph.links || [];
   const ep = (v) => (v && typeof v === "object" ? v.id : v);
   const inbound = new Set();
-  for (const l of links) if (l.relation !== "contains") inbound.add(ep(l.target));
+  for (const l of links) if (!isStructuralRelation(l.relation)) inbound.add(ep(l.target));
 
   const namespaceConsumed = namespaceConsumedFiles(sources, graph);
   const candidates = [];

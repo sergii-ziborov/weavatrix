@@ -84,7 +84,7 @@ test("internal-builder: TS import and re-export edges preserve type/runtime meta
   });
   try {
     const g = await buildInternalGraph(dir);
-    assert.equal(g.edgeTypesV, 1);
+    assert.equal(g.edgeTypesV, 2);
     const fromUse = g.links.filter((l) => l.source === "src/use.ts" && ["imports", "re_exports"].includes(l.relation));
     const edge = (line) => fromUse.find((l) => l.line === line);
     assert.deepEqual(

@@ -38,11 +38,34 @@ test("aggregateGraph: rolls files up into folder modules with file/module edges"
     nodes: 4,
     fileEdges: 1,
     typeOnlyFileEdges: 0,
+    compileOnlyFileEdges: 0,
+    compileTimeFileEdges: 0,
     moduleEdges: 1,
     typeOnlyModuleEdges: 0,
+    compileOnlyModuleEdges: 0,
+    compileTimeModuleEdges: 0,
     symbols: 2,
     symbolEdges: 1
   });
+});
+
+test("aggregateGraph: keeps modules below a nested package src root", () => {
+  const result = aggregateGraph({
+    nodes: [
+      { id: "lib", file_type: "code", source_file: "watcher-rs/src/lib.rs" },
+      { id: "agents", file_type: "code", source_file: "watcher-rs/src/agents/mod.rs" },
+      { id: "db", file_type: "code", source_file: "watcher-rs/src/db/mod.rs" },
+    ],
+    links: [
+      { source: "lib", target: "agents", relation: "imports" },
+      { source: "agents", target: "db", relation: "imports" },
+    ],
+  });
+  assert.deepEqual(result.modules.map((module) => module.name).sort(), ["watcher-rs/src", "watcher-rs/src/agents", "watcher-rs/src/db"]);
+  assert.deepEqual(result.moduleEdges, [
+    { from: "watcher-rs/src", to: "watcher-rs/src/agents", count: 1 },
+    { from: "watcher-rs/src/agents", to: "watcher-rs/src/db", count: 1 },
+  ]);
 });
 
 test("aggregateGraph: excludes non-code nodes from counts and 'contains' edges from the rollup", () => {

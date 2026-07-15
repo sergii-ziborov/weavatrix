@@ -7,7 +7,6 @@
 // built from EXTRACTED import edges → high confidence.
 import { makeFinding } from "./findings.js";
 import { ENTRY_FILE } from "./dead-check.js";
-
 const TEST_FILE_RE = /(^|[/])(test|tests|__tests__|spec|e2e|__mocks__)([/]|$)|[._-](test|spec)\.[a-z0-9]+$/i;
 // config/data/docs: never "orphans" — nothing imports them by design
 const NON_CODE_RE = /\.(json|ya?ml|sh|ps1|md|txt|html?|css|scss|less)$|(^|[/])(dockerfile|containerfile)/i;
@@ -15,18 +14,19 @@ const NON_CODE_RE = /\.(json|ya?ml|sh|ps1|md|txt|html?|css|scss|less)$|(^|[/])(d
 const ep = (v) => String(v && typeof v === "object" ? v.id : v);
 const fileOf = (v) => { const s = ep(v); const h = s.indexOf("#"); return h < 0 ? s : s.slice(0, h); };
 const dirOf = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
-
 // File-level import adjacency. Go same-directory edges are excluded: a Go package IS the directory, the
 // compiler forbids real cross-package cycles, and our suffix-fallback Go resolution could fake them.
-export function buildFileImportGraph(graph, { includeTypeOnly = false } = {}) {
+export function buildFileImportGraph(graph, { includeTypeOnly = false, includeCompileOnly = false } = {}) {
   const fileIds = new Set();
   for (const n of graph.nodes || []) if (!String(n.id).includes("#")) fileIds.add(String(n.id));
   const runtimeAdj = new Map();       // runtime/value imports only
-  const allAdj = new Map();           // runtime + type-only, used to describe architectural coupling
+  const allAdj = new Map();           // runtime + compile-time-only, used to describe architectural coupling
   const edges = [];
   const allEdges = [];
   const typeOnlyEdges = [];
-  const runtimeSeen = new Set(), allSeen = new Set(), typeSeen = new Set();
+  const compileOnlyEdges = [];
+  const compileTimeEdges = [];
+  const runtimeSeen = new Set(), allSeen = new Set(), typeSeen = new Set(), compileSeen = new Set(), compileTimeSeen = new Set();
   const add = (map, a, b) => {
     let set = map.get(a);
     if (!set) map.set(a, (set = new Set()));
@@ -39,22 +39,28 @@ export function buildFileImportGraph(graph, { includeTypeOnly = false } = {}) {
     if (a.endsWith(".go") && b.endsWith(".go") && dirOf(a) === dirOf(b)) continue;
     const key = `${a}\0${b}`;
     if (!allSeen.has(key)) { allSeen.add(key); add(allAdj, a, b); allEdges.push([a, b]); }
-    if (l.typeOnly === true) {
-      if (!typeSeen.has(key)) { typeSeen.add(key); typeOnlyEdges.push([a, b]); }
+    if (l.typeOnly === true || l.compileOnly === true) {
+      if (l.typeOnly === true && !typeSeen.has(key)) { typeSeen.add(key); typeOnlyEdges.push([a, b]); }
+      if (l.compileOnly === true && !compileSeen.has(key)) { compileSeen.add(key); compileOnlyEdges.push([a, b]); }
+      if (!compileTimeSeen.has(key)) { compileTimeSeen.add(key); compileTimeEdges.push([a, b]); }
       continue;
     }
     if (!runtimeSeen.has(key)) { runtimeSeen.add(key); add(runtimeAdj, a, b); edges.push([a, b]); }
   }
   const pureTypeOnlyEdges = typeOnlyEdges.filter(([a, b]) => !runtimeSeen.has(`${a}\0${b}`));
+  const pureCompileOnlyEdges = compileOnlyEdges.filter(([a, b]) => !runtimeSeen.has(`${a}\0${b}`));
+  const pureCompileTimeEdges = compileTimeEdges.filter(([a, b]) => !runtimeSeen.has(`${a}\0${b}`));
   return {
     fileIds,
-    adj: includeTypeOnly ? allAdj : runtimeAdj,
-    edges: includeTypeOnly ? allEdges : edges,
+    adj: includeTypeOnly || includeCompileOnly ? allAdj : runtimeAdj,
+    edges: includeTypeOnly || includeCompileOnly ? allEdges : edges,
     runtimeAdj,
     runtimeEdges: edges,
     allAdj,
     allEdges,
     typeOnlyEdges: pureTypeOnlyEdges,
+    compileOnlyEdges: pureCompileOnlyEdges,
+    compileTimeEdges: pureCompileTimeEdges,
   };
 }
 
@@ -167,12 +173,10 @@ export function checkBoundaries(edges, rules = {}) {
 
 const MAX_CYCLE_FINDINGS = 50;
 const MAX_BOUNDARY_FINDINGS = 100;
-
 // Assemble everything into unified Findings. rules comes from the repo's .weavatrix-deps.json (optional).
 export function computeStructureFindings(graph, { rules = {}, entrySet = new Set(), externalImportFiles = new Set() } = {}) {
-  const { adj, edges, allAdj, allEdges, typeOnlyEdges } = buildFileImportGraph(graph);
+  const { adj, edges, allAdj, allEdges, typeOnlyEdges, compileOnlyEdges, compileTimeEdges } = buildFileImportGraph(graph);
   const findings = [];
-
   const sccs = findSccs(adj).sort((a, b) => b.length - a.length);
   for (const scc of sccs.slice(0, MAX_CYCLE_FINDINGS)) {
     const cycle = representativeCycle(adj, scc);
@@ -191,33 +195,37 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
     }));
   }
 
-  // A TypeScript `import type` is erased before runtime. It can still reveal architectural coupling, but
-  // it cannot create an initialization-order/runtime cycle. Report SCCs that grow only because of type
-  // edges separately and at info severity so agents do not churn working code to fix a phantom hazard.
+  // TypeScript `import type` and Rust module/use edges are compile-time coupling. They can reveal real
+  // architecture, but cannot create an initialization-order/runtime cycle. Report SCCs that require
+  // either classification separately so agents do not churn working code for a phantom runtime hazard.
   const runtimeKeys = new Set(sccs.map((s) => [...s].sort().join("\0")));
   const allSccs = findSccs(allAdj).sort((a, b) => b.length - a.length);
-  const typeCouplings = allSccs.filter((s) => !runtimeKeys.has([...s].sort().join("\0")));
+  const compileTimeCouplings = allSccs.filter((s) => !runtimeKeys.has([...s].sort().join("\0")));
   const edgeCountIn = (scc, list) => {
     const inside = new Set(scc);
     return list.reduce((n, [a, b]) => n + (inside.has(a) && inside.has(b) ? 1 : 0), 0);
   };
-  for (const scc of typeCouplings.slice(0, MAX_CYCLE_FINDINGS)) {
+  for (const scc of compileTimeCouplings.slice(0, MAX_CYCLE_FINDINGS)) {
     const cycle = representativeCycle(allAdj, scc);
     const runtimeInside = edgeCountIn(scc, edges);
     const typeInside = edgeCountIn(scc, typeOnlyEdges);
+    const compileInside = edgeCountIn(scc, compileOnlyEdges);
     const containsRuntimeCycle = sccs.some((runtime) => runtime.every((f) => scc.includes(f)));
+    const typeSpecific = compileInside === 0;
     findings.push(makeFinding({
       category: "structure",
-      rule: "type-coupling",
+      rule: typeSpecific ? "type-coupling" : "compile-time-coupling",
       severity: "info",
       confidence: "high",
-      title: `${containsRuntimeCycle ? "Type imports expand dependency coupling" : "Type-induced dependency cycle (no runtime cycle)"}: ${scc.length} files`,
-      detail: `${cycle.join(" → ")}. This strongly-connected group needs type-only edges to close; it contains ${runtimeInside} runtime edge(s) and ${typeInside} type-only edge(s)${containsRuntimeCycle ? ", with a smaller runtime cycle reported separately" : ", while its runtime import graph is acyclic"}. Treat this as design coupling, not an initialization-order failure.`,
+      title: `${containsRuntimeCycle
+        ? (typeSpecific ? "Type imports expand dependency coupling" : "Compile-time edges expand dependency coupling")
+        : (typeSpecific ? "Type-induced dependency cycle (no runtime cycle)" : "Compile-time dependency cycle (no runtime cycle)")}: ${scc.length} files`,
+      detail: `${cycle.join(" → ")}. This strongly-connected group needs compile-time-only edges to close; it contains ${runtimeInside} runtime edge(s), ${typeInside} type-only edge(s), and ${compileInside} compile-only edge(s)${containsRuntimeCycle ? ", with a smaller runtime cycle reported separately" : ", while its runtime import graph is acyclic"}. Treat this as design coupling, not an initialization-order failure.`,
       file: cycle[0],
       graphNodeId: cycle[0],
       evidence: cycle.map((f) => ({ file: f, line: 0, snippet: "" })),
       source: "internal",
-      fixHint: "review the shared type ownership only if the coupling impedes changes; no runtime-cycle fix is required",
+      fixHint: "review the compile-time ownership only if the coupling impedes changes; no runtime-cycle fix is required",
     }));
   }
   if (sccs.length > MAX_CYCLE_FINDINGS) {
@@ -275,11 +283,16 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
       importEdges: allEdges.length,
       runtimeImportEdges: edges.length,
       typeOnlyImportEdges: typeOnlyEdges.length,
+      compileOnlyImportEdges: compileOnlyEdges.length,
+      compileTimeImportEdges: compileTimeEdges.length,
       cycles: sccs.length,
       runtimeCycles: sccs.length,
       largestCycle: sccs[0]?.length || 0,
-      typeCouplings: typeCouplings.length,
-      largestTypeCoupling: typeCouplings[0]?.length || 0,
+      // Backward-compatible aliases remain for edgeTypesV 1 consumers.
+      typeCouplings: compileTimeCouplings.length,
+      largestTypeCoupling: compileTimeCouplings[0]?.length || 0,
+      compileTimeCouplings: compileTimeCouplings.length,
+      largestCompileTimeCoupling: compileTimeCouplings[0]?.length || 0,
       orphans: findings.filter((f) => f.rule === "orphan-file").length,
       boundaryViolations: violations.length,
     },

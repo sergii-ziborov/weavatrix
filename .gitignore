@@ -29,3 +29,5 @@ graph.prev.json
 Thumbs.db
 .idea/
 .vscode/
+.codex/
+.agents/

@@ -79,7 +79,7 @@ claude mcp add -s user weavatrix -- node <path-to>/weavatrix/bin/weavatrix-mcp.m
 
 No graph yet? Ask the agent to call `rebuild_graph`; it builds the missing graph locally.
 `open_repo` can change the active repository and builds a missing graph automatically. A normal
-`open_repo` call also upgrades graphs created before `0.1.3` to typed import edges; `build:false`
+`open_repo` call also upgrades graphs created before `0.1.4` to edge metadata v2; `build:false`
 probes without building and refuses a legacy graph. Retargeting is offline but intentionally changes
 the filesystem boundary for subsequent tools; omit `retarget` from an explicit capability list when
 a registration must stay pinned to one repository.
@@ -91,15 +91,16 @@ An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — instal
 
 **graph** — `graph_stats`, `get_node`, `get_neighbors`, `query_graph`, `god_nodes`,
 `shortest_path`, `get_community`, `list_communities`, `module_map`, `get_dependents`,
-`change_impact`, `graph_diff`. Runtime dependencies and TypeScript type-only coupling are reported
-separately where that distinction changes the result.
+`change_impact`, `graph_diff`. Runtime dependencies, TypeScript type-only coupling and language
+compile-only edges (Rust module/use, Java imports) are reported separately where that distinction
+changes the result.
 
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback), `read_source` (a
 symbol's actual code in one hop), `list_endpoints` (HTTP route inventory:
-Express/Fastify/Nest/Flask/FastAPI/Go mux …)
+Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web …)
 
 **health** — `run_audit` (dead code, unused exports, missing/unused npm/Go/Python deps, runtime
-cycles, type-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
+cycles, type-only/compile-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
 lockfile drift), `find_duplicates` (MOSS winnowing over method bodies — catches copy-paste even
 after renames), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
 ranked by connectivity — tests are never executed)
@@ -113,12 +114,14 @@ changes the active repository boundary
 **online** *(explicit opt-in — see Privacy)* — `refresh_advisories`, `sync_graph`
 
 Quality of life: graph tools self-report staleness vs the repo HEAD; ambiguous name lookups are
-disclosed instead of silently guessed; and the server **hot-reloads its own tool code** when the
-files under `src/mcp/` change — no reconnect needed.
+disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
+modules and catalog** when those files change — other MCP helpers and analysis engines require a
+reconnect.
 
 ## Signal quality and repository configuration
 
-Weavatrix `0.1.3` reduces the most common sources of static-analysis noise:
+Weavatrix `0.1.4` reduces the most common sources of static-analysis noise while deepening Rust and
+Java graphs:
 
 - In Git repositories, graph and clone scans use tracked plus non-ignored untracked files, so
   `.gitignore`-excluded build outputs such as packaged applications do not dominate findings.
@@ -126,9 +129,22 @@ Weavatrix `0.1.3` reduces the most common sources of static-analysis noise:
   not inflate runtime-cycle severity. `module_map`, `change_impact` and structural diffs preserve
   that distinction. `god_nodes` ranks unique neighbors with runtime connectivity first and reports
   repeated occurrences separately.
+- Rust `mod`, `use` and `pub use` paths now resolve between files and modules. They are marked
+  compile-only, so they enrich `module_map` and compile-time coupling without inventing runtime
+  initialization cycles or promoting compile-time coupling to runtime impact. Axum and actix-web
+  routes are included in `list_endpoints`.
+- Java class/interface/enum/record/annotation declarations retain their symbol kind; methods and
+  constructors are linked to their declaring type with visibility metadata. Internal
+  `extends`/`implements` relationships and resolvable type references link to real declarations.
+  Imports are compile-only; call/reference/heritage edges contribute impact. Maven/Gradle Java
+  trees use package-aware communities instead of one giant `src` bucket. External or synthetic
+  placeholder types are not created merely to inflate graph counts.
 - Dependency checks resolve the nearest workspace manifest and `tsconfig`/`jsconfig` aliases,
   account for framework-owned runtime peers such as Next.js + `react-dom`, and recognize Next.js
   App Router route exports as endpoints.
+- Generated NAPI-RS platform loaders and declared template/example catalogs no longer create
+  phantom runtime dependency, orphan or unused-export findings. Conventional template roots are
+  inferred conservatively; custom roots can be declared explicitly.
 - `coverage_map` reports coverage as **unavailable** when no supported report exists. That means
   “no data”, not zero coverage.
 - Duplicate output is a review queue, not a verdict: near-identical bodies are clone candidates;
@@ -149,6 +165,7 @@ repository root:
 ```json
 {
   "entrypoints": ["scripts/publish-release.mjs"],
+  "nonRuntimeRoots": ["library", "catalogs/examples"],
   "python": {
     "managedDependencies": ["numpy", "openvino-genai"],
     "ignoreDependencies": ["vendor-sdk"]
@@ -157,6 +174,9 @@ repository root:
 ```
 
 `entrypoints` protects framework/script entry files from dead-code classification.
+`nonRuntimeRoots` (alias: `templateRoots`) marks reusable examples/templates that are not deployed
+as one application. It suppresses orphan/dead/unused-export noise and missing/unresolved dependency
+findings when every use is inside those roots. Import edges, cycles and boundary checks remain visible.
 `managedDependencies` declares Python modules supplied by an external runtime;
 `ignoreDependencies` suppresses intentionally unresolved Python packages. Keep the lists narrow:
 they change audit interpretation, not the repository or its dependency installation.
@@ -175,7 +195,7 @@ tools; both require the explicit `online` group and a tool call:
   symbol names and line ranges, import/dependency identifiers, edges and numeric metrics. Unknown
   fields are discarded; source file bodies are never read for sync or included in the payload. The
   endpoint is **yours**, configured via `WEAVATRIX_SYNC_URL` / `WEAVATRIX_SYNC_TOKEN`. Off by default.
-  Sync payload v2 preserves type-only edge metadata. Graphs built before `0.1.3` must be rebuilt
+  Sync payload v2 preserves type-only and compile-only edge metadata. Graphs built before `0.1.4` must be rebuilt
   once before syncing; a normal `open_repo` call performs that upgrade automatically.
 
 If `refresh_advisories` is not listed by the MCP client, that is the expected default: the
@@ -197,7 +217,7 @@ vulnerability findings. This is where each capability comes from and how it is c
 |---|---|---|
 | Network access | `refresh_advisories` sends pinned package names and versions to OSV; `sync_graph` sends a versioned allowlist of graph metadata (relative paths, symbols and line ranges, import/dependency identifiers, edges and numeric metrics). It discards unknown graph fields and does not read source file bodies | `online` is disabled by default; each request requires a tool call, and sync additionally requires `WEAVATRIX_SYNC_URL` |
 | Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; timed-out Windows child processes may be terminated | Used only by the corresponding local operation; it does not imply network access |
-| Debug / dynamic loading | Cache-busted `import()` hot-reloads local MCP tool modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
+| Debug / dynamic loading | Cache-busted `import()` hot-reloads watched MCP tool entry modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
 | Environment access | Reads `WEAVATRIX_*` configuration; local child processes inherit the normal host environment | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment and read only by `sync_graph` |
 | Filesystem access | Reads the active repository, graph, lockfiles and coverage reports; writes derived graphs and advisory cache | Realpath containment blocks traversal and symlink/junction escapes. `open_repo` is an explicit offline call that changes the active boundary; omit `retarget` in a custom capability list to pin one repository. The optional malware dependency scan may inspect installed dependency caches such as GOPATH |
 | URL strings | Fixed OSV/documentation URLs plus a user-configured sync URL | A URL string causes no request by itself; only the two `online` tools perform requests |
@@ -226,8 +246,8 @@ npm test          # node --test
 
 Design rule: **no source file exceeds 300 lines.** Larger concerns split into dotted-suffix modules
 behind a slim facade (`foo.js` re-exports `foo.parse.js`, `foo.report.js`, …); the MCP layer lives
-in `src/mcp/` (graph context, four tool modules, catalog + hot-reload loader) behind the thin stdio
-entry `src/mcp-server.mjs`.
+in `src/mcp/` (graph context, tool entry modules, focused helpers, and the catalog/hot-reload
+loader) behind the thin stdio entry `src/mcp-server.mjs`.
 
 ## Roadmap
 

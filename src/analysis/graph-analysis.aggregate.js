@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { normalizeRepoParts, readCoverageForRepo, pctFromCounts } from "./coverage-reports.js";
 import { bareSymbolName, countLocalRefsOutsideOwnRange, computeSymbolExternalRefs } from "./graph-analysis.refs.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { edgeList, folderModuleOf } from "./graph-analysis.edges.js";
+export { folderModuleOf } from "./graph-analysis.edges.js";
 
 // Aggregate a built graph.json into the file- and module-level view the UI needs:
 //   - graph-builder nodes are FILES *and* their symbols (functions/methods), linked file→symbol by the
@@ -13,7 +15,6 @@ import { createRepoBoundary } from "../repo-path.js";
 //   - Each file is assigned to ONE module via its file-node's community (symbols may cluster apart,
 //     but the file itself belongs where its file-node sits) → exact, non-overlapping file counts.
 //   - Real edges (everything except "contains") roll up to file→file and module→module relations.
-// Module names match summarizeCommunities (dominant first-two-path-parts), so they line up with cards.
 export function analyzeGraph(graphJsonPath, repoRoot) {
   let graph;
   try {
@@ -40,15 +41,11 @@ export function aggregateGraph(graph, repoRoot) {
   // MODULE = the file's own top FOLDER (its "territory"), up to 2 path levels — NOT a dependency
   // cluster. e.g. src/widget/foo.js → "src/widget"; benchmarks/cleanup.py → "benchmarks" (so all
   // benchmarks files are one module); a top-level file like index.js → "(root)".
-  const folderOf = (file) => {
-    const dirs = String(file || "").split(/[\\/]/).filter(Boolean).slice(0, -1);
-    return dirs.length ? dirs.slice(0, 2).join("/") : "(root)";
-  };
   // In a merged (cross-repo) graph every node carries a `repo`; qualify file & module identity by it
   // so same-named folders/files in different repos never merge. Single-repo graphs have no `repo`,
   // so identity stays the bare path (unchanged behavior).
   const fileIdOf = (node) => (node.repo ? `${node.repo}::${node.source_file}` : node.source_file);
-  const moduleOfNode = (node) => (node.repo ? `${node.repo}/` : "") + folderOf(node.source_file);
+  const moduleOfNode = (node) => (node.repo ? `${node.repo}/` : "") + folderModuleOf(node.source_file);
 
   // file → module (folder) + symbols + display path, all keyed by repo-qualified file id
   const fileModule = new Map();
@@ -102,40 +99,36 @@ export function aggregateGraph(graph, repoRoot) {
   const moduleEdges = new Map();
   const typeOnlyFileEdges = new Map();
   const typeOnlyModuleEdges = new Map();
+  const compileOnlyFileEdges = new Map();
+  const compileOnlyModuleEdges = new Map();
+  const compileTimeFileEdges = new Map();
+  const compileTimeModuleEdges = new Map();
+  const addFileEdge = (map, key, link) => {
+    let edge = map.get(key);
+    if (!edge) map.set(key, (edge = { count: 0, rels: {} }));
+    edge.count++;
+    if (link.relation) edge.rels[link.relation] = (edge.rels[link.relation] || 0) + 1;
+  };
   for (const link of links) {
     if (link.relation === "contains") continue;
     const fromFile = id2file.get(endpoint(link.source));
     const toFile = id2file.get(endpoint(link.target));
     if (fromFile && toFile && fromFile !== toFile) {
       const key = `${fromFile} ${toFile}`;
-      const targetFileEdges = link.typeOnly === true ? typeOnlyFileEdges : fileEdges;
-      let fe = targetFileEdges.get(key);
-      if (!fe) targetFileEdges.set(key, (fe = { count: 0, rels: {} }));
-      fe.count++;
-      if (link.relation) fe.rels[link.relation] = (fe.rels[link.relation] || 0) + 1;
+      const compileTime = link.typeOnly === true || link.compileOnly === true;
+      const targetFileEdges = link.typeOnly === true ? typeOnlyFileEdges : link.compileOnly === true ? compileOnlyFileEdges : fileEdges;
+      addFileEdge(targetFileEdges, key, link);
+      if (compileTime) addFileEdge(compileTimeFileEdges, key, link);
       const fromMod = fileModule.get(fromFile);
       const toMod = fileModule.get(toFile);
       if (fromMod && toMod && fromMod !== toMod) {
         const mkey = `${fromMod} ${toMod}`;
-        const targetModuleEdges = link.typeOnly === true ? typeOnlyModuleEdges : moduleEdges;
+        const targetModuleEdges = link.typeOnly === true ? typeOnlyModuleEdges : link.compileOnly === true ? compileOnlyModuleEdges : moduleEdges;
         targetModuleEdges.set(mkey, (targetModuleEdges.get(mkey) || 0) + 1);
+        if (compileTime) compileTimeModuleEdges.set(mkey, (compileTimeModuleEdges.get(mkey) || 0) + 1);
       }
     }
   }
-  const split = (key) => {
-    const i = key.indexOf(" ");
-    return [key.slice(0, i), key.slice(i + 1)];
-  };
-  const edgeList = (map) =>
-    [...map.entries()]
-      .map(([key, v]) => {
-        const [from, to] = split(key);
-        if (typeof v === "number") return { from, to, count: v }; // moduleEdges (no relation breakdown)
-        const dom = Object.entries(v.rels).sort((a, b) => b[1] - a[1])[0];
-        return { from, to, count: v.count, relation: dom ? dom[0] : null };
-      })
-      .sort((a, b) => b.count - a.count);
-
   // symbol-level (function/method) call graph: edges between symbol nodes (calls/method), each symbol
   // tagged with its file's module so the Symbols view can still cluster into module regions.
   const symEdges = new Map();
@@ -268,8 +261,12 @@ export function aggregateGraph(graph, repoRoot) {
       .sort((a, b) => b.fileCount - a.fileCount),
     moduleEdges: edgeList(moduleEdges),
     typeOnlyModuleEdges: edgeList(typeOnlyModuleEdges),
+    compileOnlyModuleEdges: edgeList(compileOnlyModuleEdges),
+    compileTimeModuleEdges: edgeList(compileTimeModuleEdges),
     fileEdges: edgeList(fileEdges),
     typeOnlyFileEdges: edgeList(typeOnlyFileEdges),
+    compileOnlyFileEdges: edgeList(compileOnlyFileEdges),
+    compileTimeFileEdges: edgeList(compileTimeFileEdges),
     symbols,
     symbolEdges,
     symbolRefs: [...new Set([...symbolLocalRefs.keys(), ...symbolExternalRefs.keys()])].map((id) => {
@@ -283,8 +280,12 @@ export function aggregateGraph(graph, repoRoot) {
       nodes: nodes.filter((n) => n.file_type === "code").length,
       fileEdges: fileEdges.size,
       typeOnlyFileEdges: typeOnlyFileEdges.size,
+      compileOnlyFileEdges: compileOnlyFileEdges.size,
+      compileTimeFileEdges: compileTimeFileEdges.size,
       moduleEdges: moduleEdges.size,
       typeOnlyModuleEdges: typeOnlyModuleEdges.size,
+      compileOnlyModuleEdges: compileOnlyModuleEdges.size,
+      compileTimeModuleEdges: compileTimeModuleEdges.size,
       symbols: symbols.length,
       symbolEdges: symbolEdges.length
     }

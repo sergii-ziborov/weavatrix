@@ -113,7 +113,7 @@ export async function tRunAudit(g, args, ctx) {
     return [
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         `Severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
-        `Structure: ${audit.structureReport?.runtimeCycles ?? audit.structureReport?.cycles ?? 0} runtime cycle(s), ${audit.structureReport?.typeCouplings ?? 0} type-induced coupling group(s), ${audit.structureReport?.orphans ?? 0} orphan(s); import edges: ${audit.structureReport?.runtimeImportEdges ?? audit.structureReport?.importEdges ?? 0} runtime + ${audit.structureReport?.typeOnlyImportEdges ?? 0} type-only. Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
+        `Structure: ${audit.structureReport?.runtimeCycles ?? audit.structureReport?.cycles ?? 0} runtime cycle(s), ${audit.structureReport?.compileTimeCouplings ?? audit.structureReport?.typeCouplings ?? 0} compile-time coupling group(s), ${audit.structureReport?.orphans ?? 0} orphan(s); import edges: ${audit.structureReport?.runtimeImportEdges ?? audit.structureReport?.importEdges ?? 0} runtime + ${audit.structureReport?.typeOnlyImportEdges ?? 0} type-only + ${audit.structureReport?.compileOnlyImportEdges ?? 0} compile-only. Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
         `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`,
         ``,
         `Showing ${shown.length} of ${filtered.length} finding(s)${cat ? ` in category "${cat}"` : ''}${args.min_severity ? ` at ≥${args.min_severity}` : ''}:`,
@@ -140,16 +140,28 @@ export function tModuleMap(g, args, ctx) {
     const topN = Math.max(1, Math.min(60, Number(args.top_n) || 25))
     const mods = agg.modules.slice(0, topN)
     const edges = agg.moduleEdges.slice(0, Math.min(50, topN * 2))
-    const typeEdges = (agg.typeOnlyModuleEdges || []).slice(0, Math.min(50, topN * 2))
+    const compileEdges = new Map()
+    const collectCompileEdges = (list, kind) => {
+        for (const edge of list || []) {
+            const key = `${edge.from}\0${edge.to}`
+            const current = compileEdges.get(key) || {from: edge.from, to: edge.to, count: 0, typeOnly: 0, compileOnly: 0}
+            current.count += edge.count
+            current[kind] += edge.count
+            compileEdges.set(key, current)
+        }
+    }
+    collectCompileEdges(agg.typeOnlyModuleEdges, 'typeOnly')
+    collectCompileEdges(agg.compileOnlyModuleEdges, 'compileOnly')
+    const compiled = [...compileEdges.values()].sort((a, b) => b.count - a.count).slice(0, Math.min(50, topN * 2))
     return [
-        `Module map: ${agg.totals.files} files in ${agg.modules.length} folder-modules, ${agg.totals.moduleEdges} runtime module dependencies and ${agg.totals.typeOnlyModuleEdges || 0} type-only dependencies. Top ${mods.length}:`,
+        `Module map: ${agg.totals.files} files in ${agg.modules.length} folder-modules, ${agg.totals.moduleEdges} runtime module dependencies and ${agg.totals.compileTimeModuleEdges || 0} compile-time dependencies (${agg.totals.typeOnlyModuleEdges || 0} type-only, ${agg.totals.compileOnlyModuleEdges || 0} compile-only). Top ${mods.length}:`,
         ...mods.map((m) => `  ${m.name} — ${m.fileCount} files, ${m.symbolCount} symbols`),
         ``,
         `Strongest runtime module dependencies:`,
         ...edges.map((e) => `  ${e.from} → ${e.to}  (${e.count})`),
-        typeEdges.length ? `` : null,
-        typeEdges.length ? `Type-only module dependencies (compile-time contracts, not runtime coupling):` : null,
-        ...typeEdges.map((e) => `  ${e.from} → ${e.to}  (${e.count})`),
+        compiled.length ? `` : null,
+        compiled.length ? `Compile-time module dependencies (not runtime coupling):` : null,
+        ...compiled.map((e) => `  ${e.from} → ${e.to}  (${e.count}; ${e.typeOnly} type-only, ${e.compileOnly} compile-only)`),
     ].filter((line) => line != null).join('\n')
 }
 

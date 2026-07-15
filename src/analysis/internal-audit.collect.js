@@ -50,6 +50,46 @@ export function listRepoFiles(repoRoot) {
   return files;
 }
 
+const NON_RUNTIME_DIR_RE = /^(?:templates?|examples?|samples?|fixtures?|snippets?|__fixtures__)$/i;
+const NON_RUNTIME_README_RE = /(?:\b(?:reusable|copyable|reference)\b[\s\S]{0,160}\b(?:templates?|snippets?|examples?|samples?)\b|\b(?:these|contents?)\s+are\s+templates?\b)/i;
+const normConfiguredRoot = (value) => {
+  const root = String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+  if (!root || root === "." || root.split("/").some((part) => part === "..")) return "";
+  return root;
+};
+
+// Runtime health findings should not treat copy-paste catalogs as deployed applications. Conventional
+// template/example directories are safe to infer; a top-level custom catalog is inferred only when its
+// own README explicitly describes reusable templates/snippets. Projects can declare additional roots in
+// `.weavatrix-deps.json` through `nonRuntimeRoots` / `templateRoots`.
+export function collectNonRuntimeRoots(repoRoot, rules = {}) {
+  const files = listRepoFiles(repoRoot);
+  const roots = new Set();
+  const configured = [
+    rules.nonRuntimeRoots, rules.templateRoots,
+    rules.dependencies?.nonRuntimeRoots, rules.dependencies?.templateRoots,
+  ].flatMap((value) => Array.isArray(value) ? value : typeof value === "string" ? [value] : []);
+  for (const value of configured) {
+    const root = normConfiguredRoot(value);
+    if (root) roots.add(root);
+  }
+
+  for (const file of files) {
+    const parts = file.replace(/\\/g, "/").split("/");
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (NON_RUNTIME_DIR_RE.test(parts[i])) roots.add(parts.slice(0, i + 1).join("/"));
+    }
+  }
+
+  const boundary = createRepoBoundary(repoRoot);
+  for (const file of files) {
+    if (!/^[^/]+\/README\.md$/i.test(file)) continue; // custom inference is deliberately top-level only
+    const text = readRepoText(boundary, file);
+    if (text != null && NON_RUNTIME_README_RE.test(text)) roots.add(normRoot(dirname(file)));
+  }
+  return [...roots].filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
 export function collectSourceTexts(repoRoot, graph) {
   const sources = new Map();
   const boundary = createRepoBoundary(repoRoot);

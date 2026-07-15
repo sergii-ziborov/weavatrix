@@ -8,6 +8,8 @@ import { specToPkg } from "./builder/spec-pkg.js";
 import { analyzeSyntaxComplexity } from "../analysis/source-complexity.js";
 import { Parser, Query, GRAMMARS, LANGS, EXT_LANG, FAMILY, isDataFile, isDocFile, MAX_PARSE_BYTES, ensureParser, walk } from "./internal-builder.langs.js";
 import { buildResolvers } from "./internal-builder.resolvers.js";
+import { addJavaReferences } from "./internal-builder.java.js";
+import { communityTerritoryOf } from "./community.js";
 
 // Parse a repo directory into a graph-builder-compatible { nodes, links } graph.
 export async function buildInternalGraph(repoDir, opts = {}) {
@@ -56,7 +58,8 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     const syms = []; const nameToId = new Map(); const moduleNameToId = new Map();
     const addSym = (name, line, callable, extra) => {
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return;
-      const id = `${fileRel}#${name}@${line}`; if (nodeIds.has(id)) return;
+      const suffix = /^:[A-Za-z0-9_-]+$/.test(extra?.idSuffix || "") ? extra.idSuffix : "";
+      const id = `${fileRel}#${name}@${line}${suffix}`; if (nodeIds.has(id)) return;
       const sourceNode = extra && extra.sourceNode;
       const endLine = sourceNode?.endPosition ? sourceNode.endPosition.row + 1 : 0;
       let complexity = null;
@@ -82,6 +85,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       syms.push({ id, name, start: line, end: endLine >= line ? endLine : 0 });
       if (!nameToId.has(name)) nameToId.set(name, id);
       if (extra?.moduleDeclaration && !moduleNameToId.has(name)) moduleNameToId.set(name, id);
+      return id;
     };
     const imports = new Map(); importedLocals.set(fileRel, imports);
     const addImportEdge = (tgt, meta = {}) => {
@@ -92,6 +96,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         relation: meta.relation || "imports",
         confidence: "EXTRACTED",
         ...(typeof meta.typeOnly === "boolean" ? { typeOnly: meta.typeOnly } : {}),
+        ...(meta.compileOnly === true ? { compileOnly: true } : {}),
         ...(meta.line ? { line: meta.line } : {}),
         ...(meta.specifier ? { specifier: meta.specifier } : {}),
       });
@@ -152,6 +157,17 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     if (imp && imp.targetFile) { const tf = symByFileName.get(imp.targetFile); if (tf && tf.has(imp.imported)) return tf.get(imp.imported); }
     return null;
   };
+  const javaTypeKinds = new Set(["class", "interface", "enum", "record", "annotation"]);
+  const resolveJavaType = (name, fileRel) => {
+    const imp = importedLocals.get(fileRel)?.get(name);
+    if (imp?.targetFile) {
+      const symbols = symByFileName.get(imp.targetFile);
+      const target = symbols?.get(imp.imported) || symbols?.get(name);
+      if (target && javaTypeKinds.has(nodeById.get(target)?.symbol_kind)) return target;
+    }
+    const target = symByFileName.get(fileRel)?.get(name);
+    return target && javaTypeKinds.has(nodeById.get(target)?.symbol_kind) ? target : null;
+  };
   for (const abs of files) {
     const fileRel = rel(abs); const grammar = EXT_LANG[extname(abs)]; if (!grammar) continue;
     const lang = LANGS[FAMILY[grammar]]; if (!lang || lang.isWeb || !langs[grammar]) continue;
@@ -175,10 +191,14 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       const target = dm && dm.get(fld.text);
       if (target && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED" });
     }
-    for (const heritageSrc of lang.heritage || []) for (const cap of caps(grammar, heritageSrc, tree.rootNode)) {
-      const cls = enclosing(fileRel, cap.node.startPosition.row + 1); if (!cls) continue;
-      const target = resolveCall(cap.node.text, fileRel);
-      if (target && target !== cls.id) links.push({ source: cls.id, target, relation: "inherits", confidence: "INFERRED" });
+    for (const heritageSpec of lang.heritage || []) {
+      const query = typeof heritageSpec === "string" ? heritageSpec : heritageSpec.query;
+      const relation = typeof heritageSpec === "string" ? "inherits" : (heritageSpec.relation || "inherits");
+      for (const cap of caps(grammar, query, tree.rootNode)) {
+        const cls = enclosing(fileRel, cap.node.startPosition.row + 1); if (!cls) continue;
+        const target = FAMILY[grammar] === "java" ? resolveJavaType(cap.node.text, fileRel) : resolveCall(cap.node.text, fileRel);
+        if (target && target !== cls.id) links.push({ source: cls.id, target, relation, confidence: "INFERRED" });
+      }
     }
     // JSX is a real symbol use even though it is not a call_expression. Resolve imported components to their
     // declaration so component fan-in and unused-export checks do not claim `<SettingsView />` is unreferenced.
@@ -222,6 +242,9 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         const caller = enclosing(fileRel, sel.startPosition.row + 1); emitRef(caller ? caller.id : fileRel, target);
       }
     }
+    if (FAMILY[grammar] === "java") {
+      addJavaReferences({ grammar, tree, fileRel, caps, resolveJavaType, enclosing, links });
+    }
     tree.delete();
   }
 
@@ -238,13 +261,14 @@ export async function buildInternalGraph(repoDir, opts = {}) {
 
   // community = folder bucket (top 2 path parts) — deterministic, mirrors the folder-based module grouping the
   // app already uses (graph-builder-analysis.js). Populates Modules/community cards without a heavy clustering pass.
-  const folderOf = (f) => { const d = String(f || "").split("/").filter(Boolean).slice(0, -1); return d.length ? d.slice(0, 2).join("/") : "(root)"; };
   const commOf = new Map(); let commSeq = 0;
-  for (const n of nodes) { const fo = folderOf(n.source_file); if (!commOf.has(fo)) commOf.set(fo, commSeq++); n.community = commOf.get(fo); }
+  for (const n of nodes) { const territory = communityTerritoryOf(n.source_file); if (!commOf.has(territory)) commOf.set(territory, commSeq++); n.community = commOf.get(territory); }
 
   // extImportsV: bump when the externalImports schema/coverage changes (v2 = go/python ecosystems) —
   // deps-engine rebuilds in memory when a saved graph is older than this.
-  return { nodes, links, externalImports, extImportsV: 2, edgeTypesV: 1, complexityV: 1, repoBoundaryV: 1 };
+  // edgeTypesV 2 adds language-neutral compile-only edges (currently Rust mod/use/re-export) on top
+  // of v1's TypeScript typeOnly classification.
+  return { nodes, links, externalImports, extImportsV: 2, edgeTypesV: 2, complexityV: 1, repoBoundaryV: 1 };
 }
 
 // Build + write graph.json to outPath (creating the dir). Returns { ok, nodes, links, graphJson }.

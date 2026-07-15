@@ -85,3 +85,26 @@ test("py: managed-runtime and explicitly ignored dependencies are not called acc
   assert.equal(findings.length, 0);
   assert.deepEqual([...managed].sort(), ["numpy", "openvino-genai"]);
 });
+
+test("Go and Python dependency checks ignore declared non-runtime template roots only", () => {
+  const nonRuntimeRoots = ["templates", "library"];
+  const go = computeGoDepFindings({
+    goMod: { module: "example.test/app", requires: [], replaces: [] },
+    nonRuntimeRoots,
+    externalImports: [
+      goImp("github.com/example/template", "github.com/example/template", "templates/go/main.go"),
+      goImp("github.com/example/runtime", "github.com/example/runtime", "cmd/server/main.go"),
+    ],
+  });
+  assert.deepEqual(go.findings.filter((finding) => finding.rule === "missing-dep").map((finding) => finding.package), ["github.com/example/runtime"]);
+
+  const py = computePyDepFindings({
+    pyManifest: { present: false, deps: [] },
+    nonRuntimeRoots,
+    externalImports: [
+      pyImp("django", "django", "library/components/View.py"),
+      pyImp("requests", "requests", "src/client.py"),
+    ],
+  });
+  assert.deepEqual(py.findings.filter((finding) => finding.rule === "missing-dep").map((finding) => finding.package), ["requests"]);
+});

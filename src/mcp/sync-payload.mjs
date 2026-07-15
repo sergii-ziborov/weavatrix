@@ -9,6 +9,27 @@ function metadataString(value, max = 4096) {
         : undefined;
 }
 
+// graph.json is derived data and may be edited independently of the repository. Never trust a path
+// merely because it occupies an allowlisted field: sync only accepts canonical-looking repo-relative
+// paths, on every host OS. Graph IDs append `#symbol@line`, so validate their file portion separately
+// while preserving the complete ID on the wire.
+function repoRelativePathString(value, max = 4096) {
+    const path = metadataString(value, max);
+    if (!path) return undefined;
+    if (/^(?:[a-z][a-z0-9+.-]*:|[\\/])/i.test(path)) return undefined; // URI, drive path, POSIX or UNC absolute
+    const segments = path.split(/[\\/]/);
+    if (segments.some((segment) => segment === '.' || segment === '..')) return undefined;
+    return path;
+}
+
+function graphIdString(value) {
+    const id = metadataString(value);
+    if (!id) return undefined;
+    const hash = id.indexOf('#');
+    const file = hash < 0 ? id : id.slice(0, hash);
+    return repoRelativePathString(file) ? id : undefined;
+}
+
 function finiteNumber(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -37,12 +58,12 @@ function sanitizeComplexity(value) {
 
 function sanitizeNode(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const id = metadataString(value.id);
+    const id = graphIdString(value.id);
     if (!id) return null;
     const out = {id};
     setIf(out, 'label', metadataString(value.label, 1024));
     setIf(out, 'file_type', metadataString(value.file_type, 32));
-    setIf(out, 'source_file', metadataString(value.source_file));
+    setIf(out, 'source_file', repoRelativePathString(value.source_file));
     const sourceLocation = metadataString(value.source_location, 32);
     const sourceEnd = metadataString(value.source_end, 32);
     if (sourceLocation && /^L\d+$/.test(sourceLocation)) out.source_location = sourceLocation;
@@ -57,13 +78,14 @@ function sanitizeNode(value) {
 
 function sanitizeLink(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const source = metadataString(value.source);
-    const target = metadataString(value.target);
+    const source = graphIdString(value.source);
+    const target = graphIdString(value.target);
     if (!source || !target) return null;
     const out = {source, target};
     setIf(out, 'relation', metadataString(value.relation, 32));
     setIf(out, 'confidence', metadataString(value.confidence, 32));
     if (value.typeOnly === true) out.typeOnly = true;
+    if (value.compileOnly === true) out.compileOnly = true;
     const line = finiteNumber(value.line);
     if (line !== undefined && Number.isInteger(line) && line >= 0) out.line = line;
     setIf(out, 'specifier', metadataString(value.specifier));
@@ -72,7 +94,7 @@ function sanitizeLink(value) {
 
 function sanitizeExternalImport(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const file = metadataString(value.file);
+    const file = repoRelativePathString(value.file);
     if (!file) return null;
     const out = {file};
     for (const key of ['spec', 'target']) setIf(out, key, metadataString(value[key]));
@@ -89,8 +111,8 @@ export function createSyncPayload(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.repoBoundaryV !== 1) {
         throw new Error('graph predates repository-boundary hardening');
     }
-    if (!Number.isInteger(raw.edgeTypesV) || raw.edgeTypesV < 1) {
-        throw new Error('graph predates typed import edges');
+    if (!Number.isInteger(raw.edgeTypesV) || raw.edgeTypesV < 2) {
+        throw new Error('graph predates compile-only edge metadata');
     }
     const nodes = Array.isArray(raw.nodes) ? raw.nodes.map(sanitizeNode).filter(Boolean) : [];
     const links = Array.isArray(raw.links) ? raw.links.map(sanitizeLink).filter(Boolean) : [];
@@ -100,7 +122,7 @@ export function createSyncPayload(raw) {
     return {
         syncPayloadV: 2,
         repoBoundaryV: 1,
-        edgeTypesV: 1,
+        edgeTypesV: 2,
         extImportsV: Number.isInteger(raw.extImportsV) ? raw.extImportsV : 0,
         complexityV: Number.isInteger(raw.complexityV) ? raw.complexityV : 0,
         nodes,

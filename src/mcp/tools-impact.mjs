@@ -9,6 +9,7 @@ import {
     rawGraph, prevGraphPathFor, edgeEndpoint, diffGraphs, formatGraphDiff,
 } from './graph-context.mjs'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
+import {isStructuralRelation} from '../graph/relations.js'
 
 function reverseReach(g, seeds, maxDepth) {
     const states = new Map([...seeds].map((id) => [String(id), {
@@ -19,9 +20,9 @@ function reverseReach(g, seeds, maxDepth) {
         const current = frontier[cursor]
         if (current.depth >= maxDepth) continue
         for (const e of g.inn.get(current.id) || []) {
-            if (e.relation === 'contains') continue
+            if (isStructuralRelation(e.relation)) continue
             const id = String(e.id)
-            const compileOnly = current.compileOnly || e.typeOnly === true
+            const compileOnly = current.compileOnly || e.typeOnly === true || e.compileOnly === true
             const depth = current.depth + 1
             const entry = states.get(id) || {
                 runtimeDepth: null, runtimeRelation: null, compileDepth: null, compileRelation: null,
@@ -74,12 +75,14 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
     const ranked = [...reached.entries()]
         .filter(([nid]) => !seeds.has(nid))
         .map(([nid, entry]) => ({id: nid, d: entry.depth, entry, deg: degreeOf(g, nid)}))
-        .sort((a, b) => a.d - b.d || b.deg - a.deg)
+        .sort((a, b) => a.d - b.d || Number(a.entry.compileOnly) - Number(b.entry.compileOnly) || b.deg - a.deg)
     if (!ranked.length) return [note, `No dependents found for ${n.label ?? id} within depth ${maxDepth} — nothing in the graph calls, imports, or inherits it.`].filter(Boolean).join('\n')
     const shown = ranked.slice(0, cap)
+    const runtimeCount = ranked.filter((entry) => !entry.entry.compileOnly).length
+    const compileCount = ranked.length - runtimeCount
     return [
         note,
-        `Dependents of ${n.label ?? id} (reverse calls/imports/inherits, depth ≤${maxDepth}): ${ranked.length} found, showing ${shown.length} by proximity + connectivity.`,
+        `Dependents of ${n.label ?? id} (reverse calls/imports/inherits, depth ≤${maxDepth}): ${ranked.length} found (${runtimeCount} runtime, ${compileCount} compile-time-only), showing ${shown.length} by proximity + connectivity.`,
         containingFile ? `Includes importers of its containing file ${labelOf(g, containingFile)}.` : null,
         ...shown.map((r) => `  [d${r.d} ${impactKind(r.entry)}] ${r.entry.relation || 'rel'}  ${labelOf(g, r.id)}  (deg ${r.deg})  [${r.id}]`),
     ].filter(Boolean).join('\n')
@@ -174,7 +177,7 @@ export function tChangeImpact(g, args, ctx) {
     const impacted = [...reached.entries()]
         .filter(([nid]) => !seeds.has(nid) && !changedSet.has(fileOfNode(nid)))
         .map(([nid, entry]) => ({id: nid, d: entry.depth, entry, deg: degreeOf(g, nid), file: fileOfNode(nid)}))
-        .sort((a, b) => a.d - b.d || b.deg - a.deg)
+        .sort((a, b) => a.d - b.d || Number(a.entry.compileOnly) - Number(b.entry.compileOnly) || b.deg - a.deg)
 
     // coverage overlay from EXISTING reports (fractions 0..1) — see coverage_map for details
     const knownFiles = (rawGraph(ctx).nodes || []).filter((n) => !String(n.id).includes('#') && n.source_file).map((n) => n.source_file)
@@ -184,11 +187,13 @@ export function tChangeImpact(g, args, ctx) {
     const hasCoverage = coverage.size > 0
 
     const shown = impacted.slice(0, cap)
+    const runtimeImpacted = impacted.filter((entry) => !entry.entry.compileOnly).length
+    const compileImpacted = impacted.length - runtimeImpacted
     const untestedHotspots = shown.filter((n) => { const c = covOf(n.file); return c != null && c < 0.5 && n.deg >= 5 })
     return [
         `Change impact ${sourceLabel}: ${changed.length} changed file(s) → ${seeds.size} graph seed(s) incl. their symbols${unmapped.length ? `; ${unmapped.length} file(s) not in the graph (new/non-code — rebuild_graph refreshes)` : ''}.`,
         impacted.length
-            ? `${impacted.length} impacted node(s) within ${maxDepth} reverse hop(s), showing ${shown.length}:`
+            ? `${impacted.length} impacted node(s) within ${maxDepth} reverse hop(s) (${runtimeImpacted} runtime, ${compileImpacted} compile-time-only), showing ${shown.length}:`
             : `Nothing else in the graph depends on the changed code within ${maxDepth} hop(s).`,
         hasCoverage ? `Coverage: existing report mapped where available.` : `Coverage: unavailable (no supported report found); per-node coverage labels omitted.`,
         ...shown.map((n) => `  [d${n.d} ${impactKind(n.entry)}] ${n.entry.relation || 'rel'}  ${labelOf(g, n.id)}  (deg ${n.deg}${hasCoverage ? `, ${pctStr(covOf(n.file))}` : ''})  [${n.id}]`),

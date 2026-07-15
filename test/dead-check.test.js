@@ -54,3 +54,39 @@ test("computeDead: a file that's not imported and whose symbols are all dead is 
   assert.equal(deadFiles.has("orphan.js"), true, "orphan not imported + helper dead → dead file");
   assert.equal(deadFiles.has("main.js"), false, "main.js is an entry file → never dead");
 });
+
+test("computeDead: Cargo crate roots and build scripts are framework entry files", () => {
+  const symbols = new Map([
+    ["native/build.rs", "build_only"], ["native/src/lib.rs", "lib_only"],
+    ["native/src/main.rs", "main_only"], ["native/src/orphan.rs", "orphan_only"],
+  ]);
+  const files = [...symbols.keys()];
+  const nodes = files.flatMap((file) => [
+    { id: file, source_file: file },
+    { id: `${file}#${symbols.get(file)}@1`, label: `${symbols.get(file)}()`, source_file: file },
+  ]);
+  const links = files.map((file) => ({ source: file, target: `${file}#${symbols.get(file)}@1`, relation: "contains" }));
+  const sources = new Map(files.map((file) => [file, `fn ${symbols.get(file)}() {}`]));
+  const dead = new Set(computeDead({ nodes, links }, sources).deadFiles.map((finding) => finding.file));
+  assert.ok(!dead.has("native/build.rs"));
+  assert.ok(!dead.has("native/src/lib.rs"));
+  assert.ok(!dead.has("native/src/main.rs"));
+  assert.ok(dead.has("native/src/orphan.rs"));
+});
+
+test("computeDead: Java method ownership is structural, not an inbound usage", () => {
+  const graph = {
+    nodes: [
+      { id: "Child.java", source_file: "Child.java" },
+      { id: "Child.java#Child@1", label: "Child", source_file: "Child.java" },
+      { id: "Child.java#deadUniqueName@2", label: "deadUniqueName()", source_file: "Child.java" },
+    ],
+    links: [
+      { source: "Child.java", target: "Child.java#Child@1", relation: "contains" },
+      { source: "Child.java", target: "Child.java#deadUniqueName@2", relation: "contains" },
+      { source: "Child.java#Child@1", target: "Child.java#deadUniqueName@2", relation: "method" },
+    ],
+  };
+  const result = computeDead(graph, new Map([["Child.java", "class Child {\n  void deadUniqueName() {}\n}\n"]]));
+  assert.ok(result.deadSymbols.some((symbol) => symbol.id === "Child.java#deadUniqueName@2"));
+});
