@@ -33,6 +33,25 @@ export function tFindDuplicates(g, args, ctx) {
     const mode = args.mode === 'strict' ? 'strict' : 'renamed'
     const skipTests = args.include_tests ? false : true
     const includeStrings = !!args.include_strings
+    // semantic mode: same-name symbols across files, ranked by size — LOW similarity is the signal
+    // (same name, drifted behavior). Token-clone pairing is skipped entirely.
+    if (args.mode === 'semantic') {
+        const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {nameTwins: true})
+        const frags = data.frags
+        const groups = (data.nameTwins || [])
+            .map((t) => ({...t, members: t.members.filter((i) => (!skipTests || !frags[i].test) && frags[i].n >= tokMin)}))
+            .map((t) => ({...t, fileCount: new Set(t.members.map((i) => frags[i].file)).size}))
+            .filter((t) => t.members.length >= 2 && t.fileCount >= 2)
+        if (!groups.length) return 'No same-name symbol groups across files (semantic mode).'
+        const top = groups.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
+        const lines = top.map((t, k) => {
+            const verdict = t.simMax < 60 ? '  ⚠ DIVERGENT — same name, different bodies (drift hazard)' : t.simMin >= 90 ? '  near-identical — extract a shared module' : ''
+            const head = `${k + 1}. "${t.label}" — ${t.members.length} definitions in ${t.fileCount} files, similarity ${t.simMin}–${t.simMax}%${verdict}`
+            const sites = t.members.slice(0, 8).map((i) => `     ${frags[i].file}:${frags[i].start}-${frags[i].end}  (${frags[i].n} tok)`)
+            return [head, ...sites].join('\n')
+        })
+        return `Found ${groups.length} same-name symbol group(s) across files (semantic mode; similarity = renamed-token jaccard, LOW = divergent copies). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nLow-similarity groups are the risky ones — same name, drifted behavior. read_source both sites to compare.`
+    }
     const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {includeStrings})
     const groups = groupClones(data, {simMin, tokMin, mode, skipTests})
     if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.`

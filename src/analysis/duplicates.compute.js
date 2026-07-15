@@ -43,6 +43,43 @@ const BUCKET_CAP = 120;
 // genuine clone (which shares dozens of fingerprints) is untouched.
 const MIN_SHARED_FP = 8;
 
+// Same-name symbols across DIFFERENT files — the semantic complement to token clones. A token clone
+// says "same body"; a name twin with LOW similarity says "same name, different behavior" — the
+// drift-hazard class of duplicate (three divergent uniqueStrings() implementations) that jaccard
+// ranks too low to surface. OOP-generic lifecycle names are stoplisted; interface implementations
+// still appear, so the caller's report keeps neutral wording.
+const TWIN_STOP = new Set(["constructor", "tostring", "valueof", "dispose", "close", "render", "setup", "teardown", "initialize", "destroy", "connect", "disconnect", "update", "reset", "clear", "create", "handle", "execute", "invoke", "main", "start", "stop", "build", "parse", "value", "index"]);
+function computeNameTwins(frags) {
+  const byName = new Map();
+  frags.forEach((f, i) => {
+    if (f.kind === "string") return;
+    const name = String(f.label || "").trim().replace(/\(\)$/, "");
+    if (name.length < 5 || !/^[A-Za-z_$][\w$]*$/.test(name) || TWIN_STOP.has(name.toLowerCase())) return;
+    const key = name.toLowerCase();
+    let a = byName.get(key); if (!a) byName.set(key, (a = []));
+    a.push(i);
+  });
+  const jac = (A, B) => { let inter = 0; for (const h of A) if (B.has(h)) inter++; const u = A.size + B.size - inter; return u ? inter / u : 0; };
+  const out = [];
+  for (const idxs of byName.values()) {
+    const files = new Set(idxs.map((i) => frags[i].file));
+    if (files.size < 2 || idxs.length > 12) continue; // single-file overloads / framework-name explosions
+    let simMin = 1, simMax = 0;
+    for (let a = 0; a < idxs.length; a++) for (let b = a + 1; b < idxs.length; b++) {
+      if (frags[idxs[a]].file === frags[idxs[b]].file) continue;
+      const s = jac(frags[idxs[a]].fp.renamed, frags[idxs[b]].fp.renamed);
+      if (s < simMin) simMin = s;
+      if (s > simMax) simMax = s;
+    }
+    out.push({
+      label: String(frags[idxs[0]].label || "").replace(/\(\)$/, ""), members: idxs, files: files.size,
+      simMin: Math.round(simMin * 100), simMax: Math.round(simMax * 100),
+      tokens: idxs.reduce((n, i) => n + frags[i].n, 0),
+    });
+  }
+  return out.sort((x, y) => y.tokens - x.tokens).slice(0, 200);
+}
+
 function pairsForMode(frags, mode) {
   const index = new Map();
   frags.forEach((f, i) => { for (const h of f.fp[mode]) { let a = index.get(h); if (!a) index.set(h, (a = [])); a.push(i); } });
@@ -171,7 +208,8 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
     }
   }
   const modes = { strict: pairsForMode(frags, "strict"), renamed: pairsForMode(frags, "renamed") };
+  const nameTwins = opts.nameTwins ? computeNameTwins(frags) : null;
   // fp sets are worker-internal — strip them from the payload that crosses the thread boundary
   const slim = frags.map(({ fp, ...rest }) => rest);
-  return { ok: true, frags: slim, modes, graphSymbols, floors: { tokens: FLOOR_TOKENS, sim: FLOOR_SIM * 100 } };
+  return { ok: true, frags: slim, modes, ...(nameTwins ? { nameTwins } : {}), graphSymbols, floors: { tokens: FLOOR_TOKENS, sim: FLOOR_SIM * 100 } };
 }
