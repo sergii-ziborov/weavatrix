@@ -3,6 +3,7 @@
 // (staleness, raw graph), so every tool module imports it STATICALLY — it is the one part of src/mcp
 // that does NOT hot-reload (editing it needs an MCP reconnect, same as the analysis engines).
 import {readFileSync, statSync} from 'node:fs'
+import {join} from 'node:path'
 import {spawnSync} from 'node:child_process'
 import {buildFileImportGraph, findSccs} from '../analysis/dep-rules.js'
 
@@ -133,6 +134,21 @@ export function graphStaleness(ctx) {
                 }
             }
         } catch { /* git unavailable — degrade to builtAt only */ }
+        // Uncommitted work drifts line numbers just as hard as commits do (that is how agents get bitten:
+        // they edit, then re-query). Count dirty files actually TOUCHED after the build — a dirty file
+        // older than the graph was already part of it.
+        try {
+            const st = spawnSync('git', ['-C', ctx.repoRoot, 'status', '--porcelain'], {encoding: 'utf8', timeout: 4000})
+            if (st.status === 0) {
+                let newer = 0
+                for (const ln of String(st.stdout || '').split(/\r?\n/).filter(Boolean).slice(0, 200)) {
+                    const p = ln.slice(3).trim().replace(/^"|"$/g, '')
+                    try { if (statSync(join(ctx.repoRoot, p)).mtime > info.builtAt) newer++ } catch { newer++ } // deleted counts as drift
+                }
+                info.dirtyNewer = newer
+                if (newer > 0) info.stale = true
+            }
+        } catch { /* git unavailable */ }
     }
     stalenessCache = {key: ctx.graphPath, checkedAt: now, info}
     return info
@@ -141,8 +157,24 @@ export const resetStalenessCache = () => { stalenessCache = {key: '', checkedAt:
 export function stalenessLine(ctx) {
     const s = graphStaleness(ctx)
     if (!s.stale) return null
-    const behind = s.behind != null ? `${s.behind} commit${s.behind === 1 ? '' : 's'}` : 'commits'
-    return `Warning: graph may be stale — the repo has ${behind} newer than the graph (built ${s.builtAt.toISOString()}). Call rebuild_graph.`
+    const bits = []
+    if (s.headAt && s.headAt > s.builtAt) bits.push(`${s.behind != null ? `${s.behind} commit${s.behind === 1 ? '' : 's'}` : 'commits'} newer than the graph`)
+    if (s.dirtyNewer) bits.push(`${s.dirtyNewer} uncommitted file(s) edited after the build`)
+    return `Warning: graph may be stale — the repo has ${bits.join(' and ')} (built ${s.builtAt.toISOString()}). Line numbers may have drifted; call rebuild_graph.`
+}
+
+// Per-file drift check for tools that print exact line numbers: the global warning says the REPO
+// moved; this says THIS file moved — the difference between "be careful" and "these numbers are off".
+export function fileStalenessNote(ctx, sourceFile) {
+    if (!ctx?.repoRoot || !sourceFile) return null
+    const s = graphStaleness(ctx)
+    if (!s.builtAt) return null
+    try {
+        if (statSync(join(ctx.repoRoot, String(sourceFile))).mtime > s.builtAt) {
+            return `Note: ${sourceFile} changed after the graph was built — line numbers above may have drifted (rebuild_graph refreshes them).`
+        }
+    } catch { /* file gone — the read tools will surface that themselves */ }
+    return null
 }
 
 // Raw graph.json (with externalImports, file_type, source_end …) for the analysis modules — the MCP's

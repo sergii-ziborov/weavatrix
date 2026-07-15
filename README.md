@@ -9,6 +9,7 @@ coverage mapping. **23 tools. One server for every repo on your machine. Local-f
 never leaves it.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
+- Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
 - Status: **pre-release** — npm publish imminent; API may still shift before v0.1.
 
 ## Why
@@ -28,23 +29,28 @@ answers grep can't produce:
 
 ## Quick start
 
-Requires Node ≥ 18. Until the npm package lands, clone and register the server directly:
+Requires Node ≥ 18. One command, straight from GitHub (npm package coming):
+
+```sh
+# Claude Code — one user-level registration serves every repo on the machine:
+claude mcp add -s user weavatrix -- npx -y github:sergii-ziborov/weavatrix <repoRoot>
+```
+
+Or clone it:
 
 ```sh
 git clone https://github.com/sergii-ziborov/weavatrix
 cd weavatrix && npm install
-
-# Claude Code — one user-level registration serves every repo on the machine:
-claude mcp add -s user weavatrix -- node <path-to>/weavatrix/bin/weavatrix-mcp.mjs <graph.json> <repoRoot>
+claude mcp add -s user weavatrix -- node <path-to>/weavatrix/bin/weavatrix-mcp.mjs <repoRoot>
 ```
 
-- `<repoRoot>` — the repository you want to start with.
-- `<graph.json>` — where its graph lives (or will be built):
-  `<repoRoot-parent>/weavatrix-graphs/<repoName>/graph.json`.
+- `<repoRoot>` — the repository to start with; the graph location is derived automatically
+  (`<repoRoot-parent>/weavatrix-graphs/<repoName>/graph.json`). Pass an explicit
+  `<graph.json> <repoRoot>` pair instead if you keep graphs elsewhere.
 
-No graph yet? Just ask the agent to call `open_repo` — it builds missing graphs itself. From then
-on, `open_repo` retargets the same running server at **any** other local repository; never register
-a second copy.
+No graph yet? Just ask the agent to call `rebuild_graph` (or `open_repo`) — it builds missing
+graphs itself. From then on, `open_repo` retargets the same running server at **any** other local
+repository; never register a second copy.
 
 An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — install as
 `~/.claude/skills/weavatrix/SKILL.md`.

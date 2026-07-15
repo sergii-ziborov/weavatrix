@@ -4,7 +4,7 @@
 import {
     isSymbol, degreeOf, labelOf, connList,
     resolveNodeInfo, resolveNode, ambiguityNote, findSeeds, undirectedNeighbors,
-    graphStaleness,
+    graphStaleness, fileStalenessNote,
 } from './graph-context.mjs'
 
 export function tGraphStats(g, ctx) {
@@ -42,12 +42,13 @@ export function tGraphStats(g, ctx) {
         .join('\n')
 }
 
-export function tGetNode(g, {label} = {}) {
+export function tGetNode(g, {label} = {}, ctx) {
     const info = resolveNodeInfo(g, label)
     const n = info.node
     if (!n) return `No node found matching "${label}".`
     const note = ambiguityNote(label, info)
     const id = String(n.id)
+    const drift = ctx ? fileStalenessNote(ctx, n.source_file || (isSymbol(id) ? id.split('#')[0] : id)) : null
     const outs = g.out.get(id) || []
     const ins = g.inn.get(id) || []
     const sample = (list, dir) =>
@@ -65,6 +66,7 @@ export function tGetNode(g, {label} = {}) {
         `- degree: ${outs.length + ins.length} (out ${outs.length}, in ${ins.length})`,
         `Outgoing:\n${sample(outs, 'out')}`,
         `Incoming:\n${sample(ins, 'in')}`,
+        drift,
     ]
         .filter(Boolean)
         .join('\n')
@@ -83,12 +85,13 @@ function dedupeEdges(list) {
     return [...grouped.values()]
 }
 
-export function tGetNeighbors(g, {label, relation_filter} = {}) {
+export function tGetNeighbors(g, {label, relation_filter} = {}, ctx) {
     const info = resolveNodeInfo(g, label)
     const n = info.node
     if (!n) return `No node found matching "${label}".`
     const note = ambiguityNote(label, info)
     const id = String(n.id)
+    const drift = ctx ? fileStalenessNote(ctx, n.source_file || (isSymbol(id) ? id.split('#')[0] : id)) : null
     const rf = relation_filter ? String(relation_filter).toLowerCase() : null
     const match = (e) => !rf || String(e.relation ?? '').toLowerCase() === rf
     const outsRaw = (g.out.get(id) || []).filter(match)
@@ -104,6 +107,7 @@ export function tGetNeighbors(g, {label, relation_filter} = {}) {
         ...outs.slice(0, 60).map((e) => line(e, 'out')),
         `Incoming (${ins.length}):`,
         ...ins.slice(0, 60).map((e) => line(e, 'in')),
+        drift,
     ].filter(Boolean).join('\n')
 }
 

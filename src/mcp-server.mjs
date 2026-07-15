@@ -11,25 +11,39 @@
 // resolves nothing from node_modules at runtime (ripgrep is probed, with a pure-Node fallback); only
 // the graph BUILDER pulls in web-tree-sitter + its WASM grammars when a build is requested.
 //
-// STDOUT is the protocol channel — nothing but JSON-RPC frames may be written there. All diagnostics go to
-// stderr. argv: [0]=node, [1]=this script, [2]=graph.json, [3]=repo root (optional, enables source tools),
-// [4]=comma-separated capability groups (optional; absent → all groups).
+// STDOUT is the protocol channel — nothing but JSON-RPC frames may be written there. All diagnostics
+// go to stderr. Two argv forms:
+//   weavatrix-mcp <repoRoot> [caps]               — graph path derived from the standard layout
+//   weavatrix-mcp <graph.json> <repoRoot> [caps]  — explicit graph file (classic form)
 import {existsSync, statSync} from 'node:fs'
 import {join, dirname} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import process from 'node:process'
 import {loadGraph} from './mcp/graph-context.mjs'
 import {loadHotApi, HOT_FILES} from './mcp/catalog.mjs'
+import {graphOutDirForRepo} from './graph/layout.js'
 
 const SERVER_INFO = {name: 'weavatrix', version: '0.0.1'}
 const DEFAULT_PROTOCOL = '2024-11-05'
 const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 
-// repo source root (argv[3]) for search_code / read_source; null → those tools degrade.
-const REPO_ROOT = process.argv[3] && existsSync(process.argv[3]) ? process.argv[3] : null
-// argv[4] ABSENT (undefined) = no per-repo config → ALL tools. PRESENT (even the empty string, which a
+// argv[2] is a repo DIRECTORY in the npx form — derive the graph location from the standard layout;
+// otherwise it is the graph.json path and the repo root follows it.
+let GRAPH_PATH = process.argv[2]
+let repoArg = process.argv[3]
+// caps ABSENT (undefined) = no per-repo config → ALL tools. PRESENT (even the empty string, which a
 // registration may pass for a zero-capability selection) = explicit set — see catalog.loadHotApi.
-const CAPS_ARG = process.argv[4]
+let CAPS_ARG = process.argv[4]
+try {
+    if (GRAPH_PATH && statSync(GRAPH_PATH).isDirectory()) {
+        repoArg = GRAPH_PATH.replace(/[\\/]+$/, '')
+        CAPS_ARG = process.argv[3]
+        GRAPH_PATH = join(graphOutDirForRepo(repoArg), 'graph.json')
+        if (!existsSync(GRAPH_PATH)) log(`no graph built yet for ${repoArg} — ask the agent to call rebuild_graph (or open_repo) once; it builds into the standard weavatrix-graphs layout`)
+    }
+} catch { /* argv[2] is not a directory → classic <graph.json> <repoRoot> form */ }
+// repo source root for search_code / read_source; null → those tools degrade.
+const REPO_ROOT = repoArg && existsSync(repoArg) ? repoArg : null
 
 // ---- hot reload of tool implementations -----------------------------------------------------------
 // Node caches modules at spawn, so edits to the tool code would otherwise be invisible until the MCP
@@ -52,7 +66,7 @@ async function main() {
     let graphError = null
     // ctx owns the CURRENT target: rebuild_graph reloads it, open_repo retargets graphPath/repoRoot
     // at runtime. loadInto always reads ctx.graphPath so both paths share one loader.
-    const ctx = {graphPath: process.argv[2], repoRoot: REPO_ROOT, reload: null}
+    const ctx = {graphPath: GRAPH_PATH, repoRoot: REPO_ROOT, reload: null}
     const loadInto = () => { graph = loadGraph(ctx.graphPath); graphError = null; return graph }
     ctx.reload = () => { api.resetStalenessCache(); try { return loadInto() } catch (e) { graphError = e.message; return null } }
     try {
