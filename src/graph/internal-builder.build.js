@@ -105,10 +105,13 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     tree.delete();
   }
 
-  // ---- pass 2: scope-aware calls + inheritance (Go package = whole dir → same-dir symbols share scope) ----
+  // ---- pass 2: scope-aware calls + inheritance (Go package = whole dir → same-dir symbols share scope;
+  // C# gets the same treatment: one folder ≈ one namespace by convention, and `using` names namespaces,
+  // not files, so the folder map is the only reliable cross-file resolver) ----
   const goDirSymbols = new Map();
+  const sharesDirScope = (fr) => fr.endsWith(".go") || fr.endsWith(".cs");
   for (const [fr, m] of symByFileName) {
-    if (!fr.endsWith(".go")) continue;
+    if (!sharesDirScope(fr)) continue;
     const d = fr.includes("/") ? fr.slice(0, fr.lastIndexOf("/")) : "";
     let dm = goDirSymbols.get(d); if (!dm) goDirSymbols.set(d, (dm = new Map()));
     for (const [n, id] of m) if (!dm.has(n)) dm.set(n, id);
@@ -125,7 +128,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   };
   const resolveCall = (name, fileRel) => {
     const local = symByFileName.get(fileRel); if (local && local.has(name)) return local.get(name);
-    if (fileRel.endsWith(".go")) { const d = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : ""; const dm = goDirSymbols.get(d); if (dm && dm.has(name)) return dm.get(name); }
+    if (sharesDirScope(fileRel)) { const d = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : ""; const dm = goDirSymbols.get(d); if (dm && dm.has(name)) return dm.get(name); }
     const imp = importedLocals.get(fileRel) && importedLocals.get(fileRel).get(name);
     if (imp && imp.targetFile) { const tf = symByFileName.get(imp.targetFile); if (tf && tf.has(imp.imported)) return tf.get(imp.imported); }
     return null;

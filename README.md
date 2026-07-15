@@ -91,7 +91,7 @@ don't exist for that client.
 
 ## Languages
 
-JavaScript · TypeScript · TSX · Python · Go · Java · HTML · CSS — parsed with
+JavaScript · TypeScript · TSX · Python · Go · Java · C# · HTML · CSS — parsed with
 [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) WASM grammars; no Python install, no
 native compilation. Rust is on the roadmap.
 
