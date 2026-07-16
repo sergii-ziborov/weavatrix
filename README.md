@@ -354,11 +354,19 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
 
 ## Roadmap
 
-- **Hosted graph view** on [weavatrix.com](https://weavatrix.com) — sync with one tool call, share
-  the interactive map with your team
-- **Graph-anchored memory** — agent notes pinned to nodes/modules, staleness-tracked as the code
-  under them changes
-- **CI blast radius** — `change_impact` as a PR comment
+- **Hosted architecture workbench** is live at
+  [app.weavatrix.com](https://app.weavatrix.com): explicit source-free sync,
+  immutable history, Flow/DSM/Map, target architecture and bounded review
+  evidence. Hosted use remains optional and owner-authenticated.
+- **Semantic precision bridge** — optional local language-server validation for
+  ambiguous impact, reference and dead-code evidence; the current parser graph
+  remains the offline fallback.
+- **Git-native architecture history** — bounded tag/ref timelines and branch
+  reports built outside the worktree; graph artifacts stay out of Git.
+- **Cross-repository company evidence** — endpoints, events and internal
+  packages joined to affected consumers and ownership without uploading source.
+- **CI blast radius** — bounded `change_impact` and architecture-ratchet evidence
+  as a PR check/comment.
 
 ## License
 
