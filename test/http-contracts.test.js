@@ -42,6 +42,18 @@ test("HTTP client extraction normalizes literals/templates and keeps unknown URL
   assert.match(result.calls[4].reason, /method is dynamic/i);
 });
 
+test("HTTP client extraction resolves bounded local string constants in template URL prefixes", () => {
+  const text = `
+    const API_ROOT = 'https://example.test/edgeAnalytics';
+    const QUERY_ROOT = \`\${API_ROOT}/query\`;
+    apiClient.get(\`\${QUERY_ROOT}/\${id}\`);
+  `;
+  const result = extractHttpClientCallsFromText(text, "src/query-client.ts");
+  assert.deepEqual(result.calls.map((call) => [call.method, call.path, call.unknownPrefix, call.partialDynamic]), [
+    ["GET", "/edgeAnalytics/query/:param", false, false],
+  ]);
+});
+
 test("contract matching requires the method and labels exact, concrete-parameter and suffix evidence", () => {
   const endpoint = { method: "GET", path: "/api/users/:id" };
   assert.equal(matchHttpContract(endpoint, { method: "POST", path: "/api/users/42" }), null, "method mismatch is never promoted");
@@ -144,4 +156,17 @@ test("method/path/changed-file filters and every output cap are deterministic an
     rmSync(backend, { recursive: true, force: true });
     rmSync(frontend, { recursive: true, force: true });
   }
+});
+
+test("endpoint path filter accepts a segment-aligned fragment without losing the backend prefix", () => {
+  const result = analyzeHttpContracts({
+    backend: {
+      id: "api",
+      endpoints: [{ method: "GET", path: "/edgeAnalytics/query/:id", file: "src/routes.js", line: 1 }],
+    },
+    clients: [],
+    path: "/query",
+  });
+  assert.equal(result.totals.endpoints, 1);
+  assert.equal(result.endpoints[0].normalizedPath, "/edgeAnalytics/query/:param");
 });

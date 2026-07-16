@@ -54,6 +54,11 @@ const DEFAULT_RULES = [
     regex: /(^|\/)(?:generated|gen|openapi[-_]?generated|generated[-_]?client|api[-_]?client[-_]?generated)(\/|$)/i,
   },
   {
+    category: "generated",
+    pattern: "conventional build output path",
+    regex: /(^|\/)(?:dist|build|out|coverage|\.next)(\/|$)/i,
+  },
+  {
     category: "mock",
     pattern: "mock/fixture path or mockData filename",
     regex: /(^|\/)(?:__mocks__|mocks?|fixtures?|__fixtures__)(\/|$)|(^|\/)(?:mock[-_.]?data|test[-_.]?data|fake[-_.]?data)\.[^.\/]+$/i,

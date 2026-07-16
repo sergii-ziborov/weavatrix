@@ -148,7 +148,7 @@ function quotedArgument(text, start, quote) {
   return null;
 }
 
-function templateArgument(text, start) {
+function templateArgument(text, start, constants = null, requireStatic = false) {
   let value = "";
   let dynamicSegments = 0;
   let unknownPrefix = false;
@@ -182,6 +182,13 @@ function templateArgument(text, start) {
       cursor += 1;
     }
     if (depth !== 0) return null;
+    const expression = text.slice(index + 2, cursor - 1).trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(expression) && constants?.has(expression)) {
+      value += constants.get(expression);
+      index = cursor - 1;
+      continue;
+    }
+    if (requireStatic) return null;
     const next = text[cursor];
     const leftBoundary = value === "" || value.endsWith("/");
     const rightBoundary = !next || next === "/" || next === "?" || next === "#" || next === "`";
@@ -194,7 +201,41 @@ function templateArgument(text, start) {
   return null;
 }
 
-function parseUrlArgument(text, openParen) {
+function extractStaticStringConstants(text) {
+  const source = String(text || "");
+  const mask = maskNonCode(source);
+  const declarations = [];
+  const declaration = /\bconst\s+([A-Za-z_$][\w$]*)\s*=/g;
+  let match;
+  while ((match = declaration.exec(mask)) && declarations.length < 500) {
+    let start = match.index + match[0].length;
+    while (/\s/.test(source[start] || "")) start += 1;
+    declarations.push({ name: match[1], start });
+  }
+
+  const constants = new Map();
+  for (const item of declarations) {
+    const quote = source[item.start];
+    if (quote !== "'" && quote !== '"') continue;
+    const parsed = quotedArgument(source, item.start, quote);
+    if (parsed && parsed.value.length <= 2_048) constants.set(item.name, parsed.value);
+  }
+  // Resolve bounded chains such as `const route = `${API_ROOT}/query`` without evaluating code.
+  for (let pass = 0; pass < Math.min(8, declarations.length); pass += 1) {
+    let changed = false;
+    for (const item of declarations) {
+      if (constants.has(item.name) || source[item.start] !== "`") continue;
+      const parsed = templateArgument(source, item.start, constants, true);
+      if (!parsed || parsed.value.length > 2_048) continue;
+      constants.set(item.name, parsed.value);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return constants;
+}
+
+function parseUrlArgument(text, openParen, constants) {
   let start = openParen + 1;
   while (/\s/.test(text[start] || "")) start += 1;
   const quote = text[start];
@@ -204,7 +245,7 @@ function parseUrlArgument(text, openParen) {
     return { path: normalizeHttpContractPath(parsed.value), endIndex: parsed.endIndex, kind: "literal", dynamic: false, unknownPrefix: false, partialDynamic: false, reason: null };
   }
   if (quote === "`") {
-    const parsed = templateArgument(text, start);
+    const parsed = templateArgument(text, start, constants);
     if (!parsed) return { path: null, endIndex: start, kind: "dynamic", dynamic: true, reason: "unterminated URL template" };
     return {
       path: normalizeHttpContractPath(parsed.value),
@@ -239,13 +280,14 @@ function normalizedClientNames(values) {
 export function extractHttpClientCallsFromText(text, file, options = {}) {
   const source = String(text || "");
   const mask = maskNonCode(source);
+  const constants = extractStaticStringConstants(source);
   const allowed = normalizedClientNames(options.clientNames);
   const maxCalls = boundedInteger(options.maxCalls, DEFAULTS.maxCallsPerClient, 1, HARD.maxCallsPerClient);
   const calls = [];
   let truncated = false;
   const add = (clientName, method, openParen, fetch = false) => {
     if (calls.length >= maxCalls) { truncated = true; return; }
-    const parsed = parseUrlArgument(source, openParen);
+    const parsed = parseUrlArgument(source, openParen, constants);
     const fetchInfo = fetch ? fetchMethod(source, parsed.endIndex) : { method: method.toUpperCase(), uncertain: false };
     calls.push({
       file: normalizeFile(file),
@@ -332,6 +374,14 @@ function suffixShapeMatch(endpointSegments, callSegments) {
     return routeShapeMatches(endpointSegments, callSegments.slice(callSegments.length - endpointSegments.length));
   }
   return routeShapeMatches(endpointSegments.slice(endpointSegments.length - callSegments.length), callSegments);
+}
+
+function routeShapeContains(endpointSegments, requestedSegments) {
+  if (!requestedSegments.length || requestedSegments.length > endpointSegments.length) return false;
+  for (let start = 0; start <= endpointSegments.length - requestedSegments.length; start += 1) {
+    if (routeShapeMatches(endpointSegments.slice(start, start + requestedSegments.length), requestedSegments)) return true;
+  }
+  return false;
 }
 
 function methodMatches(endpointMethod, callMethod) {
@@ -450,7 +500,9 @@ function endpointFilter(endpoint, backendId, options) {
   if (options.method && endpoint.method !== options.method && endpoint.method !== "ANY" && endpoint.method !== "ALL") return false;
   if (options.path) {
     const requested = normalizeHttpContractPath(options.path);
-    if (!requested || !routeShapeMatches(pathSegments(normalizeHttpContractPath(endpoint.path)), pathSegments(requested))) return false;
+    const endpointSegments = pathSegments(normalizeHttpContractPath(endpoint.path));
+    const requestedSegments = pathSegments(requested);
+    if (!requested || (!routeShapeMatches(endpointSegments, requestedSegments) && !routeShapeContains(endpointSegments, requestedSegments))) return false;
   }
   if (options.changedFiles?.size) {
     const file = normalizeFile(endpoint.file);

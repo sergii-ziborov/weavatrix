@@ -168,6 +168,24 @@ disclosed instead of silently guessed; and the server **hot-reloads its watched 
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
 
+### 0.2.1 bounded-output patch
+
+- `git_history top_n=N` is a hard per-collection MCP cap, including churn, hotspots and every
+  coupling list. JSON output reports `total`, `returned` and `truncated` for each collection.
+- `god_nodes` ranks production code by default, excluding classified tests and generated/build
+  artifacts; pass `include_classified:true` only when those surfaces are intentionally in scope.
+- `output_format:"text"` returns concise TextContent only. Use `output_format:"json"` when a
+  workflow needs the full stable `weavatrix.tool.v1` structured envelope.
+- `trace_api_contract` resolves bounded constant prefixes in template URLs and accepts
+  segment-aligned path fragments such as `/query` for `/edgeAnalytics/query/...`.
+- `change_impact` labels test/e2e edits as `test-only` and does not seed product blast radius from
+  them.
+- Without a saved architecture contract, `prepare_change` returns concise provisional budgets and
+  clearly labels them as non-enforceable; request `get_architecture_contract output_format:"json"`
+  only when the inferred starter contract is actually needed.
+
+Full patch notes: [docs/releases/v0.2.1.md](docs/releases/v0.2.1.md).
+
 ## Signal quality and repository configuration
 
 Weavatrix `0.2.0` reduces the most common sources of static-analysis noise while deepening Rust and

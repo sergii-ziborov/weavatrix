@@ -159,6 +159,40 @@ test("comment-only hunks are metadata-only and do not seed dependents", () => {
   assert.deepEqual(result.seedIds, []);
 });
 
+test("test and e2e file changes are labelled test-only instead of unknown", () => {
+  const graph = {
+    nodes: [
+      fileNode("test-e2e/cypress/e2e/login.cy.ts"),
+      symbolNode("test-e2e/cypress/e2e/login.cy.ts", "loginFlow", 1, 6),
+    ],
+    links: [],
+  };
+  const diffText = [
+    "diff --git a/test-e2e/cypress/e2e/login.cy.ts b/test-e2e/cypress/e2e/login.cy.ts",
+    "--- a/test-e2e/cypress/e2e/login.cy.ts",
+    "+++ b/test-e2e/cypress/e2e/login.cy.ts",
+    "@@ -5 +5 @@",
+    "-mysteryHarness(oldValue);",
+    "+mysteryHarness(newValue);",
+  ].join("\n");
+  const result = classifyChangeImpact({ graph, diffText });
+  assert.equal(result.verdict, "LOW");
+  assert.equal(result.files[0].classification, "test-only");
+  assert.equal(result.files[0].changeClassification, "body-changed");
+  assert.deepEqual(result.files[0].pathClasses, ["test", "e2e"]);
+  assert.deepEqual(result.seedIds, []);
+  assert.equal(result.summary.counts["test-only"], 1);
+});
+
+test("files-only fallback retains conservative verdict but identifies test-only surface", () => {
+  const graph = {nodes: [fileNode("src/auth.test.ts")], links: []};
+  const result = classifyChangeImpact({ graph, files: ["src/auth.test.ts"] });
+  assert.equal(result.verdict, "HIGH", "missing diff evidence remains conservative");
+  assert.equal(result.files[0].classification, "test-only");
+  assert.equal(result.files[0].changeClassification, "unknown");
+  assert.deepEqual(result.seedIds, []);
+});
+
 test("rename, binary, files-only and oversized evidence are conservative HIGH", () => {
   const graph = {
     nodes: [fileNode("src/new.ts"), symbolNode("src/new.ts", "api", 1, 3, { exported: true })],

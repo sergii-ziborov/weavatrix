@@ -4,6 +4,7 @@
 // from flooding the report with every legacy importer of that file.
 import { spawnSync } from "node:child_process";
 import { childProcessEnv } from "../child-env.js";
+import { createPathClassifier, hasPathClass } from "../path-classification.js";
 
 const DEFAULT_LIMITS = Object.freeze({
   maxDiffBytes: 2 * 1024 * 1024,
@@ -15,6 +16,7 @@ const DEFAULT_LIMITS = Object.freeze({
 });
 const CLASS_RANK = Object.freeze({
   "metadata-only": 0,
+  "test-only": 0,
   added: 1,
   "body-changed": 2,
   "signature-changed": 3,
@@ -395,6 +397,20 @@ function unknownFile(path, indexed, reason) {
   };
 }
 
+function classifyTestSurface(file, pathClassifier) {
+  const explanation = pathClassifier.explain(file.path);
+  if (!hasPathClass(explanation, "test", "e2e")) return file;
+  const surface = explanation.classes.includes("e2e") ? "e2e" : "test";
+  return {
+    ...file,
+    classification: "test-only",
+    changeClassification: file.classification,
+    reason: `${surface} path; excluded from the product blast-radius seed set`,
+    pathClasses: explanation.classes,
+    seedIds: [],
+  };
+}
+
 function runGitDiff(repoRoot, base, _files, limits) {
   const args = ["-C", repoRoot, "diff", "--no-ext-diff", "--find-renames", "--no-color", "--unified=0", String(base), "--"];
   const result = spawnSync("git", args, {
@@ -443,17 +459,25 @@ export function classifyChangeImpact({
   }
 
   const indexed = graphIndex(graph, limits);
+  const pathClassifier = createPathClassifier(repoRoot);
   const parsed = available ? parseZeroContextDiff(text, limits) : { files: [], changedLines: 0, byteLength: 0, truncated: gitOversized, oversized: gitOversized, limits };
-  const analyzed = parsed.files.map((file) => analyzeParsedFile(file, indexed, { includeAddedSeeds }));
+  const analyzed = parsed.files.map((file) => classifyTestSurface(
+    analyzeParsedFile(file, indexed, { includeAddedSeeds }),
+    pathClassifier,
+  ));
   const represented = new Set(analyzed.flatMap((file) => [file.oldPath, file.newPath].filter(Boolean)));
   for (const file of explicitFiles) {
-    if (!represented.has(file)) analyzed.push(unknownFile(file, indexed, available ? "explicitly changed file had no textual hunk" : unavailableReason));
+    if (!represented.has(file)) analyzed.push(classifyTestSurface(
+      unknownFile(file, indexed, available ? "explicitly changed file had no textual hunk" : unavailableReason),
+      pathClassifier,
+    ));
   }
   if (!available && !explicitFiles.length) analyzed.push(unknownFile("(diff unavailable)", indexed, unavailableReason));
   analyzed.sort((a, b) => a.path.localeCompare(b.path));
 
   if (parsed.truncated || parsed.oversized || gitOversized) {
     for (const file of analyzed) {
+      if (file.classification === "test-only") continue;
       file.classification = "unknown";
       file.reason = "diff was truncated/oversized; symbol-level classification is incomplete";
       const record = indexed.get(file.newPath) || indexed.get(file.oldPath);
@@ -480,6 +504,7 @@ export function classifyChangeImpact({
   if (counts["body-changed"]) reasons.push(`${counts["body-changed"]} file(s) contain mapped executable body changes.`);
   if (counts.added && !includeAddedSeeds) reasons.push(`${counts.added} purely additive file change(s) create no dependent seeds by default.`);
   if (counts["metadata-only"]) reasons.push(`${counts["metadata-only"]} metadata-only file change(s) create no dependent seeds.`);
+  if (counts["test-only"]) reasons.push(`${counts["test-only"]} test-only file change(s) are labelled explicitly and create no product blast-radius seeds.`);
   if (counts.unknown) reasons.push(`${counts.unknown} file change(s) remain unknown and are seeded conservatively.`);
   if (!reasons.length) reasons.push("No changed files were present in the supplied diff.");
 

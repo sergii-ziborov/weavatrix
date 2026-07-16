@@ -214,7 +214,7 @@ export function tChangeImpactV2(g, args = {}, ctx = {}) {
         '',
         impacted.length
             ? `Blast radius: ${impacted.length} impacted node(s) within ${maxDepth} reverse hop(s) (${runtimeImpacted} runtime, ${compileImpacted} compile-time-only), showing ${shown.length}:`
-            : seeds.size ? `Blast radius: nothing else depends on the exact changed symbols within ${maxDepth} hop(s).` : `Blast radius: 0 — additive/metadata-only changes do not inherit the containing file's legacy importers.`,
+            : seeds.size ? `Blast radius: nothing else depends on the exact changed symbols within ${maxDepth} hop(s).` : `Blast radius: 0 — additive, metadata-only, and test-only changes do not inherit the containing file's legacy importers.`,
         hasCoverage
             ? 'Test evidence: measured coverage is shown where mapped; static reachability remains separate in structured output.'
             : `Test evidence: actualCoverage NOT_AVAILABLE; static paths only (${staticTests.reachableFiles}/${staticTests.productFiles} product files reachable from indexed tests).`,

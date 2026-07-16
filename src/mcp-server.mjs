@@ -217,7 +217,9 @@ async function main() {
                         if (schemaWarning) text += `\n\nWarning: ${schemaWarning.message}`
                         if (staleLine && staleNotices.shouldShow({line: staleLine, graphPath: callCtx.graphPath, force: tool.name === 'graph_stats'})) text += `\n\n${staleLine}`
                     }
-                    return reply(id, {content: [{type: 'text', text}], structuredContent: normalized.structured})
+                    const response = {content: [{type: 'text', text}]}
+                    if (normalized.structured) response.structuredContent = normalized.structured
+                    return reply(id, response)
                 } catch (e) {
                     log(`tool ${params?.name} threw: ${e.stack || e.message}`)
                     return reply(id, {content: [{type: 'text', text: `Tool error: ${e.message}`}], isError: true})

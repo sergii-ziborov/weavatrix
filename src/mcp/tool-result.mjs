@@ -1,7 +1,6 @@
-// MCP tool results keep a concise human summary and a stable machine-readable envelope together.
-// Older clients continue to consume TextContent; MCP 2025-06 clients can use structuredContent
-// directly without scraping prose. Tool implementations may opt into richer `result` data through
-// toolResult(), while legacy string-returning tools still receive a deterministic envelope.
+// Text mode stays genuinely compact for agents and older clients: it returns TextContent only.
+// JSON mode adds the stable machine-readable structuredContent envelope and mirrors that envelope
+// into TextContent for workflow runners that cannot consume structured results directly.
 
 export const TOOL_RESULT_SCHEMA = 'weavatrix.tool.v1'
 
@@ -44,8 +43,12 @@ export function normalizeToolResult({toolName, value, args, ctx, refresh, warnin
         page: rich ? (value.page || {}) : {},
         ...(rich && value.completeness ? {completeness: value.completeness} : {}),
     }
+    const json = args?.output_format === 'json'
     return {
-        text: args?.output_format === 'json' ? JSON.stringify(structured, null, 2) : `Repository: ${structured.repo.name}\n${text}`,
-        structured,
+        text: json ? JSON.stringify(structured, null, 2) : `Repository: ${structured.repo.name}\n${text}`,
+        // MCP output schemas apply to every invocation of a tool. The catalog intentionally does not
+        // advertise one because text mode must not attach a second, potentially very large payload.
+        // JSON callers still receive the stable structured result as an optional MCP extension.
+        structured: json ? structured : undefined,
     }
 }

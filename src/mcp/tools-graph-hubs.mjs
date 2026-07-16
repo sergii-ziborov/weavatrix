@@ -1,14 +1,30 @@
 // Connectivity-hub reporting, split from the general graph query tools.
 import {connList} from './graph-context.mjs'
+import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
 const isCompileTimeEdge = (edge) => edge?.typeOnly === true || edge?.compileOnly === true
+const NON_PRODUCT_CLASSES = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const sourceFileOf = (node) => String(node?.source_file || (node?.file_type === 'code' ? node?.id : '') || '').replace(/\\/g, '/')
 
-export function tGodNodes(g, {top_n = 10} = {}) {
+export function tGodNodes(g, {top_n = 10, include_classified = false} = {}, ctx = {}) {
     const n = Math.max(1, Math.min(100, Number(top_n) || 10))
+    const classifier = createPathClassifier(ctx.repoRoot || null)
+    const classificationByFile = new Map()
+    const isNonProduct = (node) => {
+        if (include_classified === true) return false
+        const file = sourceFileOf(node)
+        if (!file) return false
+        if (!classificationByFile.has(file)) classificationByFile.set(file, classifier.explain(file))
+        const info = classificationByFile.get(file)
+        return info.excluded || hasPathClass(info, ...NON_PRODUCT_CLASSES)
+    }
+    const excludedIds = new Set(g.nodes.filter(isNonProduct).map((node) => String(node.id)))
     const scored = g.nodes
+        .filter((node) => !excludedIds.has(String(node.id)))
         .map((node) => {
-            const rawOuts = g.out.get(String(node.id)) || []
-            const rawIns = g.inn.get(String(node.id)) || []
+            // Coupling from a suppressed artifact must not inflate an otherwise valid product hub.
+            const rawOuts = (g.out.get(String(node.id)) || []).filter((edge) => !excludedIds.has(String(edge.id)))
+            const rawIns = (g.inn.get(String(node.id)) || []).filter((edge) => !excludedIds.has(String(edge.id)))
             const outs = connList(rawOuts)
             const ins = connList(rawIns)
             const ownedMethods = new Set(rawOuts.filter((e) => e.relation === 'method').map((e) => String(e.id)))
@@ -54,5 +70,8 @@ export function tGodNodes(g, {top_n = 10} = {}) {
         ...occurrenceHotspots.map((r) =>
             `  ${r.node.label ?? r.node.id}  (${r.occurrences} occurrences across ${r.deg} unique neighbors; ${r.occurrences - r.deg} repeats)  [${r.node.id}]`
         ),
+        excludedIds.size > 0 && include_classified !== true
+            ? `${excludedIds.size} node(s) classified as tests/e2e/generated/build output/mocks/stories/docs/benchmarks/temp or explicitly excluded were omitted; pass include_classified:true to inspect them.`
+            : null,
     ].filter((line) => line != null).join('\n')
 }

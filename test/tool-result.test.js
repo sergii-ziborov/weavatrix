@@ -14,3 +14,21 @@ test('structured tool result mirrors valid JSON and preserves warnings', () => {
   assert.equal(normalized.structured.result.status, 'PASS')
   assert.equal(normalized.structured.warnings[0].code, 'GRAPH_STALE')
 })
+
+test('text output omits the structured envelope even for a large rich result', () => {
+  const oversized = Array.from({length: 1_000}, (_, index) => ({
+    path: `src/generated/file-${index}.js`,
+    churn: index,
+  }))
+  const normalized = normalizeToolResult({
+    toolName: 'git_history',
+    value: toolResult('Top 5 hotspots', {fileChurn: oversized, hotspots: oversized}),
+    args: {output_format: 'text'},
+    ctx: {repoRoot: 'C:/work/example'},
+    freshness: 'fresh',
+  })
+
+  assert.equal(normalized.structured, undefined)
+  assert.equal(normalized.text, 'Repository: example\nTop 5 hotspots')
+  assert.equal(normalized.text.includes('file-999.js'), false)
+})

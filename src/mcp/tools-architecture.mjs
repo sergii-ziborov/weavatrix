@@ -1,8 +1,25 @@
 // Executable target architecture for agents: read the active contract before a change, then run the
 // same deterministic verifier after it. No tool silently edits policy or accepts debt.
 import {contractForChange, loadArchitectureContract, normalizeArchitectureContract, verifyArchitecture} from '../analysis/architecture-contract.js'
+import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {detectRepoStack} from '../scan/discover.js'
 import {toolResult} from './tool-result.mjs'
+
+const PROVISIONAL_BUDGETS = Object.freeze({
+    runtimeCycles: 0,
+    maxFileLoc: 300,
+    maxFunctionLoc: 120,
+    maxCyclomatic: 15,
+    maxModuleFiles: 80,
+    minModuleCohesion: .5,
+    maxModuleBoundaryRatio: .65,
+})
+
+const remediation = () => ({
+    offlinePath: '.weavatrix/architecture.json',
+    hostedAction: 'Open Architecture -> choose intended style -> Save target & baseline',
+    nextTool: 'verify_architecture',
+})
 
 const stackIds = (repoRoot) => {
     try {
@@ -40,25 +57,62 @@ function starterContract(g) {
     return normalizeArchitectureContract({
         name: 'Proposed no-regressions baseline', style: 'custom', enforcement: 'ratchet', components,
         dependencyRules: [],
-        budgets: {runtimeCycles: 0, maxFileLoc: 300, maxFunctionLoc: 120, maxCyclomatic: 15, maxModuleFiles: 80, minModuleCohesion: .5, maxModuleBoundaryRatio: .65},
+        budgets: PROVISIONAL_BUDGETS,
         technologies: {required: [], forbidden: []}, exceptions: [], ratchet: {baseline: {fingerprints: [], metrics: {}}},
     })
 }
 
-function notConfiguredResult(g, action) {
-    const starter = starterContract(g)
+function notConfiguredResult(g, action, {includeStarter = false} = {}) {
+    const starter = includeStarter ? starterContract(g) : null
+    const starterText = starter
+        ? ` A source-free starter with ${starter.components.length} path territories is available in JSON output from this lookup.`
+        : ''
     return toolResult([
-        `Architecture ${action} is NOT_CONFIGURED — no target contract is active.`,
-        `A source-free starter was inferred from ${starter.components.length} path territories; review it before saving because folders are evidence, not semantic truth.`,
-        'Next: save it as .weavatrix/architecture.json (offline) or approve it in the hosted Architecture editor, then call verify_architecture.',
+        `Architecture ${action} is NOT_CONFIGURED — no target contract is active.${starterText}`,
+        'Next: save .weavatrix/architecture.json (offline) or approve a target in Hosted, then call verify_architecture.',
     ].join('\n'), {
         state: 'NOT_CONFIGURED',
-        remediation: {
-            offlinePath: '.weavatrix/architecture.json',
-            hostedAction: 'Open Architecture → choose intended style → Save target & baseline',
-            nextTool: 'verify_architecture',
-        },
-        starterContract: starter,
+        remediation: remediation(),
+        ...(starter ? {
+            starterSummary: {components: starter.components.length, budgets: starter.budgets},
+            starterContract: starter,
+        } : {}),
+    })
+}
+
+function classifyChangeFiles(files, repoRoot) {
+    const classifier = createPathClassifier(repoRoot)
+    const normalized = [...new Set((Array.isArray(files) ? files : [])
+        .slice(0, 200)
+        .map((file) => String(file || '').replace(/\\/g, '/').replace(/^\.\//, ''))
+        .filter((file) => file && !file.startsWith('../') && !file.includes('/../')))]
+        .sort((a, b) => a.localeCompare(b))
+    const testOnlyFiles = normalized.filter((file) => hasPathClass(classifier.explain(file), 'test', 'e2e'))
+    const testOnly = new Set(testOnlyFiles)
+    return {files: normalized, productFiles: normalized.filter((file) => !testOnly.has(file)), testOnlyFiles}
+}
+
+function provisionalPreflight(g, args, ctx) {
+    const surfaces = classifyChangeFiles(args?.files, ctx?.repoRoot)
+    const intent = String(args?.intent || '').slice(0, 500)
+    const budgetText = [
+        `no new runtime cycles (baseline ${PROVISIONAL_BUDGETS.runtimeCycles})`,
+        `file <= ${PROVISIONAL_BUDGETS.maxFileLoc} LOC`,
+        `function <= ${PROVISIONAL_BUDGETS.maxFunctionLoc} LOC`,
+        `cyclomatic <= ${PROVISIONAL_BUDGETS.maxCyclomatic}`,
+    ].join('; ')
+    return toolResult([
+        `Architecture preflight is NOT_CONFIGURED for ${surfaces.files.length} file(s)${intent ? ` — ${intent}` : ''}.`,
+        `Provisional no-regression guidance (not enforced policy): ${budgetText}.`,
+        `${surfaces.productFiles.length} product file(s); ${surfaces.testOnlyFiles.length} test-only file(s). Save a target contract to make these budgets enforceable.`,
+    ].join('\n'), {
+        state: 'NOT_CONFIGURED',
+        guidance: 'PROVISIONAL_BUDGETS',
+        enforceable: false,
+        intent,
+        ...surfaces,
+        provisionalBudgets: PROVISIONAL_BUDGETS,
+        remediation: remediation(),
     })
 }
 
@@ -68,7 +122,7 @@ export function tGetArchitectureContract(g, args, ctx) {
         const text = loaded.error
             ? `Architecture contract is invalid (${loaded.source || 'unknown'}): ${loaded.error}`
             : 'No target architecture contract is active.'
-        if (!loaded.error) return notConfiguredResult(g, 'lookup')
+        if (!loaded.error) return notConfiguredResult(g, 'lookup', {includeStarter: true})
         return toolResult(text, {state: 'ERROR', source: loaded.source, error: loaded.error})
     }
     const contract = loaded.contract
@@ -79,17 +133,19 @@ export function tGetArchitectureContract(g, args, ctx) {
     ].join('\n'), {state: 'ACTIVE', source: loaded.source, contract})
 }
 
-export function tPrepareChange(g, args, ctx) {
+export function tPrepareChange(g, args = {}, ctx) {
     const loaded = activeContract(ctx)
-    if (!loaded.contract) return notConfiguredResult(g, 'preflight')
+    if (!loaded.contract) return provisionalPreflight(g, args, ctx)
     const prepared = contractForChange(loaded.contract, args.files)
+    const surfaces = classifyChangeFiles(prepared.files, ctx?.repoRoot)
     const intent = String(args.intent || '').slice(0, 500)
     return toolResult([
         `Architecture preflight for ${prepared.files.length} file(s)${intent ? ` — ${intent}` : ''}.`,
         `Affected target components: ${prepared.components.join(', ') || '(unmapped)'}.`,
+        ...(surfaces.testOnlyFiles.length ? [`Test-only surface: ${surfaces.testOnlyFiles.join(', ')}.`] : []),
         `Applicable rules: ${prepared.rules.map((rule) => rule.id).join(', ') || '(none)'}.`,
         'Run verify_architecture after the edit; do not silently add an exception or rewrite the target contract.',
-    ].join('\n'), {state: 'READY', intent, contractHash: loaded.contract.contractHash, ...prepared})
+    ].join('\n'), {state: 'READY', intent, contractHash: loaded.contract.contractHash, ...prepared, productFiles: surfaces.productFiles, testOnlyFiles: surfaces.testOnlyFiles})
 }
 
 export function tVerifyArchitecture(g, args, ctx) {

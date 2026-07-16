@@ -84,7 +84,9 @@ named profiles for new registrations.
 
 ## Recipes
 
-- **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`.
+- **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`. Hub ranking
+  is production-only by default; use `include_classified:true` only when tests/generated/build
+  surfaces are deliberately part of the question.
 - **Refactor safety for one symbol**: `get_dependents` → `coverage_map` (low coverage × many
   dependents ⇒ write tests first) → `read_source`.
 - **Pre-PR review of your current changes**: `change_impact` (auto merge-base; includes uncommitted
@@ -114,14 +116,21 @@ named profiles for new registrations.
 - **API inventory**: `list_endpoints` (including Next.js App Router, Rust axum and actix-web).
 - **Cross-repository API impact**: ensure both repositories are in `list_known_repos`, then call
   `trace_api_contract backend=<uuid-or-label> clients=[<uuid-or-label>]`; narrow with `method`, `path`,
-  or backend `changed_files`. Treat unresolved/dynamic URLs as incomplete evidence, not a clean result.
+  or backend `changed_files`. `path` may be a segment-aligned fragment (`/query` can select
+  `/edgeAnalytics/query/...`), and bounded constant prefixes in template URLs are resolved. Treat
+  remaining unresolved/dynamic URLs as incomplete evidence, not a clean result.
 - **Target architecture before editing**: `get_architecture_contract` → `prepare_change` with the
   intended files → edit and rebuild → `verify_architecture`. A missing contract returns a starter
-  proposal, not an automatically approved architecture. Pull an owner-approved hosted contract only
-  when the user selected `hosted` and explicitly asks for it.
+  proposal from `get_architecture_contract output_format:"json"`, not an automatically approved
+  architecture. Without a contract, `prepare_change` still returns provisional no-regression
+  budgets, but they are guidance rather than enforceable policy. Pull an owner-approved hosted
+  contract only when the user selected `hosted` and explicitly asks for it.
 - **Behavioral architecture**: `git_history` ranks churn × connectivity hotspots and hidden
-  co-change coupling from bounded local numstat history. Use it as review evidence, not proof that two
-  files must be merged.
+  co-change coupling from bounded local numstat history. Always set `top_n`; it is enforced across
+  every returned structured collection and JSON reports per-collection truncation. Use it as review
+  evidence, not proof that two files must be merged.
+- **Machine output**: keep the default `output_format:"text"` for concise agent conversations; opt
+  into `output_format:"json"` only when a workflow consumes the full `weavatrix.tool.v1` envelope.
 - **Find code**: `search_code` (regex + glob) → `get_node` → `read_source`.
 - **Another repo**: `list_known_repos` → `open_repo <path>`
   (builds or upgrades the graph when needed; `build:false` probes without building).

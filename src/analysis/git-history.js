@@ -547,3 +547,45 @@ export function formatGitHistoryAnalytics(result, options = {}) {
   if (result.completeness.reasons.length) lines.push("", `Partial: ${result.completeness.reasons.join("; ")}.`);
   return lines.join("\n");
 }
+
+// Keep the full analytics object available to local callers, but never expose its unbounded
+// collections through an MCP response. `topN` is a per-collection ceiling, not merely a text
+// formatting hint. The accompanying page metadata lets machine consumers distinguish "there were
+// no more results" from "more evidence exists but was deliberately omitted".
+export function boundGitHistoryAnalytics(result, options = {}) {
+  const topN = boundedInteger(options.topN, 10, 1, 50);
+  const source = result && typeof result === "object" ? result : {};
+  const coupling = source.coupling && typeof source.coupling === "object" ? source.coupling : {};
+  const collections = {};
+  const cap = (name, value) => {
+    const items = Array.isArray(value) ? value : [];
+    const bounded = items.slice(0, topN);
+    collections[name] = {
+      total: items.length,
+      returned: bounded.length,
+      truncated: items.length > bounded.length,
+    };
+    return bounded;
+  };
+
+  const bounded = {
+    ...source,
+    limits: {...(source.limits || {}), topN},
+    fileChurn: cap("fileChurn", source.fileChurn),
+    hotspots: cap("hotspots", source.hotspots),
+    coupling: {
+      ...coupling,
+      observed: cap("coupling.observed", coupling.observed),
+      expectedTestSource: cap("coupling.expectedTestSource", coupling.expectedTestSource),
+      hidden: cap("coupling.hidden", coupling.hidden),
+    },
+  };
+  return {
+    result: bounded,
+    page: {
+      limit: topN,
+      truncated: Object.values(collections).some((entry) => entry.truncated),
+      collections,
+    },
+  };
+}

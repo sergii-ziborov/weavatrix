@@ -53,6 +53,29 @@ test("god_nodes preserves repeated-call complexity as a secondary lens", () => {
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test("god_nodes suppresses classified build/generated hubs unless explicitly requested", () => {
+  const generated = { id: "build/static/js/main.js#e@1", label: "e()", source_file: "build/static/js/main.js" };
+  const product = { id: "src/service.ts#serve@1", label: "serve()", source_file: "src/service.ts" };
+  const neighbors = Array.from({ length: 6 }, (_, index) => ({ id: `src/n${index}.ts`, label: `n${index}.ts`, source_file: `src/n${index}.ts` }));
+  const fx = graphFile({
+    nodes: [generated, product, ...neighbors],
+    links: [
+      ...neighbors.map((neighbor) => ({ source: generated.id, target: neighbor.id, relation: "calls" })),
+      { source: product.id, target: neighbors[0].id, relation: "calls" },
+      { source: product.id, target: neighbors[1].id, relation: "calls" },
+    ],
+  });
+  try {
+    const production = tGodNodes(fx.graph, { top_n: 1 }, { repoRoot: fx.dir });
+    assert.match(production.split("\n")[1], /serve\(\)/, "tracked build output cannot displace a product hub");
+    assert.doesNotMatch(production, /build\/static\/js/);
+    assert.match(production, /classified as tests\/e2e\/generated\/build output/);
+
+    const all = tGodNodes(fx.graph, { top_n: 1, include_classified: true }, { repoRoot: fx.dir });
+    assert.match(all.split("\n")[1], /e\(\)/, "classified hubs remain available through an explicit opt-in");
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
 test("query_graph keeps one strong seed per architecture intent", () => {
   const core = [
     { id: "src/main.tsx", label: "main.tsx", source_file: "src/main.tsx" },

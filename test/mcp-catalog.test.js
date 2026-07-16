@@ -93,7 +93,7 @@ test("query_graph schema exposes exact seed-file pinning", async () => {
   assert.equal(schema.properties.seed_files.maxItems, 12);
   assert.equal(schema.properties.augment_seeds.default, false);
   assert.equal(schema.properties.output_format.enum[1], "json");
-  assert.equal(api.byName.get("query_graph").outputSchema.type, "object");
+  assert.equal(api.byName.get("query_graph").outputSchema, undefined);
 });
 
 test("change_impact schema exposes bounded diff evidence and conservative file hints", async () => {
@@ -104,7 +104,7 @@ test("change_impact schema exposes bounded diff evidence and conservative file h
   assert.equal(schema.properties.diff.maxLength, 2 * 1024 * 1024);
   assert.equal(schema.properties.files.maxItems, 500);
   assert.match(schema.properties.files.description, /conservatively/i);
-  assert.equal(tool.outputSchema.type, "object");
+  assert.equal(tool.outputSchema, undefined);
 });
 
 test("run_audit schema distinguishes immutable baseline debt from changed-file scope", async () => {

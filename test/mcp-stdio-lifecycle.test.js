@@ -129,6 +129,10 @@ test('MCP stdio graph_stats owns the full -> incremental -> none graph lifecycle
         assert.equal(third.structuredContent.graph.update, 'none')
         assert.equal(third.structuredContent.graph.changedFiles, 0)
         assert.equal(statSync(graphPath).mtimeMs, refreshedMtime, 'a no-op refresh must not rewrite graph.json')
+
+        const compact = await server.request('tools/call', {name: 'graph_stats', arguments: {output_format: 'text'}})
+        assert.equal(compact.structuredContent, undefined, 'text mode must not attach a duplicate structured payload')
+        assert.match(compact.content[0].text, /^Repository: repo\n/)
     } finally {
         await server.stop()
         rmSync(parent, {recursive: true, force: true})
