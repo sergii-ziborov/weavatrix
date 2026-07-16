@@ -6,6 +6,7 @@ import {detectRepoStack} from '../scan/discover.js'
 import {collectInstalled} from '../security/installed.js'
 import {STATE, hashSnapshot} from './evidence-snapshot.common.mjs'
 import {buildArchitectureSection} from './evidence-snapshot.architecture.mjs'
+import {buildDuplicatesSection} from './evidence-snapshot.duplicates.mjs'
 import {buildHealthSection} from './evidence-snapshot.health.mjs'
 import {buildPackagesSection, buildTechnologiesSection} from './evidence-snapshot.inventory.mjs'
 import {buildStructureEvidence} from './evidence-snapshot.structure.mjs'
@@ -33,9 +34,10 @@ export async function createEvidenceSnapshot({repoRoot, graph}) {
 
     const sections = {
         architecture: buildArchitectureSection(inputGraph, aggregate, audit, structure),
+        duplicates: buildDuplicatesSection(repoRoot, inputGraph),
         health: buildHealthSection(inputGraph, audit),
         technologies: buildTechnologiesSection(stack, stackError),
-        packages: buildPackagesSection(installedResult, installedError, inputGraph, audit),
+        packages: buildPackagesSection(installedResult, installedError, inputGraph, audit, repoRoot),
     }
     const sectionStates = Object.values(sections).map((section) => section.state)
     const state = sectionStates.every((value) => value === STATE.ERROR)

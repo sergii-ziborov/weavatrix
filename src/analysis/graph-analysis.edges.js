@@ -1,6 +1,9 @@
+import { communityTerritoryOf } from "../graph/community.js";
+
 // Stable folder territories used by module_map. Nested package source roots keep the first directory below
 // `src`; otherwise a monorepo's entire crate/app would collapse into one module with no visible dependencies.
 export function folderModuleOf(file) {
+  if (/\.java$/i.test(String(file || ""))) return communityTerritoryOf(file);
   const dirs = String(file || "").split(/[\\/]/).filter(Boolean).slice(0, -1);
   if (!dirs.length) return "(root)";
   const sourceRoot = dirs.lastIndexOf("src");

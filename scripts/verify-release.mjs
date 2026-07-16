@@ -6,8 +6,6 @@ const pkg = readJson("package.json");
 const lock = readJson("package-lock.json");
 const manifest = readJson("mcpb/manifest.json");
 const server = readJson("server.json");
-const site = readFileSync(resolve("site/index.html"), "utf8");
-const siteVersion = site.match(/"softwareVersion"\s*:\s*"([^"]+)"/)?.[1];
 const expected = pkg.version;
 const releaseNotesPath = resolve("docs", "releases", `v${expected}.md`);
 
@@ -17,7 +15,6 @@ const versions = {
   "MCPB manifest": manifest.version,
   "MCP Registry server": server.version,
   "MCP Registry npm package": server.packages?.[0]?.version,
-  "website metadata": siteVersion,
 };
 for (const [label, version] of Object.entries(versions)) {
   if (version !== expected) throw new Error(`${label} version ${version || "(missing)"} does not match package ${expected}`);
@@ -28,7 +25,7 @@ if (!readFileSync(releaseNotesPath, "utf8").trim()) throw new Error(`release not
 
 if (pkg.mcpName !== server.name) throw new Error("package mcpName and server.json name differ");
 if (manifest.tools_generated !== true) throw new Error("MCPB manifest must declare tools_generated");
-const defaultCaps = "graph,search,source,health,build,retarget";
+const defaultCaps = "offline";
 if (manifest.user_config?.capabilities?.default !== defaultCaps) throw new Error("MCPB default capabilities drifted");
 if (server.packages?.[0]?.packageArguments?.[1]?.default !== defaultCaps) throw new Error("Registry default capabilities drifted");
 

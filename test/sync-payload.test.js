@@ -46,6 +46,22 @@ function minimalEvidence(overrides = {}) {
         cycles: [],
         boundaryViolations: [],
       },
+      duplicates: {
+        state: 'COMPLETE',
+        verdict: 'UNKNOWN',
+        thresholds: {
+          clones: {mode: 'renamed', minSimilarityPercent: 80, minTokens: 50},
+          divergence: {sameName: true, maxSimilarityPercent: 45, minTokens: 50, maxImplementationsPerName: 12},
+        },
+        completeness: {
+          fragments: {total: 0, eligible: 0, filtered: 0},
+          cloneGroups: emptyCompleteness,
+          divergenceCandidates: emptyCompleteness,
+          reasons: [],
+        },
+        cloneGroups: [],
+        divergenceCandidates: [],
+      },
       health: {
         state: 'PARTIAL',
         verdict: 'UNKNOWN',
@@ -88,11 +104,24 @@ function minimalEvidence(overrides = {}) {
         completeness: {
           inventory: emptyCompleteness,
           directUsage: emptyCompleteness,
-          reasons: ['TRANSITIVE_PACKAGE_EDGES_NOT_AVAILABLE'],
+          dependencyGraphNodes: emptyCompleteness,
+          dependencyGraphEdges: emptyCompleteness,
+          reasons: ['OPTIONAL_CHECKS_INCOMPLETE'],
         },
         checks: {osv: 'NOT_CHECKED', malware: 'NOT_APPLICABLE'},
         inventory: [],
         directUsage: [],
+        dependencyGraph: {
+          state: 'COMPLETE', ecosystem: 'npm', lockfile: 'package-lock.json', lockfileVersion: 3, root: '(root)',
+          completeness: {
+            nodes: emptyCompleteness,
+            edges: emptyCompleteness,
+            declarations: {total: 0, resolved: 0, unresolved: 0, local: 0, optionalMissing: 0},
+            reasons: [],
+          },
+          nodes: [],
+          edges: [],
+        },
       },
     },
     ...overrides,
@@ -204,10 +233,74 @@ test('sync payload v3: exposes only the versioned graph and evidence envelope', 
   assert.notEqual(payload.evidence.snapshotHash, 'a'.repeat(64), 'wire hash covers the sanitized evidence')
   assert.deepEqual(Object.keys(payload.evidence.sections).sort(), [
     'architecture',
+    'duplicates',
     'health',
     'packages',
     'technologies',
   ])
+})
+
+test('sync payload v3: duplicate evidence is source-free and strictly bounded', () => {
+  const secret = 'PRIVATE_DUPLICATE_SOURCE_4d21'
+  const absolute = 'C:\\Users\\Alice\\private.js'
+  const evidence = minimalEvidence()
+  const member = (groupIndex, memberIndex) => ({
+    file: `src/module-${groupIndex}/file-${memberIndex}.js`,
+    startLine: memberIndex * 10 + 1,
+    endLine: memberIndex * 10 + 9,
+    tokens: 80,
+    graphNodeId: `src/module-${groupIndex}/file-${memberIndex}.js#run@${memberIndex * 10 + 1}`,
+    source_text: secret,
+    snippet: secret,
+  })
+  evidence.sections.duplicates = {
+    state: 'COMPLETE',
+    verdict: 'UNKNOWN',
+    source_text: secret,
+    thresholds: {clones: {mode: 'strict', minSimilarityPercent: 1, minTokens: 1}},
+    completeness: {
+      fragments: {total: 5000, eligible: 2000, filtered: 3000},
+      cloneGroups: {total: 105, returned: 105, truncated: false},
+      divergenceCandidates: {total: 105, returned: 105, truncated: false},
+      reasons: [],
+    },
+    cloneGroups: Array.from({length: 105}, (_, index) => ({
+      id: (index + 1).toString(16).padStart(24, '0'),
+      memberCount: 15,
+      totalTokens: 1200,
+      strongestSimilarity: 100,
+      weakestLinkedSimilarity: 82,
+      members: Array.from({length: 15}, (_, memberIndex) => member(index, memberIndex)),
+      source_text: secret,
+      absolutePath: absolute,
+    })),
+    divergenceCandidates: Array.from({length: 105}, (_, index) => ({
+      id: (index + 1000).toString(16).padStart(24, '0'),
+      symbol: `computePlan${index}`,
+      similarity: 20,
+      totalTokens: 160,
+      members: [member(index + 200, 0), member(index + 200, 1)],
+      snippet: secret,
+    })),
+  }
+
+  const section = createSyncPayloadV3(graph(), evidence).evidence.sections.duplicates
+  assert.equal(section.state, 'PARTIAL')
+  assert.deepEqual(section.thresholds, {
+    clones: {mode: 'renamed', minSimilarityPercent: 80, minTokens: 50},
+    divergence: {sameName: true, maxSimilarityPercent: 45, minTokens: 50, maxImplementationsPerName: 12},
+  })
+  assert.equal(section.cloneGroups.length, 100)
+  assert.ok(section.cloneGroups.every((group) => group.members.length === 12 && group.membersTruncated))
+  assert.equal(section.divergenceCandidates.length, 100)
+  assert.equal(section.completeness.cloneGroups.truncated, true)
+  assert.equal(section.completeness.divergenceCandidates.truncated, true)
+  assert.ok(section.completeness.reasons.includes('CLONE_MEMBERS_TRUNCATED'))
+  const wire = JSON.stringify(section)
+  assert.equal(wire.includes(secret), false)
+  assert.equal(wire.includes(absolute), false)
+  assert.equal(wire.includes('source_text'), false)
+  assert.equal(wire.includes('snippet'), false)
 })
 
 test('sync payload v3: normalizes repository paths and enforces node identity', () => {
@@ -296,6 +389,47 @@ test('sync payload v3: unknown graph and evidence fields cannot carry source or 
   assert.equal(wire.includes(absolute), false)
   assert.equal(wire.includes('source_text'), false)
   assert.equal(wire.includes('absolutePath'), false)
+})
+
+test('sync payload v3: package dependency evidence is allowlisted and referentially bounded', () => {
+  const secret = 'PRIVATE_PACKAGE_GRAPH_SECRET_7721'
+  const evidence = minimalEvidence()
+  const id = 'npm:left-pad@1.3.0:0123456789ab'
+  const scopedId = 'npm:@scope/tool@2.0.0:abcdef012345'
+  evidence.sections.packages.dependencyGraph = {
+    state: 'COMPLETE', ecosystem: 'npm', lockfile: 'package-lock.json', lockfileVersion: 3, root: '(root)',
+    absolutePath: 'C:\\Users\\Alice\\private.json', source_text: secret,
+    completeness: {
+      nodes: {total: 2, returned: 2, truncated: false},
+      edges: {total: 2, returned: 2, truncated: false},
+      declarations: {total: 2, resolved: 1, unresolved: 1, local: 0, optionalMissing: 0},
+      reasons: ['UNRESOLVED_LOCKFILE_DEPENDENCIES'],
+    },
+    nodes: [
+      {id, name: 'left-pad', version: '1.3.0', direct: true, source_text: secret},
+      {id: scopedId, name: '@scope/tool', version: '2.0.0'},
+      {id: `npm:bad@1.0.0:${secret}:0123456789ab`, name: 'bad', version: '1.0.0'},
+    ],
+    edges: [
+      {from: '(root)', to: id, kind: 'runtime', source_text: secret},
+      {from: id, to: scopedId, kind: 'optional-peer'},
+      {from: '(root)', to: 'npm:missing@1.0.0:abcdefabcdef', kind: 'runtime'},
+    ],
+  }
+
+  const payload = createSyncPayloadV3(graph(), evidence)
+  assert.deepEqual(payload.evidence.sections.packages.dependencyGraph.nodes, [
+    {id, name: 'left-pad', version: '1.3.0', direct: true, dev: false, optional: false, peer: false},
+    {id: scopedId, name: '@scope/tool', version: '2.0.0', direct: false, dev: false, optional: false, peer: false},
+  ])
+  assert.deepEqual(payload.evidence.sections.packages.dependencyGraph.edges, [
+    {from: '(root)', to: id, kind: 'runtime'},
+    {from: id, to: scopedId, kind: 'optional-peer'},
+  ])
+  const wire = JSON.stringify(payload)
+  assert.equal(wire.includes(secret), false)
+  assert.equal(wire.includes('C:\\Users\\Alice'), false)
+  assert.equal(wire.includes('source_text'), false)
 })
 
 test('sync payload v3: strips embedded host paths and file URI external specifiers', () => {

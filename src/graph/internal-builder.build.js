@@ -9,11 +9,19 @@ import { analyzeSyntaxComplexity } from "../analysis/source-complexity.js";
 import { Parser, Query, GRAMMARS, LANGS, EXT_LANG, FAMILY, isDataFile, isDocFile, MAX_PARSE_BYTES, ensureParser, walk } from "./internal-builder.langs.js";
 import { buildResolvers } from "./internal-builder.resolvers.js";
 import { addJavaReferences } from "./internal-builder.java.js";
-import { communityTerritoryOf } from "./community.js";
+import { assignDeterministicCommunities } from "./community.js";
+import { resolveJsBarrels } from "./internal-builder.barrels.js";
+import { snapshotRepository } from "./incremental-refresh.js";
 
 // Parse a repo directory into a graph-builder-compatible { nodes, links } graph.
 export async function buildInternalGraph(repoDir, opts = {}) {
-  const files = walk(repoDir);
+  const rel = (p) => relative(repoDir, p).replace(/\\/g, "/");
+  const allFiles = walk(repoDir);
+  const snapshot = snapshotRepository(repoDir, allFiles);
+  const requestedFiles = Array.isArray(opts.includeFiles)
+    ? new Set(opts.includeFiles.map((file) => String(file).replace(/\\/g, "/").replace(/^\.\//, "")))
+    : null;
+  const files = requestedFiles ? allFiles.filter((file) => requestedFiles.has(rel(file))) : allFiles;
   // Lazy grammar loading: compile only the WASMs for languages this repo actually contains.
   const wanted = new Set();
   for (const f of files) { const g = EXT_LANG[extname(f)]; if (g) wanted.add(g); }
@@ -23,13 +31,31 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   const caps = (grammar, src, root) => { const query = src && q(grammar, src); return query ? query.captures(root) : []; };
   const field = (n, f) => (n && n.childForFieldName ? n.childForFieldName(f) : null);
 
-  const rel = (p) => relative(repoDir, p).replace(/\\/g, "/");
-  const fileSet = new Set(files.map(rel));
+  const fileSet = new Set(allFiles.map(rel));
   const nodes = []; const links = []; const nodeIds = new Set(); const nodeById = new Map();
   const addNode = (n) => { if (!nodeIds.has(n.id)) { nodeIds.add(n.id); nodes.push(n); nodeById.set(n.id, n); } };
   const perFileSymbols = new Map();
   const symByFileName = new Map();
   const importedLocals = new Map();
+  const jsExports = new Map();
+  if (requestedFiles && opts.baseGraph?.jsExportRecords) {
+    for (const [file, records] of Object.entries(opts.baseGraph.jsExportRecords)) {
+      if (!requestedFiles.has(file) && Array.isArray(records)) jsExports.set(file, records.map((record) => ({ ...record })));
+    }
+  }
+  if (requestedFiles && Array.isArray(opts.baseGraph?.nodes)) {
+    for (const node of opts.baseGraph.nodes) {
+      const id = String(node?.id || "");
+      const file = String(node?.source_file || (id.includes("#") ? id.slice(0, id.indexOf("#")) : id)).replace(/\\/g, "/");
+      if (!id.includes("#") || requestedFiles.has(file) || !fileSet.has(file)) continue;
+      const match = id.match(/#([A-Za-z_$][\w$]*)@\d+/);
+      if (!match) continue;
+      let names = symByFileName.get(file);
+      if (!names) symByFileName.set(file, (names = new Map()));
+      if (!names.has(match[1])) names.set(match[1], id);
+      nodeById.set(id, node);
+    }
+  }
   // Bare-package imports (axios, node:fs, @scope/x) — the graph can't resolve them to a repo file, but
   // dependency analysis NEEDS them (unused/missing deps). Additive top-level array; nodes/links untouched.
   const externalImports = [];
@@ -52,6 +78,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     // giant / generated / minified file → keep the file NODE but don't parse symbols (avoids a wedged parse)
     if (code.length > MAX_PARSE_BYTES) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); continue; }
     if ((++_parsed % 24) === 0) await new Promise((r) => setImmediate(r)); // breathe: let the UI paint between chunks
+    if (typeof opts.onParseFile === "function") opts.onParseFile(fileRel);
     const parser = new Parser(); parser.setLanguage(langs[grammar]);
     let tree; try { tree = parser.parse(code); } catch { continue; }
 
@@ -88,6 +115,12 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       return id;
     };
     const imports = new Map(); importedLocals.set(fileRel, imports);
+    const recordJsExport = (record) => {
+      if (!record) return;
+      const records = jsExports.get(fileRel) || [];
+      records.push(record);
+      jsExports.set(fileRel, records);
+    };
     const addImportEdge = (tgt, meta = {}) => {
       if (!tgt || tgt === fileRel) return;
       links.push({
@@ -117,7 +150,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     // Post-hoc export flag (export {a}, export default X, CJS module.exports) — declarations are flagged at addSym time.
     const markExported = (name) => { const id = moduleNameToId.get(name); const n = id && nodeById.get(id); if (n) n.exported = true; };
 
-    try { lang.pass1({ grammar, tree, fileRel, code, caps, field, addSym, addNode, links, nodeIds, syms, nameToId, imports, addImportEdge, addExternalImport, markExported, fileSet, ...resolvers }); }
+    try { lang.pass1({ grammar, tree, fileRel, code, caps, field, addSym, addNode, links, nodeIds, syms, nameToId, imports, addImportEdge, addExternalImport, markExported, recordJsExport, fileSet, ...resolvers }); }
     catch (e) { /* one bad file never sinks the whole build */ void e; }
 
     syms.sort((a, b) => a.start - b.start);
@@ -140,6 +173,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     let dm = goDirSymbols.get(d); if (!dm) goDirSymbols.set(d, (dm = new Map()));
     for (const [n, id] of m) if (!dm.has(n)) dm.set(n, id);
   }
+  const { resolveNamespaceMember } = resolveJsBarrels({ jsExports, importedLocals, links });
   // Exact source ranges can overlap (a named function nested inside another function). Attribute a call
   // to the innermost matching symbol, not whichever outer declaration happened to be added first.
   const enclosing = (fileRel, line) => {
@@ -154,7 +188,11 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     const local = symByFileName.get(fileRel); if (local && local.has(name)) return local.get(name);
     if (sharesDirScope(fileRel)) { const d = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : ""; const dm = goDirSymbols.get(d); if (dm && dm.has(name)) return dm.get(name); }
     const imp = importedLocals.get(fileRel) && importedLocals.get(fileRel).get(name);
-    if (imp && imp.targetFile) { const tf = symByFileName.get(imp.targetFile); if (tf && tf.has(imp.imported)) return tf.get(imp.imported); }
+    if (imp && imp.targetFile) {
+      const targetFile = imp.originFile || imp.targetFile;
+      const importedName = imp.originName || imp.imported;
+      const tf = symByFileName.get(targetFile); if (tf && tf.has(importedName)) return tf.get(importedName);
+    }
     return null;
   };
   const javaTypeKinds = new Set(["class", "interface", "enum", "record", "annotation"]);
@@ -203,6 +241,18 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     // JSX is a real symbol use even though it is not a call_expression. Resolve imported components to their
     // declaration so component fan-in and unused-export checks do not claim `<SettingsView />` is unreferenced.
     if (FAMILY[grammar] === "js") {
+      // Namespace calls (`ui.run()`) need the member name before an export-star facade can be resolved.
+      for (const cap of caps(grammar, `(call_expression function: (member_expression) @memberCall)`, tree.rootNode)) {
+        const object = field(cap.node, "object"), property = field(cap.node, "property");
+        if (!object || object.type !== "identifier" || !property) continue;
+        const imp = importedLocals.get(fileRel)?.get(object.text);
+        if (!imp || imp.imported !== "*" || imp.typeOnly) continue;
+        const origin = resolveNamespaceMember(fileRel, imp, property.text, "call");
+        if (origin.status !== "resolved") continue;
+        const target = symByFileName.get(origin.origin.file)?.get(origin.origin.name);
+        const caller = enclosing(fileRel, cap.node.startPosition.row + 1);
+        if (target && caller && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED" });
+      }
       for (const cap of caps(grammar, `[
         (jsx_opening_element name: (_) @jsx)
         (jsx_self_closing_element name: (_) @jsx)
@@ -213,9 +263,14 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         if (parts.length === 1 && !/^[A-Z_$]/.test(localName)) continue; // undotted lowercase tags are platform/intrinsic elements
         const imp = importedLocals.get(fileRel)?.get(localName);
         if (!imp || !imp.targetFile || imp.typeOnly) continue;
-        const targetSymbols = symByFileName.get(imp.targetFile);
+        let targetFile = imp.originFile || imp.targetFile;
+        let importedName = imp.originName || imp.imported;
+        if (imp.imported === "*" && parts.length > 1) {
+          const origin = resolveNamespaceMember(fileRel, imp, parts[parts.length - 1], "jsx");
+          if (origin.status === "resolved") { targetFile = origin.origin.file; importedName = origin.origin.name; }
+        }
+        const targetSymbols = symByFileName.get(targetFile);
         if (!targetSymbols) continue;
-        const importedName = imp.imported === "*" && parts.length > 1 ? parts[parts.length - 1] : imp.imported;
         const target = targetSymbols.get(importedName) || targetSymbols.get(localName);
         if (!target) continue;
         const owner = enclosing(fileRel, cap.node.startPosition.row + 1);
@@ -261,18 +316,34 @@ export async function buildInternalGraph(repoDir, opts = {}) {
 
   // community = folder bucket (top 2 path parts) — deterministic, mirrors the folder-based module grouping the
   // app already uses (graph-builder-analysis.js). Populates Modules/community cards without a heavy clustering pass.
-  const commOf = new Map(); let commSeq = 0;
-  for (const n of nodes) { const territory = communityTerritoryOf(n.source_file); if (!commOf.has(territory)) commOf.set(territory, commSeq++); n.community = commOf.get(territory); }
+  assignDeterministicCommunities(nodes);
 
   // extImportsV: bump when the externalImports schema/coverage changes (v2 = go/python ecosystems) —
   // deps-engine rebuilds in memory when a saved graph is older than this.
   // edgeTypesV 2 adds language-neutral compile-only edges (currently Rust mod/use/re-export) on top
   // of v1's TypeScript typeOnly classification.
-  return { nodes, links, externalImports, extImportsV: 2, edgeTypesV: 2, complexityV: 1, repoBoundaryV: 1 };
+  return {
+    nodes,
+    links,
+    externalImports,
+    extImportsV: 2,
+    edgeTypesV: 2,
+    complexityV: 1,
+    repoBoundaryV: 1,
+    barrelResolutionV: 1,
+    extractorSchemaV: 1,
+    jsExportRecords: Object.fromEntries([...jsExports.entries()].sort(([a], [b]) => a.localeCompare(b))),
+    fileHashes: snapshot.fileHashes,
+    fileExportSignatures: snapshot.fileExportSignatures,
+    controlHashes: snapshot.controlHashes,
+    graphRevision: snapshot.revision,
+    ...(requestedFiles ? { incrementalScope: true } : {}),
+  };
 }
 
 // Build + write graph.json to outPath (creating the dir). Returns { ok, nodes, links, graphJson }.
 export async function writeInternalGraph(repoDir, outPath, opts = {}) {
+  if (Array.isArray(opts.includeFiles)) throw new Error("refusing to write a scoped incremental graph as a complete graph");
   const graph = await buildInternalGraph(repoDir, opts);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(graph), "utf8");

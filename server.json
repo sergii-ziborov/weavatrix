@@ -6,14 +6,14 @@
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.1.4",
+  "version": "0.2.0",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.1.4",
+      "version": "0.2.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
@@ -26,22 +26,22 @@
         {
           "type": "positional",
           "valueHint": "capabilities",
-          "description": "Full comma-separated set replacing the default; allowed groups are graph,search,source,health,build,retarget,online (omit retarget to pin one repository; add online only for network tools)",
+          "description": "Security profile (offline, pinned, osv, hosted, full) or exact comma-separated groups graph,search,source,health,build,retarget,crossrepo,advisories,hosted; legacy online aliases advisories plus hosted",
           "format": "string",
-          "default": "graph,search,source,health,build,retarget",
+          "default": "offline",
           "isRequired": false
         }
       ],
       "environmentVariables": [
         {
           "name": "WEAVATRIX_SYNC_URL",
-          "description": "Optional endpoint used only when online is enabled and sync_graph is called",
+          "description": "Optional endpoint used only by explicit hosted-profile sync_graph or pull_architecture_contract calls",
           "format": "string",
           "isRequired": false
         },
         {
           "name": "WEAVATRIX_SYNC_TOKEN",
-          "description": "Optional bearer token for the configured graph sync endpoint",
+          "description": "Optional bearer token for the configured hosted endpoint; required by pull_architecture_contract",
           "format": "string",
           "isSecret": true,
           "isRequired": false

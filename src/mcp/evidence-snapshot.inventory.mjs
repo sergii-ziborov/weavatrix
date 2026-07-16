@@ -2,6 +2,7 @@ import {
     CAPS, STATE, VERDICT, addIf, bounded, compareText, metadataString, normalizeCheckState,
     repoRelativePath, safeToken,
 } from './evidence-snapshot.common.mjs'
+import {buildPackageDependencyGraph} from './evidence-snapshot.package-graph.mjs'
 
 const FIXED_PACKAGE_SOURCES = new Set([
     'package-lock', 'yarn-lock', 'requirements', 'venv', 'poetry-lock', 'uv-lock',
@@ -94,15 +95,21 @@ function buildDirectUsage(externalImports) {
     }).sort((a, b) => compareText(a.ecosystem, b.ecosystem) || compareText(a.name, b.name))
 }
 
-export function buildPackagesSection(installedResult, installedError, graph, audit) {
+export function buildPackagesSection(installedResult, installedError, graph, audit, repoRoot) {
+    const dependencyGraph = buildPackageDependencyGraph(repoRoot)
+    const dependencyGraphCounts = {
+        dependencyGraphNodes: dependencyGraph.completeness.nodes,
+        dependencyGraphEdges: dependencyGraph.completeness.edges,
+    }
     if (installedError) {
         return {
             state: STATE.ERROR,
             verdict: VERDICT.UNKNOWN,
-            completeness: {reasons: ['PACKAGE_INVENTORY_ERROR']},
+            completeness: {...dependencyGraphCounts, reasons: ['PACKAGE_INVENTORY_ERROR']},
             checks: {osv: normalizeCheckState(audit?.checks?.osv?.status), malware: normalizeCheckState(audit?.checks?.malware?.status)},
             inventory: [],
             directUsage: [],
+            dependencyGraph,
         }
     }
     const inventory = bounded((installedResult?.installed || []).map(sanitizePackage).filter(Boolean)
@@ -112,19 +119,30 @@ export function buildPackagesSection(installedResult, installedError, graph, aud
     const usage = bounded(buildDirectUsage(graph?.externalImports), CAPS.directUsage)
     const packageRules = new Set(['unused-dep', 'missing-dep', 'duplicate-dep', 'lockfile-drift', 'known-vuln', 'malicious-package', 'typosquat'])
     const packageFailure = (audit?.findings || []).some((finding) => packageRules.has(finding?.rule))
+    const checks = {
+        osv: normalizeCheckState(audit?.checks?.osv?.status),
+        malware: normalizeCheckState(audit?.checks?.malware?.status),
+    }
+    const reasons = []
+    if (inventory.completeness.truncated) reasons.push('PACKAGE_INVENTORY_TRUNCATED')
+    if (usage.completeness.truncated) reasons.push('DIRECT_USAGE_TRUNCATED')
+    if (Object.values(checks).some((value) => ![STATE.COMPLETE, STATE.NOT_APPLICABLE].includes(value))) {
+        reasons.push('OPTIONAL_CHECKS_INCOMPLETE')
+    }
+    if ([STATE.PARTIAL, STATE.ERROR].includes(dependencyGraph.state)) reasons.push('PACKAGE_DEPENDENCY_GRAPH_PARTIAL')
+    const state = reasons.length ? STATE.PARTIAL : STATE.COMPLETE
     return {
-        state: STATE.PARTIAL,
-        verdict: packageFailure ? VERDICT.FAIL : VERDICT.UNKNOWN,
+        state,
+        verdict: packageFailure ? VERDICT.FAIL : state === STATE.COMPLETE ? VERDICT.PASS : VERDICT.UNKNOWN,
         completeness: {
             inventory: inventory.completeness,
             directUsage: usage.completeness,
-            reasons: ['TRANSITIVE_PACKAGE_EDGES_NOT_AVAILABLE'],
+            ...dependencyGraphCounts,
+            reasons,
         },
-        checks: {
-            osv: normalizeCheckState(audit?.checks?.osv?.status),
-            malware: normalizeCheckState(audit?.checks?.malware?.status),
-        },
+        checks,
         inventory: inventory.items,
         directUsage: usage.items,
+        dependencyGraph,
     }
 }

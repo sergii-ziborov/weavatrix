@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
-  "long_description": "Weavatrix builds a dependency graph of selected local repositories (tree-sitter WASM, no native toolchain) and serves it over MCP: change_impact, get_dependents, run_audit, find_duplicates, coverage_map, list_endpoints and more — 23 tools available, with 21 offline tools enabled by default. Repository retargeting is an explicit local tool call; the two network-capable tools remain a separate opt-in capability group.",
+  "long_description": "Weavatrix builds dependency graphs of local repositories (tree-sitter WASM, no native toolchain) and serves 32 MCP tools for impact analysis, dead-code review, health, clones, architecture contracts, git-history evidence, and cross-repository API tracing. The default offline profile enables 29 local tools and no HTTP tools; pinned, osv, and hosted/full profiles tighten or explicitly expand that boundary.",
   "author": {
     "name": "Sergii Ziborov",
     "url": "https://weavatrix.com"
@@ -36,26 +36,26 @@
     "repo_root": {
       "type": "directory",
       "title": "Repository to analyze",
-      "description": "The initial local Git repository. open_repo can switch to another repository through an explicit offline tool call; omit retarget from a custom capability list to pin this boundary.",
+      "description": "The initial local Git repository. The offline profile can switch only through an explicit local open_repo call; select pinned to make this boundary immutable.",
       "required": true
     },
     "capabilities": {
       "type": "string",
-      "title": "Capability groups",
-      "description": "Full comma-separated capability set; replaces the default. Allowed: graph,search,source,health,build,retarget,online. Pin one repo with graph,search,source,health,build; add online only when network tools are wanted.",
-      "default": "graph,search,source,health,build,retarget",
+      "title": "Security profile or capability groups",
+      "description": "Use one profile: offline (default, no HTTP), pinned (no HTTP, repo switching, or cross-repo graph access), osv (explicit advisory refresh), hosted/full (owner-authenticated sync and contract pull). Advanced: exact comma-separated graph,search,source,health,build,retarget,crossrepo,advisories,hosted. Legacy online remains an alias for advisories,hosted.",
+      "default": "offline",
       "required": true
     },
     "sync_url": {
       "type": "string",
       "title": "Optional graph sync endpoint",
-      "description": "Endpoint you configure and control. Used only when online is enabled and sync_graph is called.",
+      "description": "Endpoint you configure and control. Used only by explicit hosted-profile sync_graph or pull_architecture_contract calls.",
       "required": false
     },
     "sync_token": {
       "type": "string",
       "title": "Optional graph sync token",
-      "description": "Bearer token sent only to the configured sync endpoint by sync_graph.",
+      "description": "Bearer token sent only to the configured hosted endpoint by sync_graph or pull_architecture_contract.",
       "sensitive": true,
       "required": false
     }

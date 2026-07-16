@@ -4,11 +4,15 @@ import {
   isTestPath,
   filterGraphForMode,
   filterGraphByScope,
+  graphHomeDir,
   graphOutDirForRepo,
-  graphOutDirForModule
+  graphOutDirForModule,
+  graphStorageKey,
 } from "../src/graph/layout.js";
 import { repoBaseName } from "../src/scan/discover.js";
 import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 test("isTestPath: recognises common test file conventions", () => {
   assert.equal(isTestPath("src/foo.test.js"), true);
@@ -99,6 +103,25 @@ test("filterGraphForMode: 'tests-only' prunes external imports from unrelated pr
   assert.deepEqual(g.externalImports.map((item) => item.spec), ["cypress", "react"]);
 });
 
+test("filterGraphForMode honors repository-defined test classification", () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-graph-classify-"));
+  try {
+    writeFileSync(join(repo, ".weavatrix.json"), JSON.stringify({ classify: { test: ["quality/**"] } }));
+    const input = {
+      nodes: [
+        { id: "quality/probe.ts", source_file: "quality/probe.ts" },
+        { id: "src/a.ts", source_file: "src/a.ts" },
+      ],
+      links: [{ source: "quality/probe.ts", target: "src/a.ts", relation: "imports" }],
+      externalImports: [{ file: "quality/probe.ts", spec: "vitest" }, { file: "src/a.ts", spec: "react" }],
+    };
+    const filtered = filterGraphForMode(input, "no-tests", { repoRoot: repo });
+    assert.deepEqual(filtered.nodes.map((node) => node.id), ["src/a.ts"]);
+    assert.deepEqual(filtered.links, []);
+    assert.deepEqual(filtered.externalImports, [{ file: "src/a.ts", spec: "react" }]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test("filterGraphByScope: keeps only nodes under the prefix and prunes dangling links", () => {
   const g = filterGraphByScope(
     {
@@ -127,14 +150,20 @@ test("filterGraphByScope: normalises backslash paths before matching", () => {
   assert.deepEqual(g.nodes.map((n) => n.id), ["x"]);
 });
 
-test("graphOutDir helpers place graphs in the sibling weavatrix-graphs folder", () => {
+test("graphOutDir helpers use one global collision-safe graph home", () => {
+  const previous = process.env.WEAVATRIX_GRAPH_HOME;
+  process.env.WEAVATRIX_GRAPH_HOME = join("C:", "graph-home");
   assert.equal(repoBaseName("C:/work/my-repo"), "my-repo");
-  assert.equal(
-    graphOutDirForRepo(join("C:", "work", "my-repo")),
-    join("C:", "work", "weavatrix-graphs", "my-repo")
-  );
-  assert.equal(
-    graphOutDirForModule(join("C:", "work", "my-repo"), "src/api"),
-    join("C:", "work", "weavatrix-graphs", "my-repo", "modules", "src_api")
-  );
+  try {
+    const repo = join("C:", "work", "my-repo");
+    const other = join("D:", "other", "my-repo");
+    assert.equal(graphHomeDir(), join("C:", "graph-home"));
+    assert.match(graphStorageKey(repo), /^my-repo-[a-f0-9]{12}$/);
+    assert.notEqual(graphStorageKey(repo), graphStorageKey(other));
+    assert.equal(graphOutDirForRepo(repo), join(graphHomeDir(), graphStorageKey(repo)));
+    assert.equal(graphOutDirForModule(repo, "src/api"), join(graphOutDirForRepo(repo), "modules", "src_api"));
+  } finally {
+    if (previous == null) delete process.env.WEAVATRIX_GRAPH_HOME;
+    else process.env.WEAVATRIX_GRAPH_HOME = previous;
+  }
 });

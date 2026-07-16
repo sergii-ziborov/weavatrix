@@ -58,3 +58,42 @@ test("internal audit preserves PARTIAL OSV coverage and distrusts a legacy globa
     assert.equal(legacy.checks.osv.status, "NOT_CHECKED");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("internal audit suppresses convention/generated/config-excluded dead and unused noise", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-classification-"));
+  try {
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "fixture" }));
+    writeFileSync(join(repo, ".weavatrix.json"), JSON.stringify({ exclude: ["src/legacy/**"] }));
+    const sources = {
+      "src/product.ts": "export function uniqueProductSignal() { return 1; }\n",
+      "src/Button.stories.tsx": "export function uniqueStorySignal() { return 2; }\n",
+      "src/mockData.ts": "export function uniqueMockSignal() { return 3; }\n",
+      "src/generated/client.ts": "// generated code - do not edit\nexport function uniqueGeneratedSignal() { return 4; }\n",
+      "src/legacy/old.ts": "export function uniqueLegacySignal() { return 5; }\n",
+    };
+    const nodes = [];
+    const links = [];
+    for (const [file, source] of Object.entries(sources)) {
+      mkdirSync(join(repo, file.replace(/[/\\][^/\\]+$/, "")), { recursive: true });
+      writeFileSync(join(repo, file), source);
+      const name = source.match(/function\s+(\w+)/)[1];
+      nodes.push({ id: file, source_file: file, file_type: "code" });
+      nodes.push({ id: `${file}#${name}@2`, label: `${name}()`, source_file: file, source_location: "L2", exported: true });
+      links.push({ source: file, target: `${file}#${name}@2`, relation: "contains" });
+    }
+    const audit = await runInternalAudit(repo, {
+      graph: { nodes, links, externalImports: [] },
+      advisoryStorePath: join(repo, "missing-advisories.json"),
+      skipMalwareScan: true,
+    });
+    assert.equal(audit.ok, true);
+    assert.ok(audit.findings.some((finding) => finding.file === "src/product.ts" && finding.rule === "unused-export"));
+    for (const file of Object.keys(sources).filter((file) => file !== "src/product.ts")) {
+      assert.ok(!audit.findings.some((finding) => finding.file === file && ["unused-file", "unused-export", "orphan-file"].includes(finding.rule)), `${file} classification suppresses convention noise`);
+    }
+    assert.equal(audit.scanned.pathClassifications.story, 1);
+    assert.equal(audit.scanned.pathClassifications.mock, 1);
+    assert.equal(audit.scanned.pathClassifications.generated, 1);
+    assert.equal(audit.scanned.pathClassificationExcluded, 1);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});

@@ -10,6 +10,7 @@
 import { safeRead } from "../util.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { extractRustEndpoints } from "./endpoints-rust.js";
+import { extractSpringEndpoints } from "./endpoints-java.js";
 
 const MAX_FILES = 3000;
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT", "ALL", "ANY"]);
@@ -73,6 +74,7 @@ export function extractEndpointsFromText(text, file) {
   const out = [];
   const py = /\.py$/i.test(file);
   const rust = /\.rs$/i.test(file);
+  const java = /\.java$/i.test(file);
   const add = (method, path, expr, idx) => {
     const p = cleanPath(path);
     if (!looksLikePath(p)) return;
@@ -107,6 +109,10 @@ export function extractEndpointsFromText(text, file) {
   }
 
   if (rust) extractRustEndpoints(text, add);
+  if (java) {
+    out.push(...extractSpringEndpoints(text, file));
+    return out; // generic JS-style method calls would turn Java HTTP clients into fake server routes
+  }
 
   // ---- object routes: "/path": { GET: fn, POST: fn2 }  or  "/path": handler --------------------
   // find each  "…": {  or  "…": expr,  where the key looks like a path
@@ -178,11 +184,11 @@ export function detectEndpoints(repoPath, codeFiles) {
   const boundary = createRepoBoundary(repoPath);
   for (const f of files) {
     const rel = f.path || f;
-    if (!/\.(js|ts|tsx|jsx|cjs|mjs|py|go|rs)$/i.test(rel)) continue;
+    if (!/\.(js|ts|tsx|jsx|cjs|mjs|py|go|rs|java)$/i.test(rel)) continue;
     const resolved = boundary.resolve(rel);
     if (!resolved.ok) continue;
     const text = safeRead(resolved.path);
-    if (!text || (!nextRoutePath(rel) && !/["'`]\/|\.(get|post|put|patch|delete)\s*\(|HandleFunc|@\w*\.?(get|post|put|patch|delete)/i.test(text))) continue;
+    if (!text || (!nextRoutePath(rel) && !/["'`]\/|\.(get|post|put|patch|delete)\s*\(|HandleFunc|@\w*\.?(get|post|put|patch|delete)|@(?:[\w$]+\.)*(?:Request|Get|Post|Put|Patch|Delete)Mapping\b/i.test(text))) continue;
     for (const e of extractEndpointsFromText(text, rel.replace(/\\/g, "/"))) {
       const key = `${e.method} ${normParamKey(e.path)}`;
       const prev = byKey.get(key);

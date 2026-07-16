@@ -10,6 +10,8 @@ import {
 } from './graph-context.mjs'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
 import {isStructuralRelation} from '../graph/relations.js'
+import {tChangeImpactV2} from './tools-impact-change.mjs'
+import {buildGraphAtGitRef} from '../analysis/git-ref-graph.js'
 
 function reverseReach(g, seeds, maxDepth) {
     const states = new Map([...seeds].map((id) => [String(id), {
@@ -20,7 +22,7 @@ function reverseReach(g, seeds, maxDepth) {
         const current = frontier[cursor]
         if (current.depth >= maxDepth) continue
         for (const e of g.inn.get(current.id) || []) {
-            if (isStructuralRelation(e.relation)) continue
+            if (isStructuralRelation(e.relation) || e.barrelProxy === true) continue
             const id = String(e.id)
             const compileOnly = current.compileOnly || e.typeOnly === true || e.compileOnly === true
             const depth = current.depth + 1
@@ -89,11 +91,20 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
 }
 
 // Re-query the last rebuild's before/after pair (graph.prev.json vs graph.json), optionally scoped.
-export function tGraphDiff(g, args, ctx) {
-    const prevPath = prevGraphPathFor(ctx.graphPath)
+export async function tGraphDiff(g, args, ctx) {
     let prev
-    try { prev = JSON.parse(readFileSync(prevPath, 'utf8')) } catch {
-        return `No previous graph state at ${prevPath} — rebuild_graph saves one automatically (a single prior state is kept).`
+    let baselineLabel = 'previous rebuild state'
+    if (args.base_ref) {
+        if (!ctx.repoRoot) return 'A Git-ref graph diff needs the active repository root.'
+        const built = await buildGraphAtGitRef(ctx.repoRoot, args.base_ref)
+        if (!built.ok) return `Could not build the baseline graph: ${built.error}`
+        prev = built.graph
+        baselineLabel = `${built.ref} (${built.commit.slice(0, 12)})`
+    } else {
+        const prevPath = prevGraphPathFor(ctx.graphPath)
+        try { prev = JSON.parse(readFileSync(prevPath, 'utf8')) } catch {
+            return `No previous graph state at ${prevPath} — pass base_ref (for example HEAD~1 or main), or run rebuild_graph to save one automatically.`
+        }
     }
     const current = rawGraph(ctx)
     const filter = args.path ? String(args.path).replace(/\\/g, '/') : null
@@ -101,9 +112,11 @@ export function tGraphDiff(g, args, ctx) {
         nodes: (graph.nodes || []).filter((n) => String(n.id).startsWith(filter)),
         links: (graph.links || []).filter((l) => String(edgeEndpoint(l.source)).startsWith(filter) || String(edgeEndpoint(l.target)).startsWith(filter)),
         edgeTypesV: graph.edgeTypesV || 0,
+        barrelResolutionV: graph.barrelResolutionV || 0,
+        extractorSchemaV: graph.extractorSchemaV || 0,
     } : graph
     return [
-        `Graph diff (previous rebuild state → current)${filter ? `, scoped to ${filter}` : ''}:`,
+        `Graph diff (${baselineLabel} → current)${filter ? `, scoped to ${filter}` : ''}:`,
         formatGraphDiff(diffGraphs(scope(prev), scope(current)))
     ].join('\n')
 }
@@ -130,6 +143,12 @@ function resolveImpactBase(repoRoot, requested) {
 // can break, ranked by proximity + connectivity, with file-level test coverage attached so the
 // untested part of the blast radius stands out. The pre-PR review, in one call.
 export function tChangeImpact(g, args, ctx) {
+    return tChangeImpactV2(g, args, ctx)
+}
+
+// Kept private during the v2 rollout so the surrounding get_dependents/graph_diff implementation is
+// untouched; focused tests exercise the exported symbol-aware path above.
+function tChangeImpactLegacy(g, args, ctx) {
     if (!ctx.repoRoot) return 'change_impact needs the repo root (not provided to this server).'
     // Explicit file list (e.g. a PR's changed files) skips the local git diff entirely — this is how
     // a NOT-checked-out PR gets its impact assessed.

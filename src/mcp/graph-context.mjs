@@ -40,6 +40,9 @@ export function loadGraph(path) {
             ...(e.compileOnly === true ? {compileOnly: true} : {}),
             ...(Number.isInteger(e.line) ? {line: e.line} : {}),
             ...(typeof e.specifier === 'string' ? {specifier: e.specifier} : {}),
+            ...(e.barrelProxy === true ? {barrelProxy: true} : {}),
+            ...(e.semanticOrigin === true ? {semanticOrigin: true} : {}),
+            ...(typeof e.viaBarrel === 'string' ? {viaBarrel: e.viaBarrel} : {}),
         }
         push(out, s, {id: t, ...metadata})
         push(inn, t, {id: s, ...metadata})
@@ -48,6 +51,18 @@ export function loadGraph(path) {
         nodes, links, byId, byLabel, out, inn,
         repoBoundaryV: Number(raw.repoBoundaryV) || 0,
         edgeTypesV: Number(raw.edgeTypesV) || 0,
+        barrelResolutionV: Number(raw.barrelResolutionV) || 0,
+        extractorSchemaV: Number(raw.extractorSchemaV) || 0,
+        extImportsV: Number(raw.extImportsV) || 0,
+        complexityV: Number(raw.complexityV) || 0,
+        graphBuildMode: ['full', 'no-tests', 'tests-only'].includes(raw.graphBuildMode) ? raw.graphBuildMode : 'full',
+        graphBuildScope: typeof raw.graphBuildScope === 'string' ? raw.graphBuildScope : null,
+        graphRevision: typeof raw.graphRevision === 'string' ? raw.graphRevision : null,
+        repositoryFreshnessProbeV: Number(raw.repositoryFreshnessProbeV) || 0,
+        repositoryFreshnessBuilderSchemaV: Number(raw.repositoryFreshnessBuilderSchemaV) || 0,
+        repositoryFreshnessBuilderVersion: typeof raw.repositoryFreshnessBuilderVersion === 'string' ? raw.repositoryFreshnessBuilderVersion : null,
+        repositoryFreshnessProbe: typeof raw.repositoryFreshnessProbe === 'string' ? raw.repositoryFreshnessProbe : null,
+        repositoryFreshnessMode: typeof raw.repositoryFreshnessMode === 'string' ? raw.repositoryFreshnessMode : null,
     }
 }
 
@@ -59,7 +74,7 @@ export const labelOf = (g, id) => {
 
 // Connectivity ignores structural file/symbol and class/method ownership, so runtime/compile-time
 // dependency ranks never treat nesting as a call or import.
-export const connList = (list) => (list || []).filter((e) => !isStructuralRelation(e.relation))
+export const connList = (list) => (list || []).filter((e) => !isStructuralRelation(e.relation) && e.barrelProxy !== true)
 export const degreeOf = (g, id) => connList(g.out.get(id)).length + connList(g.inn.get(id)).length
 export const uniqueConnCount = (list) => new Set(connList(list).map((e) => String(e.id))).size
 
@@ -190,8 +205,8 @@ export function resolveSeedFiles(g, requested, limit = 12) {
 // undirected adjacency for reachability (query/shortest path)
 export function undirectedNeighbors(g, id) {
     const seen = new Map()
-    for (const e of g.out.get(id) || []) seen.set(e.id, e.relation)
-    for (const e of g.inn.get(id) || []) if (!seen.has(e.id)) seen.set(e.id, e.relation)
+    for (const e of g.out.get(id) || []) if (e.barrelProxy !== true) seen.set(e.id, e.relation)
+    for (const e of g.inn.get(id) || []) if (e.barrelProxy !== true && !seen.has(e.id)) seen.set(e.id, e.relation)
     return seen
 }
 

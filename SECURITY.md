@@ -21,16 +21,28 @@ mitigation is available so users have a reasonable opportunity to update.
 
 ## Security boundaries
 
-The default MCP registration is offline. Every standard source, manifest, configuration and coverage
-read is canonical-path-contained within the active repository and rejects traversal plus symlink or
-junction escapes. The optional malware dependency scan may inspect installed dependency caches such
-as GOPATH. The default capability set pins the startup repository and does not expose `open_repo`;
-add the optional `retarget` group only when an operator intentionally wants explicit repository
-switching. The optional `online` capability contains Weavatrix's HTTP tools; `sync_graph`
-additionally requires a user-configured endpoint. Payload v3 runs bounded local analyzers over the
-active repository, then sends only a strict graph/evidence allowlist plus a normalized repository
-display name. The contract has no source-body, snippet, absolute-host-path, environment, credential,
-Git-remote or analyzer-error fields; unknown fields are discarded and unsafe optional path metadata
-is omitted. V3 rejects stale graphs, duplicate node IDs, dangling edges and oversized payloads before
-any request. Graph-only payload v2
+The default `offline` MCP profile exposes no HTTP tools. Every standard source, manifest,
+configuration and coverage read is canonical-path-contained within the active repository and rejects
+traversal plus symlink or junction escapes. The optional malware dependency scan may inspect installed
+dependency caches such as GOPATH. `offline` permits repository switching only through an explicit
+local `open_repo` call; select `pinned` to remove that tool, the global repository listing, and
+cross-repository API tracing, holding a hard startup-repository boundary.
+
+Network capabilities are split by purpose. `osv` adds only `refresh_advisories`, which sends pinned
+package names and versions to OSV.dev when called. `hosted` / `full` also expose `sync_graph` and
+`pull_architecture_contract`; both require a user-configured endpoint, and contract pull requires
+bearer authentication. The legacy `online` capability remains an alias for advisory plus hosted
+networking so existing registrations do not break.
+
+Payload v3 runs bounded local analyzers over the active repository, then sends only a strict
+graph/evidence allowlist plus a normalized repository display name. That evidence can include a
+bounded direct/transitive lockfile dependency graph and stable clone/divergence candidates. The
+contract has no source-body,
+snippet, absolute-host-path, environment, credential, Git-remote or analyzer-error fields; unknown
+fields are discarded and unsafe optional path metadata is omitted. V3 rejects stale graphs,
+duplicate node IDs, dangling edges and oversized payloads before any request. Graph-only payload v2
 remains an explicit compatibility option and is never selected as a silent fallback.
+
+`pull_architecture_contract` sends only the active repository's opaque stable UUID, receives an
+owner-approved target contract, validates it, and caches it locally. It never sends source, symbols,
+file paths, or Git metadata.

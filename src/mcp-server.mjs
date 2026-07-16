@@ -23,6 +23,9 @@ import {loadGraph} from './mcp/graph-context.mjs'
 import {graphOutDirForRepo} from './graph/layout.js'
 import {createRequire} from 'node:module'
 import {createStalenessNoticeGate} from './mcp/staleness-notice.mjs'
+import {normalizeToolResult} from './mcp/tool-result.mjs'
+import {buildGraphForRepo} from './build-graph.js'
+import {persistedFreshnessMatches, repositoryFreshnessProbe} from './graph/freshness-probe.js'
 
 // version comes from package.json so serverInfo can never drift from the published package again
 const PKG_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version } catch { return '0.0.0' } })()
@@ -34,7 +37,7 @@ const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 // otherwise it is the graph.json path and the repo root follows it.
 let GRAPH_PATH = process.argv[2]
 let repoArg = process.argv[3]
-// caps ABSENT (undefined) = repository-pinned offline defaults (no retargeting, no network).
+// caps ABSENT (undefined) = offline defaults (explicit local retargeting, no network).
 // PRESENT (even the empty string) = explicit set — see catalog.loadHotApi.
 let CAPS_ARG = process.argv[4]
 try {
@@ -93,6 +96,48 @@ async function main() {
     // ordinary tools use a per-call graph/context snapshot, so an explicitly retargetable registration
     // cannot mix one repo's in-memory graph with another repo's source root under concurrent MCP calls.
     let targetMutation = Promise.resolve()
+    const refreshProbeCache = new Map()
+    const configuredDebounce = process.env.WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS == null
+        ? 2_000
+        : Number(process.env.WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS)
+    const refreshDebounceMs = Math.max(0, Math.min(5_000, Number.isFinite(configuredDebounce) ? configuredDebounce : 2_000))
+    const autoRefresh = async (callCtx, currentGraph) => {
+        if (!callCtx?.repoRoot || !callCtx?.graphPath) return {graph: null, refresh: null}
+        const probeKey = `${callCtx.graphPath}\0${currentGraph?.graphBuildMode || 'full'}`
+        const cachedProbe = refreshProbeCache.get(probeKey)
+        if (currentGraph && cachedProbe && Date.now() - cachedProbe.checkedAt < refreshDebounceMs) {
+            return {graph: currentGraph, refresh: {kind: 'none', revision: currentGraph.graphRevision || null, changedFiles: 0}}
+        }
+        const beforeProbe = repositoryFreshnessProbe(callCtx.repoRoot)
+        if (beforeProbe && currentGraph && (
+            cachedProbe?.probe === beforeProbe
+            || persistedFreshnessMatches(currentGraph, beforeProbe, currentGraph.graphBuildMode || 'full')
+        )) {
+            refreshProbeCache.set(probeKey, {probe: beforeProbe, checkedAt: Date.now()})
+            return {graph: currentGraph, refresh: {kind: 'none', revision: currentGraph.graphRevision || null, changedFiles: 0}}
+        }
+        const result = await buildGraphForRepo(callCtx.repoRoot, {
+            mode: currentGraph?.graphBuildMode || 'full',
+            scope: '',
+            outDir: dirname(callCtx.graphPath),
+        })
+        if (!result.ok) throw new Error(result.error || 'automatic graph refresh failed')
+        api.resetStalenessCache()
+        const fresh = loadGraph(callCtx.graphPath)
+        const afterProbe = repositoryFreshnessProbe(callCtx.repoRoot)
+        if (afterProbe && afterProbe === beforeProbe) refreshProbeCache.set(probeKey, {probe: afterProbe, checkedAt: Date.now()})
+        else refreshProbeCache.delete(probeKey)
+        const update = result.refresh || {kind: 'full', changedFiles: [], reason: 'automatic-refresh'}
+        return {
+            graph: fresh,
+            refresh: {
+                kind: update.kind,
+                revision: update.revision || fresh.graphRevision || null,
+                changedFiles: Array.isArray(update.changedFiles) ? update.changedFiles.length : 0,
+                notice: update.kind === 'none' ? undefined : `Graph ${update.kind === 'incremental' ? 'incrementally refreshed' : 'rebuilt'} before this answer (${update.reason || 'repository changed'}).`,
+            },
+        }
+    }
     const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n')
     const reply = (id, result) => send({jsonrpc: '2.0', id, result})
     const fail = (id, code, message) => send({jsonrpc: '2.0', id, error: {code, message}})
@@ -127,14 +172,15 @@ async function main() {
         if (method === 'ping') return reply(id, {})
         if (method === 'tools/list') {
             await maybeHotReload()
-            return reply(id, {tools: api.tools.map(({name, description, inputSchema}) => ({name, description, inputSchema}))})
+            return reply(id, {tools: api.tools.map(({name, description, inputSchema, outputSchema}) => ({name, description, inputSchema, outputSchema}))})
         }
         if (method === 'tools/call') {
             await maybeHotReload()
             const tool = api.byName.get(params?.name)
             if (!tool) return reply(id, {content: [{type: 'text', text: `Unknown tool: ${params?.name}`}], isError: true})
-            // action tools can establish/retarget a graph; read tools need one already loaded
-            if (!graph && tool.cap !== 'build' && tool.cap !== 'retarget') return reply(id, {content: [{type: 'text', text: `Graph unavailable: ${graphError}`}], isError: true})
+            const refreshesGraph = tool.cap === 'graph' || tool.cap === 'health' || tool.refreshGraph === true
+            // Graph/health reads can establish a missing graph automatically when a repo root is known.
+            if (!graph && !refreshesGraph && tool.cap !== 'build' && tool.cap !== 'retarget') return reply(id, {content: [{type: 'text', text: `Graph unavailable: ${graphError}`}], isError: true})
             const mutatesTarget = tool.cap === 'build' || tool.cap === 'retarget'
             const graphSnapshot = graph
             const callCtx = mutatesTarget ? ctx : {...ctx}
@@ -142,23 +188,42 @@ async function main() {
                 try {
                     // A queued rebuild must see a preceding retarget's graph, while non-mutating calls stay
                     // pinned to the graph that was active when their request arrived.
-                    const callGraph = mutatesTarget ? graph : graphSnapshot
-                    let text = String(await tool.run(callGraph, params?.arguments || {}, callCtx))
+                    let refresh = null
+                    let callGraph = mutatesTarget ? graph : graphSnapshot
+                    if (!mutatesTarget && refreshesGraph) {
+                        const refreshed = await autoRefresh(callCtx, callGraph)
+                        if (refreshed.graph) {
+                            callGraph = refreshed.graph
+                            refresh = refreshed.refresh
+                            if (ctx.graphPath === callCtx.graphPath && ctx.repoRoot === callCtx.repoRoot) graph = callGraph
+                        }
+                    }
+                    const toolArgs = params?.arguments || {}
+                    const value = await tool.run(callGraph, toolArgs, callCtx)
+                    const warnings = []
                     if (callGraph && callGraph.edgeTypesV < 2 && (tool.cap === 'graph' || tool.cap === 'health')) {
-                        text += '\n\nWarning: this saved graph predates compile-only edge metadata (edge schema v2), so Rust module/use dependencies may be absent or misclassified. Call rebuild_graph once before acting on cycle, boundary, dependency, or blast-radius findings.'
+                        warnings.push({code: 'EDGE_SCHEMA_OUTDATED', message: 'This saved graph predates compile-only edge metadata (edge schema v2); rebuild before acting on cycle, boundary, dependency, or blast-radius findings.'})
                     }
                     // Graph answers silently reflect a point-in-time build — surface staleness on every graph tool.
-                if (tool.cap === 'graph') {
-                    const warn = api.stalenessLine(callCtx)
-                    if (staleNotices.shouldShow({line: warn, graphPath: callCtx.graphPath, force: tool.name === 'graph_stats'})) text += `\n\n${warn}`
-                }
-                    return reply(id, {content: [{type: 'text', text}]})
+                    const staleLine = tool.cap === 'graph' ? api.stalenessLine(callCtx) : null
+                    if (staleLine) warnings.push({code: 'GRAPH_STALE', message: staleLine})
+                    const normalized = normalizeToolResult({
+                        toolName: tool.name, value, args: toolArgs, ctx: callCtx, warnings, refresh,
+                        freshness: staleLine ? 'stale' : 'fresh',
+                    })
+                    let text = normalized.text
+                    if (toolArgs.output_format !== 'json') {
+                        const schemaWarning = warnings.find((warning) => warning.code === 'EDGE_SCHEMA_OUTDATED')
+                        if (schemaWarning) text += `\n\nWarning: ${schemaWarning.message}`
+                        if (staleLine && staleNotices.shouldShow({line: staleLine, graphPath: callCtx.graphPath, force: tool.name === 'graph_stats'})) text += `\n\n${staleLine}`
+                    }
+                    return reply(id, {content: [{type: 'text', text}], structuredContent: normalized.structured})
                 } catch (e) {
                     log(`tool ${params?.name} threw: ${e.stack || e.message}`)
                     return reply(id, {content: [{type: 'text', text: `Tool error: ${e.message}`}], isError: true})
                 }
             }
-            if (!mutatesTarget) return execute()
+            if (!mutatesTarget && !refreshesGraph) return execute()
             const pending = targetMutation.then(execute, execute)
             targetMutation = pending.catch(() => {})
             return pending

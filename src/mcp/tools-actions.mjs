@@ -1,15 +1,17 @@
 // Action tools: rebuild the graph, the explicit 'retarget' group, and the explicit 'online' group
 // (the ONLY tools that ever touch the network).
 // Hot-reloadable (re-imported by catalog.mjs on change).
-import {readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync} from 'node:fs'
-import {join, dirname, isAbsolute} from 'node:path'
+import {readFileSync, writeFileSync, existsSync, statSync, realpathSync} from 'node:fs'
+import {dirname, join, isAbsolute} from 'node:path'
 import {prevGraphPathFor, diffGraphs, formatGraphDiff, graphStaleness} from './graph-context.mjs'
 import {buildGraphForRepo} from '../build-graph.js'
-import {graphOutDirForRepo} from '../graph/layout.js'
+import {graphHomeDir, graphOutDirForModule, graphOutDirForRepo} from '../graph/layout.js'
+import {liveRepositoryRecords, registerRepository, repositoryRecord} from '../graph/repo-registry.js'
 import {refreshAdvisories, storeMeta, DEFAULT_STORE} from '../security/advisory-store.js'
 import {collectInstalled} from '../security/installed.js'
 import {createSyncPayload, createSyncPayloadV3, MAX_SYNC_BODY_BYTES} from './sync-payload.mjs'
 import {createEvidenceSnapshot} from './evidence-snapshot.mjs'
+import {writeCachedArchitectureContract} from '../analysis/architecture-contract.js'
 
 const MAX_SYNC_GRAPH_FILE_BYTES = 64 * 1024 * 1024
 
@@ -22,17 +24,33 @@ function syncRepoLabel(repoRoot) {
 export async function tRebuildGraph(g, args, ctx) {
     if (!ctx.repoRoot) return 'Rebuild needs the repo root (not provided to this server).'
     const mode = ['no-tests', 'tests-only', 'full'].includes(args.mode) ? args.mode : 'full'
+    const scope = String(args.scope || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    if (scope) {
+        const scopedDir = graphOutDirForModule(ctx.repoRoot, scope)
+        const scoped = await buildGraphForRepo(ctx.repoRoot, {mode, scope, outDir: scopedDir})
+        if (!scoped || !scoped.ok) return `Scoped graph build failed: ${(scoped && scoped.error) || 'unknown error'}`
+        return [
+            `Built an isolated scoped graph for ${scope} (${mode}). ${scoped.log || ''}.`,
+            `The active full-repository graph was not replaced, so this operation cannot report a false full→scope structural delta.`,
+            `Scoped graph: ${join(scopedDir, 'graph.json')}`,
+        ].join('\n')
+    }
     // snapshot the outgoing state: bytes → graph.prev.json (for graph_diff later), struct → inline delta
     let prevBytes = null
     try { prevBytes = readFileSync(ctx.graphPath) } catch { /* first build — nothing to diff against */ }
-    const before = g?.nodes ? {nodes: g.nodes, links: g.links, edgeTypesV: g.edgeTypesV || 0} : null
-    const res = await buildGraphForRepo(ctx.repoRoot, {mode, scope: args.scope || ''})
+    const before = g?.nodes ? {
+        nodes: g.nodes, links: g.links,
+        edgeTypesV: g.edgeTypesV || 0,
+        barrelResolutionV: g.barrelResolutionV || 0,
+        extractorSchemaV: g.extractorSchemaV || 0,
+    } : null
+    const res = await buildGraphForRepo(ctx.repoRoot, {mode, scope: '', outDir: ctx.graphPath ? dirname(ctx.graphPath) : undefined})
     if (!res || !res.ok) return `Graph rebuild failed: ${(res && res.error) || 'unknown error'}`
     if (prevBytes) { try { writeFileSync(prevGraphPathFor(ctx.graphPath), prevBytes) } catch { /* snapshot is best-effort */ } }
     const fresh = ctx.reload() // refresh THIS server's in-memory graph so subsequent tool calls see the new graph
     const delta = before && fresh ? formatGraphDiff(diffGraphs(before, fresh)) : null
     return [
-        `Rebuilt the graph (${mode}${args.scope ? `, scope=${args.scope}` : ''}). ${res.log || ''}. In-memory graph reloaded — graph tools now reflect it.`,
+        `Rebuilt the graph (${mode}). ${res.log || ''}. In-memory graph reloaded — graph tools now reflect it.`,
         delta
     ].filter(Boolean).join('\n\n')
 }
@@ -80,31 +98,23 @@ export async function tOpenRepo(g, args, ctx) {
         ctx.reload()
         return `Failed to load ${graphPath} — still targeting the previous repo (${prev.repoRoot || 'none'}).`
     }
+    registerRepository({repoPath, graphDir: graphOutDirForRepo(repoPath), graphHome: graphHomeDir()})
     const buildNote = built ? (upgrade ? ' (graph upgraded to edge metadata v2)' : ' (graph built fresh)') : ''
     return `Opened ${repoPath}${buildNote}: ${loaded.nodes.length} nodes / ${loaded.links.length} edges. All tools now target this repo.`
 }
 
 // Sibling repos that already have a built graph in the central weavatrix-graphs folder — open_repo candidates.
 export function tListKnownRepos(g, args, ctx) {
-    if (!ctx.repoRoot) return 'No repo root — cannot locate the central graphs folder.'
-    const parent = dirname(ctx.repoRoot)
-    const root = join(parent, 'weavatrix-graphs')
+    const root = graphHomeDir()
     const norm = (p) => String(p).replace(/[\\/]+/g, '/').toLowerCase()
-    let entries = []
-    try { entries = readdirSync(root, {withFileTypes: true}) } catch { return `No central graphs folder at ${root}.` }
-    const rows = []
-    for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const graphPath = join(root, entry.name, 'graph.json')
-        try {
-            const st = statSync(graphPath)
-            rows.push({name: entry.name, repoPath: join(parent, entry.name), builtAt: st.mtime.toISOString()})
-        } catch { /* no graph built for this entry */ }
-    }
-    if (!rows.length) return `No built graphs under ${root}.`
+    const rows = liveRepositoryRecords(root).map((record) => ({
+        ...record,
+        builtAt: statSync(join(record.graphDir, 'graph.json')).mtime.toISOString(),
+    }))
+    if (!rows.length) return `No registered graphs under ${root}. Build a repository once with open_repo or rebuild_graph.`
     return [
-        `Repos with built graphs under ${root} (switch with open_repo):`,
-        ...rows.map((r) => `  ${norm(r.repoPath) === norm(ctx.repoRoot) ? '»' : ' '} ${r.name} — graph built ${r.builtAt}  (${r.repoPath})`),
+        `Known repositories (${rows.length}) in ${root}:`,
+        ...rows.map((r) => `  ${norm(r.repoPath) === norm(ctx.repoRoot) ? '»' : ' '} ${r.label} [${r.repositoryId}] — graph built ${r.builtAt}  (${r.repoPath})`),
     ].join('\n')
 }
 
@@ -127,6 +137,32 @@ export async function tRefreshAdvisories(g, args, ctx) {
         res.errors?.length ? `Partial: ${res.errors.length} request error(s), first: ${res.errors[0]}` : null,
         `Store: ${DEFAULT_STORE} (${meta.advisoryCount} advisories, fetched ${meta.fetchedAt}). run_audit now reflects it — offline.`,
     ].filter(Boolean).join('\n')
+}
+
+export async function tPullArchitectureContract(g, args, ctx) {
+    if (!ctx.repoRoot || !ctx.graphPath) return 'No active repository graph — open_repo first.'
+    const syncUrl = process.env.WEAVATRIX_SYNC_URL
+    const token = process.env.WEAVATRIX_SYNC_TOKEN
+    if (!syncUrl || !token) return 'Hosted architecture pull is not configured. Use the hosted profile with WEAVATRIX_SYNC_URL and WEAVATRIX_SYNC_TOKEN, or keep .weavatrix/architecture.json locally.'
+    let url
+    try { url = process.env.WEAVATRIX_ARCHITECTURE_URL || new URL('/api/v1/architecture-contract', syncUrl).toString() }
+    catch { return 'WEAVATRIX_SYNC_URL is invalid.' }
+    const registry = repositoryRecord(ctx.repoRoot, graphHomeDir())
+        || registerRepository({repoPath: ctx.repoRoot, graphDir: graphOutDirForRepo(ctx.repoRoot), graphHome: graphHomeDir()})
+    const timeoutMs = Math.min(120000, Math.max(1000, Number(args.timeout_ms) || 30000))
+    try {
+        const res = await fetch(url, {
+            headers: {authorization: `Bearer ${token}`, 'x-weavatrix-repository-id': registry.repositoryId},
+            signal: AbortSignal.timeout(timeoutMs),
+        })
+        const body = await res.json().catch(() => null)
+        if (!res.ok) return `Hosted architecture endpoint answered HTTP ${res.status}; the local contract cache was not changed.`
+        if (body?.state === 'NOT_CONFIGURED' || !body?.contract) return 'Hosted target architecture is NOT_CONFIGURED. Define and save it in the Architecture editor first.'
+        const stored = writeCachedArchitectureContract(ctx.graphPath, body.contract)
+        return `Pulled target architecture ${stored.contract.name} (${stored.contract.style}, ${stored.contract.enforcement}) into the local graph cache. get_architecture_contract and verify_architecture now use it.`
+    } catch (error) {
+        return `Hosted architecture pull failed: ${error.message}; the previous local contract, if any, remains active.`
+    }
 }
 
 // Push the current graph.json to a user-configured endpoint. Off until WEAVATRIX_SYNC_URL is set.
@@ -168,6 +204,8 @@ export async function tSyncGraph(g, args, ctx) {
         return `Cannot sync: payload is ${Math.ceil(bodyBytes / 1024)} KB; the hosted safety limit is ${MAX_SYNC_BODY_BYTES / 1024} KB. Narrow the graph scope and rebuild before retrying.`
     }
     const repoName = syncRepoLabel(ctx.repoRoot)
+    const registry = repositoryRecord(ctx.repoRoot, graphHomeDir())
+        || registerRepository({repoPath: ctx.repoRoot, graphDir: graphOutDirForRepo(ctx.repoRoot), graphHome: graphHomeDir()})
     const timeoutMs = Math.min(120000, Math.max(1000, Number(args.timeout_ms) || 30000))
     try {
         const res = await fetch(url, {
@@ -176,6 +214,7 @@ export async function tSyncGraph(g, args, ctx) {
                 'content-type': 'application/json',
                 'x-weavatrix-payload-version': String(payload.syncPayloadV),
                 'x-weavatrix-repo': repoName,
+                'x-weavatrix-repository-id': registry.repositoryId,
                 ...(process.env.WEAVATRIX_SYNC_TOKEN ? {authorization: `Bearer ${process.env.WEAVATRIX_SYNC_TOKEN}`} : {}),
             },
             body,

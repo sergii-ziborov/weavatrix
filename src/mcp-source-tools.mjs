@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { extname, join, relative } from 'node:path'
 import { resolveRepoPath } from './repo-path.js'
 import { childProcessEnv } from './child-env.js'
+import { toolResult } from './mcp/tool-result.mjs'
 
 const SEARCH_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', 'out', '.next', 'coverage', 'vendor', '.venv', 'venv', 'env', 'target', '__pycache__', '.idea', '.vscode', '.cache', 'bin', 'obj', 'weavatrix-graphs'])
 const BINARY_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.exe', '.dll', '.so', '.dylib', '.woff', '.woff2', '.ttf', '.eot', '.mp4', '.mp3', '.wasm', '.class', '.jar', '.node', '.bin'])
@@ -13,7 +14,7 @@ const MAX_SOURCE_CONTEXT_LINES = 1000
 function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }) {
     const rg = resolveRg()
     if (!rg) return null
-    const args = ['--line-number', '--no-heading', '--color', 'never', '--max-columns', '400', '-m', '30', '-i']
+    const args = ['--line-number', '--no-heading', '--color', 'never', '--hidden', '-g', '!.git/**', '-m', '100', '-i']
     if (!isRegex) args.push('--fixed-strings')
     if (glob) args.push('-g', glob)
     args.push('--', query, repoRoot)
@@ -95,11 +96,18 @@ export function searchCode({ repoRoot, resolveRg }, { query, is_regex = false, m
     const engine = matches ? 'ripgrep' : 'node'
     if (!matches) matches = nodeGrep(repoRoot, query, opts)
     const what = is_regex ? `/${query}/i` : `"${query}"`
-    if (!matches.length) return `No matches for ${what}${glob ? ` in ${glob}` : ''}.`
-    return [
+    if (!matches.length) return toolResult(
+        `No matches for ${what}${glob ? ` in ${glob}` : ''}.`,
+        {query, isRegex: !!is_regex, glob: glob || null, engine, matches: []},
+        {completeness: {status: 'complete', reason: 'search completed with no matches'}},
+    )
+    const text = [
         `${matches.length} match${matches.length === 1 ? '' : 'es'} for ${what}${glob ? ` (glob ${glob})` : ''} [${engine}]:`,
         ...matches.map((m) => `  ${m.file}:${m.line}:  ${m.text}`),
     ].join('\n')
+    return toolResult(text, {query, isRegex: !!is_regex, glob: glob || null, engine, matches}, {
+        completeness: {status: matches.length >= max ? 'bounded' : 'complete', limit: max},
+    })
 }
 
 export function readSource({ repoRoot, resolveNode, isSymbol }, g, { label, path, start_line, before = 3, after = 40 } = {}) {

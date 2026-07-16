@@ -9,13 +9,15 @@ import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { createRepoBoundary } from "../repo-path.js";
 import { isStructuralRelation } from "../graph/relations.js";
+import { createPathClassifier, hasPathClass } from "../path-classification.js";
 
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
 const bareName = (label) => String(label || "").replace(/\s*\(.*$/, "").replace(/[()]/g, "").trim();
 // entry surfaces are never dead even with no inbound edge (framework/CLI/HTTP enter them externally).
 // Exported for internal-audit.js (reachability entry set) — keep the two in lockstep.
 export const ENTRY_FILE = /(^|[\\/])(index|main|app|server|cli|cmd|bootstrap|entry|run|__main__|manage|wsgi|asgi|setup|conftest)\.[a-z0-9]+$|(^|[\\/])(bin|cmd)[\\/]|(^|[\\/])main\.go$/i;
-const TEST_FILE = /(^|[\\/])[^\\/]*[._-](test|spec)\.[a-z0-9]+$|(^|[\\/])(test|tests|__tests__|spec)[\\/]/i;
+const defaultPathClassifier = createPathClassifier(null);
+const isTestFile = (file) => hasPathClass(defaultPathClassifier.explain(file), "test", "e2e");
 
 // Framework-owned entry modules are invoked by convention rather than a source import. Keep this narrow:
 // these are Next.js App/Pages Router surfaces and framework metadata files, not every file under `app/`.
@@ -144,7 +146,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   const deadSymbols = [];
   for (const n of symById.values()) {
     if (isReferenced(n)) continue;
-    const test = TEST_FILE.test(n.source_file);
+    const test = isTestFile(n.source_file);
     deadSymbols.push({ id: n.id, file: n.source_file, label: n.label, test, reason: "no inbound edge and name unreferenced outside its file" });
   }
   const deadSet = new Set(deadSymbols.map((s) => s.id));
@@ -202,7 +204,7 @@ export function computeUnusedExports(graph, sources, { dynamicTargets = new Set(
   for (const { n, nm } of candidates) {
     const occ = occursIn.get(nm);
     if (occ && [...occ].some((f) => f !== n.source_file)) continue; // referenced beyond its own file → alive
-    out.push({ id: n.id, file: n.source_file, label: n.label, test: TEST_FILE.test(n.source_file), reason: "exported but never imported or referenced outside its own file" });
+    out.push({ id: n.id, file: n.source_file, label: n.label, test: isTestFile(n.source_file), reason: "exported but never imported or referenced outside its own file" });
   }
   return out;
 }

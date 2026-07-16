@@ -37,6 +37,8 @@ function makeRepo() {
     "src/c.js": `${RENAMED}\n`,
     "test/a.test.js": `${CLONE}\n`,
     "test-e2e/cypress/support/testLocators/a.js": `${CLONE}\n`,
+    "src/generated/client.js": `${CLONE}\n`,
+    "src/mockData.js": `${CLONE}\n`,
   };
   const nodes = [];
   for (const [rel, content] of Object.entries(files)) {
@@ -175,6 +177,20 @@ test("find_duplicates: include_tests=false excludes Cypress test-root clones", (
     assert.doesNotMatch(hidden, /test-e2e\/cypress/);
     const included = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: true }, { repoRoot: dir, graphPath: graphJson });
     assert.match(included, /test-e2e\/cypress/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("find_duplicates suppresses generated/mock signal by default with an explicit override", () => {
+  const { dir, graphJson } = makeRepo();
+  try {
+    const hidden = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: true }, { repoRoot: dir, graphPath: graphJson });
+    assert.doesNotMatch(hidden, /src\/generated\/client\.js|src\/mockData\.js/);
+    assert.match(hidden, /classified as tests\/e2e\/generated\/mock\/story\/docs\/benchmark\/temp/);
+    const included = tFindDuplicates(null, {
+      mode: "strict", min_tokens: 30, include_tests: true, include_classified: true,
+    }, { repoRoot: dir, graphPath: graphJson });
+    assert.match(included, /src\/generated\/client\.js/);
+    assert.match(included, /src\/mockData\.js/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

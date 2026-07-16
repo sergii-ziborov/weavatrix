@@ -3,13 +3,60 @@
 import { posix } from "node:path";
 import { ENTRY_FILE, isFrameworkEntryFile } from "./dead-check.js";
 import { TEST_FILE_RE } from "./internal-audit.collect.js";
+import { maskJavaNonCode } from "./java-source.js";
 
 const isFileNode = (n) => !String(n.id).includes("#");
+
+const springAnnotation = (name) => new RegExp(`@(?:[A-Za-z_$][\\w$]*\\s*\\.\\s*)*${name}\\b`);
+const SPRING_CONVENTIONS = [
+  ["SpringBootApplication", "high", "Spring Boot application entry point is launched externally and starts component scanning"],
+  ["RestControllerAdvice", "high", "Spring registers @RestControllerAdvice through application-context scanning"],
+  ["ControllerAdvice", "high", "Spring registers @ControllerAdvice through application-context scanning"],
+  ["RestController", "high", "Spring registers @RestController through component scanning and routes requests to it"],
+  ["Controller", "high", "Spring registers @Controller through component scanning"],
+  ["Configuration", "high", "Spring discovers @Configuration and invokes its bean definitions externally"],
+  ["Service", "high", "Spring registers @Service through component scanning"],
+  ["Repository", "high", "Spring registers @Repository through component scanning or repository proxy creation"],
+  ["Component", "high", "Spring registers @Component through component scanning"],
+  ["ConfigurationProperties", "high", "Spring binds @ConfigurationProperties outside the static import graph"],
+  ["KafkaListener", "high", "Spring Kafka invokes @KafkaListener methods from the message container"],
+  ["Scheduled", "high", "Spring invokes @Scheduled methods from its task scheduler"],
+  ["EventListener", "high", "Spring invokes @EventListener methods from the application event bus"],
+];
+
+// Framework-managed Java files are externally entered by the Spring container, not by an ordinary
+// source import. Return bounded, explainable evidence so suppressing an orphan is never a silent guess.
+export function springConventionEntries(sources, fileSet = null) {
+  const out = [];
+  for (const [rawFile, rawText] of sources || []) {
+    const file = String(rawFile || "").replace(/\\/g, "/");
+    if (!/\.java$/i.test(file) || (fileSet && !fileSet.has(file))) continue;
+    const text = maskJavaNonCode(rawText);
+    let evidence = null;
+    for (const [marker, confidence, reason] of SPRING_CONVENTIONS) {
+      if (springAnnotation(marker).test(text)) {
+        evidence = { file, framework: "spring", marker: `@${marker}`, confidence, reason };
+        break;
+      }
+    }
+    if (!evidence && /\binterface\s+[A-Za-z_$][\w$]*(?:\s*<[^>{}]+>)?\s+extends\s+[^;{]*(?:JpaRepository|MongoRepository|ReactiveCrudRepository|CrudRepository|PagingAndSortingRepository|Repository)\s*</s.test(text)) {
+      evidence = {
+        file,
+        framework: "spring-data",
+        marker: "repository interface",
+        confidence: "high",
+        reason: "Spring Data creates the repository implementation and proxy from the interface at runtime",
+      };
+    }
+    if (evidence) out.push(evidence);
+  }
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
 
 // Entry set for reachability: conventional entry names + package.json main/module/browser/bin/exports +
 // html pages (they root classic-script apps) + test files (the runner enters them) + root config files +
 // dynamic-import targets. Anything reachable from here is "used"; the rest corroborates unused-file.
-export function entryFiles(graph, pkgOrScopes, dynamicTargets = new Set(), { declaredEntries = [], sources = new Map() } = {}) {
+export function entryFiles(graph, pkgOrScopes, dynamicTargets = new Set(), { declaredEntries = [], sources = new Map(), conventionEvidence = [] } = {}) {
   const entries = new Set();
   const scopes = Array.isArray(pkgOrScopes)
     ? pkgOrScopes
@@ -50,6 +97,10 @@ export function entryFiles(graph, pkgOrScopes, dynamicTargets = new Set(), { dec
     if (!isFileNode(n)) continue;
     const f = n.source_file;
     if (ENTRY_FILE.test(f) || isFrameworkEntryFile(f) || /\.d\.[cm]?ts$/i.test(f) || TEST_FILE_RE.test(f) || /\.html?$/i.test(f) || pe.has(f) || /(^|\/)[^/]*\.config\.[a-z]+$/i.test(f)) entries.add(f);
+  }
+  for (const evidence of springConventionEntries(sources, fileSet)) {
+    entries.add(evidence.file);
+    conventionEvidence.push(evidence);
   }
   for (const raw of Array.isArray(declaredEntries) ? declaredEntries : [declaredEntries]) {
     const resolved = resolveEntry("", raw);

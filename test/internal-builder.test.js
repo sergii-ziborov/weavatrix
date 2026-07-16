@@ -134,6 +134,75 @@ test("internal-builder: JSX component use references the imported declaration", 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("internal-builder: JS/TS barrels resolve star, aliases, default, type-only, and cyclic chains to declaration origins", async () => {
+  const dir = repoWith({
+    "src/origin/component.tsx":
+      "export default function Button(){ return <button />; }\n" +
+      "export function run(){ return 1; }\n" +
+      "export type Shape = { id: string };\n",
+    "src/origin/extra.ts": "export function extra(){ return 2; }\n",
+    "src/barrel/leaf.ts":
+      "export { default as PublicButton, run as execute, type Shape as PublicShape } from '../origin/component';\n" +
+      "export * from '../origin/extra';\n",
+    "src/barrel/cycle-a.ts": "export * from './cycle-b';\nexport * from './leaf';\n",
+    "src/barrel/cycle-b.ts": "export * from './cycle-a';\n",
+    "src/barrel/index.ts":
+      "export * from './cycle-a';\n" +
+      "export { PublicButton as default } from './leaf';\n" +
+      "export type { PublicShape as Shape } from './leaf';\n",
+    "src/app.tsx":
+      "import Button, { execute, extra } from './barrel';\n" +
+      "export function App(){ execute(); extra(); return <Button />; }\n",
+    "src/ns-app.tsx":
+      "import * as ui from './barrel';\n" +
+      "export function NamespaceApp(){ ui.execute(); return <ui.PublicButton />; }\n",
+    "src/cycle-b-use.ts": "import { extra } from './barrel/cycle-b';\nexport function fromOtherCycleSide(){ return extra(); }\n",
+    "src/type-use.ts": "import type { Shape } from './barrel';\nexport type Wrapped = Shape & { ok: true };\n",
+  });
+  try {
+    const g = await buildInternalGraph(dir);
+    assert.equal(g.barrelResolutionV, 1);
+    const id = (file, name) => g.nodes.find((node) => node.source_file === file && String(node.id).includes(`#${name}@`))?.id;
+    const app = id("src/app.tsx", "App");
+    const button = id("src/origin/component.tsx", "Button");
+    const run = id("src/origin/component.tsx", "run");
+    const extra = id("src/origin/extra.ts", "extra");
+    const namespaceApp = id("src/ns-app.tsx", "NamespaceApp");
+    const otherCycleSide = id("src/cycle-b-use.ts", "fromOtherCycleSide");
+    assert.ok(g.links.some((link) => link.source === app && link.target === button && link.relation === "references" && link.usage === "jsx"), "default JSX resolves to the declaring component");
+    assert.ok(g.links.some((link) => link.source === app && link.target === run && link.relation === "calls"), "named alias resolves to the declaring function");
+    assert.ok(g.links.some((link) => link.source === app && link.target === extra && link.relation === "calls"), "star chain resolves through a safe re-export cycle");
+    assert.ok(g.links.some((link) => link.source === namespaceApp && link.target === run && link.relation === "calls"), "namespace member call resolves through the barrel");
+    assert.ok(g.links.some((link) => link.source === namespaceApp && link.target === button && link.relation === "references" && link.usage === "jsx"), "namespace JSX resolves through the barrel");
+    assert.ok(g.links.some((link) => link.source === otherCycleSide && link.target === extra && link.relation === "calls"), "resolution is not path-dependent when either side of a star cycle is imported");
+
+    const physical = g.links.find((link) => link.source === "src/app.tsx" && link.target === "src/barrel/index.ts" && link.relation === "imports");
+    assert.equal(physical?.barrelProxy, true, "the physical barrel hop is retained and marked as a proxy");
+    assert.ok(g.links.some((link) => link.source === "src/barrel/cycle-a.ts" && link.target === "src/barrel/cycle-b.ts" && link.relation === "re_exports" && link.barrelProxy), "cyclic physical re-export edge remains available to cycle analysis");
+    assert.ok(g.links.some((link) => link.source === "src/barrel/cycle-b.ts" && link.target === "src/barrel/cycle-a.ts" && link.relation === "re_exports" && link.barrelProxy));
+    assert.ok(g.links.some((link) => link.source === "src/app.tsx" && link.target === "src/origin/component.tsx" && link.relation === "imports" && link.semanticOrigin === true && link.typeOnly !== true));
+    assert.ok(g.links.some((link) => link.source === "src/app.tsx" && link.target === "src/origin/extra.ts" && link.relation === "imports" && link.semanticOrigin === true));
+    assert.ok(g.links.some((link) => link.source === "src/type-use.ts" && link.target === "src/origin/component.tsx" && link.semanticOrigin === true && link.typeOnly === true), "type-only is preserved across the full barrel chain");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("internal-builder: ambiguous export-star names are not guessed", async () => {
+  const dir = repoWith({
+    "src/left.ts": "export function clash(){ return 'left'; }\n",
+    "src/right.ts": "export function clash(){ return 'right'; }\n",
+    "src/index.ts": "export * from './left';\nexport * from './right';\n",
+    "src/use.ts": "import { clash } from './index';\nexport function use(){ return clash(); }\n",
+  });
+  try {
+    const g = await buildInternalGraph(dir);
+    const use = g.nodes.find((node) => node.source_file === "src/use.ts" && String(node.id).includes("#use@"));
+    const clashTargets = new Set(g.nodes.filter((node) => String(node.id).includes("#clash@")).map((node) => node.id));
+    assert.ok(!g.links.some((link) => link.source === use.id && clashTargets.has(link.target) && link.relation === "calls"), "call graph does not choose one conflicting origin");
+    assert.ok(!g.links.some((link) => link.source === "src/use.ts" && ["src/left.ts", "src/right.ts"].includes(link.target) && link.semanticOrigin), "no semantic file edge is invented for an ambiguous export");
+    assert.ok(g.links.some((link) => link.source === "src/use.ts" && link.target === "src/index.ts" && link.relation === "imports" && link.barrelProxy !== true), "unresolved physical dependency stays visible rather than disappearing");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("internal-builder: deeply-nested JS does not hang (bounded isExportedDecl, not O(depth^3))", async () => {
   // ~700 nested functions — the exact O(depth^3) .parent-walk trigger; the unbounded version took minutes.
   let body = "return 1;";

@@ -5,18 +5,17 @@
 // result object crosses back (never the graph itself — structured-cloning a huge graph would stall
 // the main thread again).
 import { parentPort, workerData } from "node:worker_threads";
-import { writeFileSync, mkdirSync } from "node:fs";
 import { buildInternalGraph } from "./internal-builder.js";
 import { filterGraphForMode, filterGraphByScope, summarizeCommunities, summarizeHotspots } from "./layout.js";
+import { atomicWriteFileSync } from "./file-lock.js";
 
 (async () => {
   const { repoPath, mode, scope, graphJson, central } = workerData || {};
   try {
     let graph = await buildInternalGraph(repoPath);
-    if (mode === "no-tests" || mode === "tests-only") graph = filterGraphForMode(graph, mode);
+    if (mode === "no-tests" || mode === "tests-only") graph = filterGraphForMode(graph, mode, { repoRoot: repoPath });
     if (scope) graph = filterGraphByScope(graph, scope);
-    mkdirSync(central, { recursive: true });
-    writeFileSync(graphJson, JSON.stringify(graph), "utf8");
+    atomicWriteFileSync(graphJson, JSON.stringify(graph), "utf8");
     parentPort.postMessage({
       ok: true,
       nodes: graph.nodes.length,

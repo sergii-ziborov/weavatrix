@@ -13,25 +13,77 @@ export const edgeEndpoint = (v) => String(v && typeof v === 'object' ? v.id : v)
 export const fileOfId = (id) => { const s = String(id); const h = s.indexOf('#'); return h < 0 ? s : s.slice(0, h) }
 const folderOfFile = folderModuleOf
 
+const terminalLineSuffix = (id) => {
+    const raw = String(id)
+    return raw.includes('#') ? raw.replace(/@\d+$/, '') : raw
+}
+
+const sourceLine = (node) => {
+    const explicit = String(node?.source_location || '').match(/^L(\d+)/i)
+    if (explicit) return Number(explicit[1])
+    const suffix = String(node?.id || '').match(/@(\d+)$/)
+    return suffix ? Number(suffix[1]) : Number.MAX_SAFE_INTEGER
+}
+
+// Node ids retain source lines for precise read_source jumps, but location is not identity. This
+// comparison-only index keeps file/name/kind/export/signature shape stable across line shifts and
+// uses an ordinal only for true same-name overloads. Raw ids remain the user-facing evidence.
+function stableNodeIndex(graph) {
+    const groups = new Map()
+    for (const node of graph.nodes || []) {
+        const raw = String(node?.id ?? '')
+        if (!raw) continue
+        const stem = terminalLineSuffix(raw)
+        const params = Number.isInteger(node?.complexity?.params) ? node.complexity.params : ''
+        const signature = [stem, node?.symbol_kind || '', node?.exported === true ? 'exported' : '', params].join('\u0000')
+        if (!groups.has(signature)) groups.set(signature, [])
+        groups.get(signature).push(node)
+    }
+    const byRaw = new Map()
+    const rawByStable = new Map()
+    for (const [signature, nodes] of groups) {
+        nodes.sort((a, b) => sourceLine(a) - sourceLine(b) || String(a.id).localeCompare(String(b.id)))
+        nodes.forEach((node, ordinal) => {
+            const stable = `${signature}\u0000${ordinal}`
+            const raw = String(node.id)
+            byRaw.set(raw, stable)
+            rawByStable.set(stable, raw)
+        })
+    }
+    return {byRaw, rawByStable, keys: new Set(rawByStable.keys())}
+}
+
 // Works on anything with {nodes, links}: the raw graph.json shape and the loadGraph struct alike.
 export function diffGraphs(oldG, newG) {
     const oldEdgeTypesV = Number(oldG.edgeTypesV) || 0
     const newEdgeTypesV = Number(newG.edgeTypesV) || 0
-    const schemaMigration = oldEdgeTypesV !== newEdgeTypesV
-    const nodeIds = (graph) => new Set((graph.nodes || []).map((n) => String(n.id)))
-    const oldNodes = nodeIds(oldG)
-    const newNodes = nodeIds(newG)
+    const oldBarrelResolutionV = Number(oldG.barrelResolutionV) || 0
+    const newBarrelResolutionV = Number(newG.barrelResolutionV) || 0
+    const oldExtractorSchemaV = Number(oldG.extractorSchemaV) || 0
+    const newExtractorSchemaV = Number(newG.extractorSchemaV) || 0
+    const schemaChanges = [
+        oldEdgeTypesV !== newEdgeTypesV ? `edges v${oldEdgeTypesV}→v${newEdgeTypesV}` : null,
+        oldBarrelResolutionV !== newBarrelResolutionV ? `barrels v${oldBarrelResolutionV}→v${newBarrelResolutionV}` : null,
+        oldExtractorSchemaV !== newExtractorSchemaV ? `extractor v${oldExtractorSchemaV}→v${newExtractorSchemaV}` : null,
+    ].filter(Boolean)
+    const schemaMigration = schemaChanges.length > 0
+    const oldNodeIndex = stableNodeIndex(oldG)
+    const newNodeIndex = stableNodeIndex(newG)
 
     const edgeClass = (l) => l.typeOnly === true ? 'type' : l.compileOnly === true ? 'compile' : 'runtime'
-    const edgeKey = (l) => `${edgeEndpoint(l.source)}|${l.relation || ''}|${schemaMigration ? 'untyped' : edgeClass(l)}|${edgeEndpoint(l.target)}`
-    const edgeSet = (graph) => new Set((graph.links || []).map(edgeKey))
-    const oldEdges = edgeSet(oldG)
-    const newEdges = edgeSet(newG)
+    const stableEndpoint = (index, value) => {
+        const raw = edgeEndpoint(value)
+        return index.byRaw.get(raw) || raw
+    }
+    const edgeKey = (l, index) => `${stableEndpoint(index, l.source)}|${l.relation || ''}|${schemaMigration ? 'untyped' : edgeClass(l)}|${stableEndpoint(index, l.target)}`
+    const edgeSet = (graph, index) => new Set((graph.links || []).map((l) => edgeKey(l, index)))
+    const oldEdges = edgeSet(oldG, oldNodeIndex)
+    const newEdges = edgeSet(newG, newNodeIndex)
 
     const moduleEdges = (graph, classification) => {
         const set = new Set()
         for (const l of graph.links || []) {
-            if (isStructuralRelation(l.relation)) continue
+            if (isStructuralRelation(l.relation) || l.barrelProxy === true) continue
             if (edgeClass(l) !== classification) continue
             const a = folderOfFile(fileOfId(edgeEndpoint(l.source)))
             const b = folderOfFile(fileOfId(edgeEndpoint(l.target)))
@@ -48,17 +100,17 @@ export function diffGraphs(oldG, newG) {
     const oldCompileMods = schemaMigration ? new Set() : moduleEdges(oldG, 'compile')
     const newCompileMods = schemaMigration ? new Set() : moduleEdges(newG, 'compile')
 
-    const incoming = (graph) => {
+    const incoming = (graph, index) => {
         const m = new Map()
         for (const l of graph.links || []) {
-            if (isStructuralRelation(l.relation)) continue
-            const t = edgeEndpoint(l.target)
+            if (isStructuralRelation(l.relation) || l.barrelProxy === true) continue
+            const t = stableEndpoint(index, l.target)
             m.set(t, (m.get(t) || 0) + 1)
         }
         return m
     }
-    const oldIn = incoming(oldG)
-    const newIn = incoming(newG)
+    const oldIn = incoming(oldG, oldNodeIndex)
+    const newIn = incoming(newG, newNodeIndex)
 
     const cycles = (graph, includeTypeOnly) => {
         try {
@@ -100,10 +152,10 @@ export function diffGraphs(oldG, newG) {
     }
 
     return {
-        schemaMigration: schemaMigration ? {from: oldEdgeTypesV, to: newEdgeTypesV} : null,
+        schemaMigration: schemaMigration ? {from: oldEdgeTypesV, to: newEdgeTypesV, changes: schemaChanges} : null,
         nodes: {
-            added: [...newNodes].filter((id) => !oldNodes.has(id)),
-            removed: [...oldNodes].filter((id) => !newNodes.has(id))
+            added: [...newNodeIndex.keys].filter((key) => !oldNodeIndex.keys.has(key)).map((key) => newNodeIndex.rawByStable.get(key)),
+            removed: [...oldNodeIndex.keys].filter((key) => !newNodeIndex.keys.has(key)).map((key) => oldNodeIndex.rawByStable.get(key))
         },
         edges: {
             added: [...newEdges].filter((k) => !oldEdges.has(k)).length,
@@ -118,7 +170,9 @@ export function diffGraphs(oldG, newG) {
             compileRemoved: [...oldCompileMods].filter((k) => !newCompileMods.has(k)),
         },
         // survived the rebuild but lost every caller/importer — likely made dead by the change
-        orphaned: [...oldIn.keys()].filter((id) => newNodes.has(id) && !newIn.has(id)),
+        orphaned: [...oldIn.keys()]
+            .filter((key) => newNodeIndex.keys.has(key) && !newIn.has(key))
+            .map((key) => newNodeIndex.rawByStable.get(key) || oldNodeIndex.rawByStable.get(key)),
         cycles: {
             runtime: schemaMigration ? null : cycleDelta(cycles(oldG, false), cycles(newG, false)),
             // Backward-compatible field name: since edgeTypesV 2 this includes typeOnly and compileOnly.
@@ -130,12 +184,12 @@ export function diffGraphs(oldG, newG) {
 export function formatGraphDiff(d) {
     if (!d.nodes.added.length && !d.nodes.removed.length && !d.edges.added && !d.edges.removed) {
         return d.schemaMigration
-            ? `Graph edge schema upgraded v${d.schemaMigration.from} → v${d.schemaMigration.to}; compile-time baseline established. Runtime/compile-time cycle and module classifications are intentionally not compared on this rebuild.`
+            ? `Graph extractor/schema upgraded (${d.schemaMigration.changes.join(', ')}); compile-time baseline established. Runtime/compile-time cycle and module classifications are intentionally not compared on this rebuild.`
             : 'No structural change between the two graph states.'
     }
     const cap = (list, n) => list.slice(0, n).map((x) => `  ${x}`).concat(list.length > n ? [`  … +${list.length - n} more`] : [])
     const lines = [`Structural delta: nodes +${d.nodes.added.length}/−${d.nodes.removed.length}, edges +${d.edges.added}/−${d.edges.removed}.`]
-    if (d.schemaMigration) lines.push(`Graph edge schema upgraded v${d.schemaMigration.from} → v${d.schemaMigration.to}; runtime/compile-time cycle and module classifications are intentionally not compared until the next rebuild.`)
+    if (d.schemaMigration) lines.push(`Graph extractor/schema upgraded (${d.schemaMigration.changes.join(', ')}); runtime/compile-time cycle and module classifications are intentionally not compared until the next rebuild.`)
     const runtime = d.cycles?.runtime
     if (runtime && (runtime.before !== runtime.after || runtime.largestBefore !== runtime.largestAfter || runtime.introduced.length || runtime.resolved.length || runtime.membershipChanged)) {
         const changes = []

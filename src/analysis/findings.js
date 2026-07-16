@@ -8,8 +8,14 @@ export const FINDING_CATEGORIES = ["unused", "structure", "vulnerability", "malw
 
 // Stable id: survives re-runs so the UI can persist expand/dismiss state per finding.
 export function makeFinding(f) {
+  const cycleIdentity = Array.isArray(f.cycleMembers)
+    ? [...new Set(f.cycleMembers.map(String))].sort().join("\0")
+    : "";
   const id = createHash("sha1")
-    .update([f.category, f.rule, f.file || "", f.package || "", f.symbol || "", f.title || ""].join("|"))
+    .update([
+      f.category, f.rule, f.file || "", f.manifest || "", f.scope || "",
+      f.package || "", f.symbol || "", cycleIdentity, f.title || "",
+    ].join("|"))
     .digest("hex")
     .slice(0, 16);
   return {

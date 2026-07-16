@@ -9,11 +9,20 @@ const SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info'])
 const CONFIDENCE = new Set(['high', 'medium', 'low'])
 const CATEGORIES = new Set(['unused', 'structure', 'vulnerability', 'malware'])
 const CHECK_KEYS = ['osv', 'malware']
+const PACKAGE_DEPENDENCY_KINDS = new Set(['runtime', 'dev', 'optional', 'peer', 'optional-peer'])
 const CONTROL = /[\u0000-\u001f\u007f]/
 const ABSOLUTE_PATH_FRAGMENT = /(?:^|[\/\s"'`(=])[a-z]:[\\/]|(?:^|[\s"'`(=])(?:\\\\[^\\/\s]+(?:[\\/]|$)|file:(?:\/\/)?[\\/]|\/(?!\/)[^\s])/i
 const TOKEN = /^[\p{L}\p{N}_.:@+\-#$<>()\[\],]+$/u
 const PACKAGE = /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/i
-const CAPS = Object.freeze({modules: 500, dependencies: 2000, findings: 500, hotspots: 250, badges: 100, packages: 5000, usage: 1000, files: 20})
+const CAPS = Object.freeze({
+    modules: 500, dependencies: 2000, findings: 500, hotspots: 250, badges: 100,
+    packages: 5000, usage: 1000, files: 20, packageGraphNodes: 5000, packageGraphEdges: 20000,
+    duplicateGroups: 100, duplicateMembers: 12, divergenceCandidates: 100,
+})
+const DUPLICATE_THRESHOLDS = Object.freeze({
+    clones: Object.freeze({mode: 'renamed', minSimilarityPercent: 80, minTokens: 50}),
+    divergence: Object.freeze({sameName: true, maxSimilarityPercent: 45, minTokens: 50, maxImplementationsPerName: 12}),
+})
 const PACKAGE_SOURCES = new Set(['package-lock', 'yarn-lock', 'requirements', 'venv', 'poetry-lock', 'uv-lock', 'pipfile-lock', 'go-sum', 'go-mod', 'node_modules'])
 
 const int = (value) => Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0
@@ -22,6 +31,7 @@ const text = (value, max = 256) => typeof value === 'string' && value.length > 0
 const token = (value, max = 256) => { const valueText = text(value, max); return valueText && TOKEN.test(valueText) ? valueText : undefined }
 const privacySafeText = (value, max = 256) => { const valueText = text(value, max); return valueText && !ABSOLUTE_PATH_FRAGMENT.test(valueText) ? valueText : undefined }
 const packageName = (value) => { const valueText = text(value, 256); return valueText && PACKAGE.test(valueText) ? valueText : undefined }
+const packageVersion = (value) => { const valueText = text(value, 128); return valueText && /^[A-Za-z0-9][A-Za-z0-9._+~-]*$/.test(valueText) ? valueText : undefined }
 const state = (value) => STATES.has(value) ? value : 'ERROR'
 const verdict = (value) => VERDICTS.has(value) ? value : 'UNKNOWN'
 const compare = (a, b) => String(a).localeCompare(String(b), 'en')
@@ -62,10 +72,11 @@ function list(values, cap, mapper, sorter) {
 }
 
 function count(value, fallbackTotal, returned) {
+    const total = Math.max(int(value?.total), fallbackTotal)
     return {
-        total: Math.max(int(value?.total), fallbackTotal),
+        total,
         returned,
-        truncated: bool(value?.truncated) || fallbackTotal > returned,
+        truncated: bool(value?.truncated) || total > returned,
     }
 }
 
@@ -134,6 +145,122 @@ function sanitizeArchitecture(value) {
     }
 }
 
+function duplicateEvidenceId(value) {
+    const id = text(value, 64)
+    return id && /^[a-f0-9]{24,64}$/i.test(id) ? id : undefined
+}
+
+function duplicateMember(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const file = path(value.file)
+    const startLine = int(value.startLine), endLine = int(value.endLine), tokens = int(value.tokens)
+    if (!file || startLine < 1 || endLine < startLine || tokens < DUPLICATE_THRESHOLDS.clones.minTokens) return null
+    const out = {file, startLine, endLine, tokens}
+    const nodeId = graphId(value.graphNodeId)
+    if (nodeId?.startsWith(`${file}#`)) out.graphNodeId = nodeId
+    return out
+}
+
+function compareDuplicateMember(a, b) {
+    return compare(a.file, b.file) || a.startLine - b.startLine || a.endLine - b.endLine ||
+        compare(a.graphNodeId || '', b.graphNodeId || '')
+}
+
+function duplicateMembers(values, cap = CAPS.duplicateMembers) {
+    const raw = Array.isArray(values) ? values : []
+    const unique = new Map()
+    for (const value of raw) {
+        const item = duplicateMember(value)
+        if (!item) continue
+        const key = `${item.file}\0${item.startLine}\0${item.endLine}\0${item.graphNodeId || ''}`
+        unique.set(key, item)
+    }
+    const all = [...unique.values()].sort(compareDuplicateMember)
+    return {items: all.slice(0, cap), total: all.length, invalid: raw.length - all.length, truncated: all.length > cap}
+}
+
+function cloneGroup(value) {
+    const id = duplicateEvidenceId(value?.id)
+    const members = duplicateMembers(value?.members)
+    const rawStrongestSimilarity = Number(value?.strongestSimilarity)
+    const rawWeakestLinkedSimilarity = Number(value?.weakestLinkedSimilarity)
+    const strongestSimilarity = Math.trunc(rawStrongestSimilarity)
+    const weakestLinkedSimilarity = Math.trunc(rawWeakestLinkedSimilarity)
+    if (!id || members.items.length < 2 || strongestSimilarity < DUPLICATE_THRESHOLDS.clones.minSimilarityPercent ||
+        !Number.isFinite(rawStrongestSimilarity) || rawStrongestSimilarity > 100 ||
+        !Number.isFinite(rawWeakestLinkedSimilarity) || weakestLinkedSimilarity < DUPLICATE_THRESHOLDS.clones.minSimilarityPercent ||
+        rawWeakestLinkedSimilarity > 100 ||
+        weakestLinkedSimilarity > strongestSimilarity) return null
+    const memberCount = Math.max(int(value?.memberCount), members.total)
+    const returnedTokens = members.items.reduce((sum, member) => sum + member.tokens, 0)
+    return {
+        id,
+        memberCount,
+        totalTokens: Math.max(int(value?.totalTokens), returnedTokens),
+        strongestSimilarity,
+        weakestLinkedSimilarity,
+        membersTruncated: bool(value?.membersTruncated) || members.truncated || members.invalid > 0 || memberCount > members.items.length,
+        members: members.items,
+    }
+}
+
+function divergenceCandidate(value) {
+    const id = duplicateEvidenceId(value?.id)
+    const symbol = text(value?.symbol, 256)
+    const rawSimilarity = Number(value?.similarity)
+    const similarity = Math.trunc(rawSimilarity)
+    const members = duplicateMembers(value?.members, 2)
+    if (!id || !symbol || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol) || members.total !== 2 || members.invalid > 0 ||
+        !Number.isFinite(rawSimilarity) || rawSimilarity < 0 || rawSimilarity > DUPLICATE_THRESHOLDS.divergence.maxSimilarityPercent ||
+        members.items[0].file === members.items[1].file) return null
+    return {
+        id,
+        symbol,
+        similarity,
+        totalTokens: Math.max(int(value?.totalTokens), members.items[0].tokens + members.items[1].tokens),
+        members: members.items,
+    }
+}
+
+function sanitizeDuplicates(value) {
+    const rawGroups = Array.isArray(value?.cloneGroups) ? value.cloneGroups : []
+    const rawDivergence = Array.isArray(value?.divergenceCandidates) ? value.divergenceCandidates : []
+    const cloneGroups = list(rawGroups, CAPS.duplicateGroups, cloneGroup,
+        (a, b) => b.totalTokens - a.totalTokens || b.memberCount - a.memberCount || compare(a.id, b.id))
+    const divergence = list(rawDivergence, CAPS.divergenceCandidates, divergenceCandidate,
+        (a, b) => b.totalTokens - a.totalTokens || a.similarity - b.similarity || compare(a.symbol, b.symbol) || compare(a.id, b.id))
+    const invalid = rawGroups.length - cloneGroups.total + rawDivergence.length - divergence.total
+    const membersTruncated = cloneGroups.items.some((group) => group.membersTruncated)
+    const groupCompleteness = count(value?.completeness?.cloneGroups, rawGroups.length, cloneGroups.items.length)
+    const divergenceCompleteness = count(value?.completeness?.divergenceCandidates, rawDivergence.length, divergence.items.length)
+    const truncated = cloneGroups.truncated || divergence.truncated || groupCompleteness.truncated ||
+        divergenceCompleteness.truncated || membersTruncated || invalid > 0
+    const outReasons = reasons([
+        ...(Array.isArray(value?.completeness?.reasons) ? value.completeness.reasons : []),
+        ...(invalid > 0 ? ['INVALID_DUPLICATE_EVIDENCE_DROPPED'] : []),
+        ...(membersTruncated ? ['CLONE_MEMBERS_TRUNCATED'] : []),
+        ...(cloneGroups.truncated ? ['CLONE_GROUPS_TRUNCATED'] : []),
+        ...(divergence.truncated ? ['DIVERGENCE_CANDIDATES_TRUNCATED'] : []),
+    ])
+    const rawFragments = value?.completeness?.fragments
+    const eligible = int(rawFragments?.eligible), filtered = int(rawFragments?.filtered)
+    const total = Math.max(int(rawFragments?.total), eligible + filtered)
+    const outState = state(value?.state)
+    return {
+        state: truncated && outState === 'COMPLETE' ? 'PARTIAL' : outState,
+        verdict: verdict(value?.verdict),
+        thresholds: DUPLICATE_THRESHOLDS,
+        completeness: {
+            fragments: {total, eligible: Math.min(eligible, total), filtered: Math.max(filtered, total - eligible)},
+            cloneGroups: groupCompleteness,
+            divergenceCandidates: divergenceCompleteness,
+            reasons: outReasons,
+        },
+        cloneGroups: cloneGroups.items,
+        divergenceCandidates: divergence.items,
+    }
+}
+
 function numericRecord(value, keys) { const out = {}; for (const key of keys) out[key] = int(value?.[key]); return out }
 function checks(value) { const out = {}; for (const key of CHECK_KEYS) out[key] = state(value?.[key]); return out }
 
@@ -195,16 +322,95 @@ function usage(value) {
     return {name, ecosystem, importCount: int(value.importCount), fileCount: int(value.fileCount), files: files.slice(0, CAPS.files), filesTruncated: bool(value.filesTruncated) || files.length > CAPS.files, kinds: [...new Set((value.kinds || []).map((item) => token(item, 64)).filter(Boolean))].sort(compare).slice(0, 32)}
 }
 
+function packageGraphNode(value) {
+    const name = packageName(value?.name), version = packageVersion(value?.version), id = text(value?.id, 512)
+    if (!name || !version || !id) return null
+    const prefix = `npm:${name}@${version}:`
+    if (!id.startsWith(prefix) || !/^[a-f0-9]{12}$/i.test(id.slice(prefix.length))) return null
+    return {
+        id, name, version,
+        direct: bool(value.direct), dev: bool(value.dev), optional: bool(value.optional), peer: bool(value.peer),
+    }
+}
+
+function sanitizePackageDependencyGraph(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {
+            state: 'NOT_CHECKED', ecosystem: 'npm', root: '(root)',
+            completeness: {
+                nodes: count(null, 0, 0), edges: count(null, 0, 0),
+                declarations: numericRecord(null, ['total', 'resolved', 'unresolved', 'local', 'optionalMissing']),
+                reasons: ['DEPENDENCY_GRAPH_NOT_PROVIDED'],
+            },
+            nodes: [], edges: [],
+        }
+    }
+
+    const nodes = list(value.nodes, CAPS.packageGraphNodes, packageGraphNode,
+        (a, b) => Number(b.direct) - Number(a.direct) || compare(a.name, b.name) || compare(a.version, b.version) || compare(a.id, b.id))
+    const nodeIds = new Set(nodes.items.map((node) => node.id))
+    const edge = (candidate) => {
+        const from = candidate?.from === '(root)' ? '(root)' : text(candidate?.from, 512)
+        const to = text(candidate?.to, 512), kind = token(candidate?.kind, 32)
+        if (!from || !to || !PACKAGE_DEPENDENCY_KINDS.has(kind) || from === to ||
+            (from !== '(root)' && !nodeIds.has(from)) || !nodeIds.has(to)) return null
+        return {from, to, kind}
+    }
+    const edges = list(value.edges, CAPS.packageGraphEdges, edge,
+        (a, b) => compare(a.from, b.from) || compare(a.to, b.to) || compare(a.kind, b.kind))
+    const lockfile = path(value.lockfile, 512)
+    const safeLockfile = lockfile && /(^|\/)(?:package-lock\.json|npm-shrinkwrap\.json)$/i.test(lockfile) ? lockfile : undefined
+    const graphState = state(value.state)
+    const truncated = nodes.truncated || edges.truncated
+    const out = {
+        state: truncated && graphState === 'COMPLETE' ? 'PARTIAL' : graphState,
+        ecosystem: 'npm',
+        root: '(root)',
+        completeness: {
+            nodes: count(value?.completeness?.nodes, nodes.total, nodes.items.length),
+            edges: count(value?.completeness?.edges, edges.total, edges.items.length),
+            declarations: numericRecord(value?.completeness?.declarations, ['total', 'resolved', 'unresolved', 'local', 'optionalMissing']),
+            reasons: reasons(value?.completeness?.reasons),
+        },
+        nodes: nodes.items,
+        edges: edges.items,
+    }
+    set(out, 'lockfile', safeLockfile)
+    const lockfileVersion = int(value.lockfileVersion)
+    if (lockfileVersion > 0) out.lockfileVersion = lockfileVersion
+    return out
+}
+
 function sanitizePackages(value) {
     const inventory = list(value?.inventory, CAPS.packages, packageFact, (a, b) => compare(a.ecosystem, b.ecosystem) || compare(a.name, b.name) || compare(a.version, b.version))
     const directUsage = list(value?.directUsage, CAPS.usage, usage, (a, b) => compare(a.ecosystem, b.ecosystem) || compare(a.name, b.name))
-    const outState = state(value?.state), truncated = inventory.truncated || directUsage.truncated
-    return {state: truncated && outState === 'COMPLETE' ? 'PARTIAL' : outState, verdict: verdict(value?.verdict), completeness: {inventory: count(value?.completeness?.inventory, inventory.total, inventory.items.length), directUsage: count(value?.completeness?.directUsage, directUsage.total, directUsage.items.length), reasons: reasons(value?.completeness?.reasons)}, checks: checks(value?.checks), inventory: inventory.items, directUsage: directUsage.items}
+    const dependencyGraph = sanitizePackageDependencyGraph(value?.dependencyGraph)
+    const outState = state(value?.state)
+    const truncated = inventory.truncated || directUsage.truncated ||
+        (dependencyGraph.state === 'PARTIAL' && value?.dependencyGraph?.state === 'COMPLETE')
+    return {
+        state: truncated && outState === 'COMPLETE' ? 'PARTIAL' : outState,
+        verdict: verdict(value?.verdict),
+        completeness: {
+            inventory: count(value?.completeness?.inventory, inventory.total, inventory.items.length),
+            directUsage: count(value?.completeness?.directUsage, directUsage.total, directUsage.items.length),
+            dependencyGraphNodes: count(value?.completeness?.dependencyGraphNodes, dependencyGraph.completeness.nodes.total, dependencyGraph.nodes.length),
+            dependencyGraphEdges: count(value?.completeness?.dependencyGraphEdges, dependencyGraph.completeness.edges.total, dependencyGraph.edges.length),
+            reasons: reasons(value?.completeness?.reasons),
+        },
+        checks: checks(value?.checks), inventory: inventory.items, directUsage: directUsage.items, dependencyGraph,
+    }
 }
 
 export function sanitizeEvidenceSnapshot(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) || value.evidenceSnapshotV !== 1) throw new Error('invalid evidence snapshot')
-    const sections = {architecture: sanitizeArchitecture(value.sections?.architecture), health: sanitizeHealth(value.sections?.health), technologies: sanitizeTechnologies(value.sections?.technologies), packages: sanitizePackages(value.sections?.packages)}
+    const sections = {
+        architecture: sanitizeArchitecture(value.sections?.architecture),
+        duplicates: sanitizeDuplicates(value.sections?.duplicates),
+        health: sanitizeHealth(value.sections?.health),
+        technologies: sanitizeTechnologies(value.sections?.technologies),
+        packages: sanitizePackages(value.sections?.packages),
+    }
     const states = Object.values(sections).map((section) => section.state)
     const snapshotState = states.every((item) => item === 'ERROR') ? 'ERROR' : states.every((item) => item === 'COMPLETE' || item === 'NOT_APPLICABLE') ? 'COMPLETE' : 'PARTIAL'
     const snapshot = {evidenceSnapshotV: 1, state: snapshotState, sections}

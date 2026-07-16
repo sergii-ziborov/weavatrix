@@ -1,9 +1,9 @@
 {
   "name": "weavatrix",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "type": "module",
   "description": "Weavatrix — code graph & blast-radius MCP server for AI coding agents: change impact, transitive dependents, health audit, duplicate detection, and coverage mapping over any local repository.",
-  "author": "Sergii Ziborov <sergii@edgehawk.io>",
+  "author": "Sergii Ziborov <sergii.ziborov@gmail.com>",
   "license": "MIT",
   "homepage": "https://weavatrix.com",
   "repository": {

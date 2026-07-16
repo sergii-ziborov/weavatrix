@@ -20,6 +20,10 @@ import {
 } from "./internal-audit.collect.js";
 import { entryFiles, computeReachability } from "./internal-audit.reach.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { PATH_CLASS_NAMES, createPathClassifier, hasPathClass } from "../path-classification.js";
+import { packageReachability } from "./package-reachability.js";
+
+const LOWER_SEVERITY = { critical: "high", high: "medium", medium: "low", low: "info", info: "info" };
 
 // Run the internal audit. graph is optional (loaded from the repo's central graph.json when absent);
 // advisoryStorePath overrides the default ~/.weavatrix/advisories.json (tests use a scratch path).
@@ -41,13 +45,29 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   // Graphs can be stale or miss a helper file; text fallbacks must scan the real repo tree too.
   const sources = collectSourceTexts(repoPath, graph);
   const nonRuntimeRoots = collectNonRuntimeRoots(repoPath, rules);
+  const pathClassifier = createPathClassifier(repoPath);
+  const pathClassifications = new Map();
+  const classifyPath = (file) => {
+    const normalized = String(file || "").replace(/\\/g, "/");
+    if (!pathClassifications.has(normalized)) {
+      pathClassifications.set(normalized, pathClassifier.explain(normalized, { content: sources.get(normalized) }));
+    }
+    return pathClassifications.get(normalized);
+  };
+  const isNonProductPath = (file) => {
+    const info = classifyPath(file);
+    return info.excluded || hasPathClass(info, "test", "e2e", "generated", "mock", "story", "docs", "benchmark", "temp");
+  };
 
+  const conventionEvidence = [];
   const entries = entryFiles(graph, packageScopes, dynamicTargets, {
     declaredEntries: rules.entrypoints || rules.entries || [],
     sources,
+    conventionEvidence,
   });
   for (const file of sources.keys()) {
     if (nonRuntimeRoots.some((root) => file === root || file.startsWith(`${root}/`))) entries.add(file);
+    if (isNonProductPath(file)) entries.add(file);
   }
   const dead = computeDead(graph, sources, { entrySet: entries });
   const unusedExports = computeUnusedExports(graph, sources, { dynamicTargets, entrySet: entries });
@@ -85,7 +105,8 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   // orphan ∩ dead-file → one finding: keep the stronger unused-file, drop the duplicate orphan
   const deadFileSet = new Set(dead.deadFiles.map((f) => f.file));
   for (const f of structure.findings) if (!(f.rule === "orphan-file" && deadFileSet.has(f.file))) findings.push(f);
-  for (const f of dead.deadFiles) {
+  const actionableDeadFiles = dead.deadFiles.filter((f) => !isNonProductPath(f.file));
+  for (const f of actionableDeadFiles) {
     if (entries.has(f.file) || dynamicTargets.has(f.file) || TEST_FILE_RE.test(f.file)) continue;
     findings.push(makeFinding({
       category: "unused",
@@ -102,7 +123,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   }
   let unusedExportCount = 0;
   for (const s of unusedExports) {
-    if (s.test) continue; // exports from test files are runner-visible noise
+    if (s.test || isNonProductPath(s.file)) continue; // convention/generated surfaces are externally consumed or non-product noise
     if (/(^|\/)[^/]*\.config\.[a-z0-9]+$|(^|\/)\.[^/]+rc(\.[a-z]+)?$/i.test(s.file)) continue; // config exports are consumed by their tool
     findings.push(makeFinding({
       category: "unused",
@@ -125,7 +146,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   let installedCount = 0;
   let inst = { installed: [], drift: [] };
   const checks = {
-    osv: { status: "NOT_CHECKED", detail: "Advisory cache was never refreshed for this repository. The refresh_advisories tool belongs to the optional online capability group: enable that group in the MCP registration, then call the tool explicitly to opt in to sending pinned package names and versions to OSV.dev." },
+    osv: { status: "NOT_CHECKED", detail: "Advisory cache was never refreshed for this repository. Enable the osv profile (or advisories capability), then call refresh_advisories explicitly to opt in to sending pinned package names and versions to OSV.dev." },
     malware: { status: skipMalwareScan ? "NOT_CHECKED" : "PENDING", detail: skipMalwareScan ? "Installed-package malware scan is opt-in and was not requested." : "" },
   };
   try {
@@ -143,7 +164,7 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       const coverage = typeof repoStamp === "object" && Number.isFinite(repoStamp.queried)
         ? ` (${repoStamp.queried_ok ?? repoStamp.queried}/${repoStamp.queried} package versions queried successfully)`
         : "";
-      const drift = fingerprintMatches ? "" : " Dependency versions changed, or this is a legacy stamp without a package fingerprint; enable the optional online capability group and call refresh_advisories for complete coverage.";
+      const drift = fingerprintMatches ? "" : " Dependency versions changed, or this is a legacy stamp without a package fingerprint; enable the osv profile (or advisories capability) and call refresh_advisories for complete coverage.";
       checks.osv = {
         status,
         detail: `${status === "PARTIAL" ? "Partially matched" : "Matched"} installed packages against the cached OSV snapshot from ${advisoryDbDate}${coverage}.${drift}`,
@@ -151,16 +172,25 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       };
       for (const h of matchAdvisories(inst.installed, (eco, name) => queryStore(store, eco, name))) {
         const mal = h.adv.kind === "malicious";
+        const reachability = packageReachability(externalImports, h.pkg.name, { isNonProductPath });
+        const observedInProduct = reachability.state === "DIRECT_RUNTIME_IMPORT";
+        const reachabilityDetail = observedInProduct
+          ? ` Graph reachability: directly imported by product code in ${reachability.directRuntimeImports} callsite(s) across ${reachability.files.length} file(s).`
+          : ` Graph reachability: ${reachability.state}; ${reachability.note}`;
         findings.push(makeFinding({
           category: mal ? "malware" : "vulnerability",
           rule: mal ? "malicious-package" : "known-vuln",
-          severity: mal ? "critical" : h.adv.severity,
-          confidence: h.confidence,
+          severity: mal || observedInProduct ? (mal ? "critical" : h.adv.severity) : LOWER_SEVERITY[h.adv.severity] || h.adv.severity,
+          confidence: mal || observedInProduct ? h.confidence : "low",
           title: `${mal ? "Known-malicious package" : `Known vulnerability (${h.adv.id})`}: ${h.pkg.name}@${h.pkg.version}`,
-          detail: `${h.adv.summary || h.adv.id}${h.adv.fixedIn.length ? ` Fixed in: ${h.adv.fixedIn.join(", ")}.` : mal ? " Remove this package immediately and rotate any secrets it could reach." : ""} (matched by ${h.matchedBy}${h.adv.aliases.length ? `; aliases ${h.adv.aliases.join(", ")}` : ""})`,
+          detail: `${h.adv.summary || h.adv.id}${h.adv.fixedIn.length ? ` Fixed in: ${h.adv.fixedIn.join(", ")}.` : mal ? " Remove this package immediately and rotate any secrets it could reach." : ""} (matched by ${h.matchedBy}${h.adv.aliases.length ? `; aliases ${h.adv.aliases.join(", ")}` : ""}).${reachabilityDetail}`,
           package: h.pkg.name,
           version: h.pkg.version,
-          evidence: [{ file: h.adv.url, line: 0, snippet: `installed via ${h.pkg.source}${h.pkg.dev ? " (dev)" : ""}` }],
+          reachability,
+          evidence: [
+            { file: h.adv.url, line: 0, snippet: `installed via ${h.pkg.source}${h.pkg.dev ? " (dev)" : ""}` },
+            ...reachability.evidence.slice(0, 5).map((item) => ({file: item.file, line: item.line, snippet: `${item.typeOnly ? "type-only " : ""}${item.kind}`})),
+          ],
           source: "osv",
           fixHint: mal ? `npm uninstall ${h.pkg.name} + audit what it touched` : h.adv.fixedIn.length ? `upgrade ${h.pkg.name} to ${h.adv.fixedIn[h.adv.fixedIn.length - 1]}+` : "no fixed version published — consider replacing the package",
         }));
@@ -237,10 +267,25 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
       packageScopes: packageScopes.length,
       managedPythonDependencies: managedPython.length,
       nonRuntimeRoots,
+      pathClassifications: Object.fromEntries(PATH_CLASS_NAMES.map((name) => [
+        name,
+        [...pathClassifications.values()].filter((info) => info.classes.includes(name)).length,
+      ])),
+      pathClassificationExcluded: [...pathClassifications.values()].filter((info) => info.excluded).length,
+      conventionEntrypoints: conventionEvidence.length,
     },
     summary: summarizeFindings(sorted),
     findings: sorted,
-    deadReport: { deadSymbols: dead.deadSymbols.length, deadFiles: dead.deadFiles.length, unusedExports: unusedExportCount },
+    deadReport: {
+      deadSymbols: dead.deadSymbols.filter((symbol) => !isNonProductPath(symbol.file)).length,
+      deadFiles: actionableDeadFiles.length,
+      unusedExports: unusedExportCount,
+    },
+    conventionReachability: {
+      count: conventionEvidence.length,
+      entries: conventionEvidence.slice(0, 100),
+      truncated: conventionEvidence.length > 100,
+    },
     structureReport: structure.stats,
     checks,
     malwareScan,

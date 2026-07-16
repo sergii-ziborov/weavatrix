@@ -20,6 +20,11 @@ export const CAPS = Object.freeze({
     packages: 5_000,
     directUsage: 1_000,
     usageFiles: 20,
+    packageGraphNodes: 5_000,
+    packageGraphEdges: 20_000,
+    duplicateGroups: 100,
+    duplicateMembers: 12,
+    divergenceCandidates: 100,
 })
 
 export const COMPLEXITY_THRESHOLDS = Object.freeze({

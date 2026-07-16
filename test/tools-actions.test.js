@@ -1,10 +1,20 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tOpenRepo, tSyncGraph } from "../src/mcp/tools-actions.mjs";
 import { loadGraph } from "../src/mcp/graph-context.mjs";
+import { graphOutDirForRepo } from "../src/graph/layout.js";
+
+const previousGraphHome = process.env.WEAVATRIX_GRAPH_HOME;
+const testGraphHome = mkdtempSync(join(tmpdir(), "wx-graph-home-"));
+process.env.WEAVATRIX_GRAPH_HOME = testGraphHome;
+after(() => {
+  if (previousGraphHome == null) delete process.env.WEAVATRIX_GRAPH_HOME;
+  else process.env.WEAVATRIX_GRAPH_HOME = previousGraphHome;
+  rmSync(testGraphHome, { recursive: true, force: true });
+});
 
 test("open_repo: rejects relative paths before retargeting", async () => {
   const out = await tOpenRepo(null, { path: "../another-repo" }, {});
@@ -32,9 +42,9 @@ test("open_repo: rejects an ordinary directory that is not a Git working tree", 
 test("open_repo: switches to another Git repository with an existing graph in one call", async () => {
   const parent = mkdtempSync(join(tmpdir(), "wx-open-switch-"));
   const repo = join(parent, "target-repo");
-  const graphPath = join(parent, "weavatrix-graphs", "target-repo", "graph.json");
   mkdirSync(join(repo, ".git"), { recursive: true });
-  mkdirSync(join(parent, "weavatrix-graphs", "target-repo"), { recursive: true });
+  const graphPath = join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json");
+  mkdirSync(graphOutDirForRepo(realpathSync.native(repo)), { recursive: true });
   writeFileSync(graphPath, JSON.stringify({
     nodes: [{ id: "src/a.js", label: "a.js", source_file: "src/a.js" }],
     links: [],
@@ -50,7 +60,7 @@ test("open_repo: switches to another Git repository with an existing graph in on
     const out = await tOpenRepo(null, { path: repo, build: false }, ctx);
     assert.match(out, /Opened .*target-repo/);
     assert.equal(ctx.repoRoot, realpathSync.native(repo));
-    assert.equal(ctx.graphPath, join(realpathSync.native(parent), "weavatrix-graphs", "target-repo", "graph.json"));
+    assert.equal(ctx.graphPath, join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json"));
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });
 
@@ -218,9 +228,9 @@ test("loadGraph preserves the repository-boundary marker for sync_graph", () => 
 test("open_repo: build:false refuses a legacy edge-schema graph without changing target", async () => {
   const parent = mkdtempSync(join(tmpdir(), "wx-open-legacy-"));
   const repo = join(parent, "legacy-repo");
-  const graphPath = join(parent, "weavatrix-graphs", "legacy-repo", "graph.json");
   mkdirSync(join(repo, ".git"), { recursive: true });
-  mkdirSync(join(parent, "weavatrix-graphs", "legacy-repo"), { recursive: true });
+  const graphPath = join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json");
+  mkdirSync(graphOutDirForRepo(realpathSync.native(repo)), { recursive: true });
   writeFileSync(graphPath, JSON.stringify({ nodes: [], links: [], repoBoundaryV: 1 }));
   const ctx = { repoRoot: parent, graphPath: join(parent, "current.json"), reload() { throw new Error("must not reload"); } };
   try {

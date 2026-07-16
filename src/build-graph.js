@@ -6,11 +6,15 @@
 // the ENTIRE app froze on big repos. The worker writes graph.json itself and returns only counts +
 // summaries. If the worker can't even start (exotic packaging), we fall back to the in-process build
 // rather than lose the feature.
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import { childProcessEnv } from "./child-env.js";
-import { graphOutDirForRepo, repoTopFolders, summarizeCommunities, summarizeHotspots, filterGraphForMode, filterGraphByScope } from "./graph/layout.js";
+import { graphHomeDir, graphOutDirForRepo, graphStorageKey, repoTopFolders, summarizeCommunities, summarizeHotspots, filterGraphForMode, filterGraphByScope } from "./graph/layout.js";
+import { registerRepository } from "./graph/repo-registry.js";
+import { refreshGraphIncrementally, snapshotRepository } from "./graph/incremental-refresh.js";
+import { atomicWriteFileSync, withFileLock } from "./graph/file-lock.js";
+import { repositoryFreshnessProbe, stampRepositoryFreshness } from "./graph/freshness-probe.js";
 
 // The worker path deadlocks web-tree-sitter's WASM in Electron's worker threads (fine in plain Node) — off
 // until that's Electron-safe. In-process + event-loop yielding keeps the window responsive without it.
@@ -54,23 +58,66 @@ function buildGraphInWorker(payload) {
 
 async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central }) {
   const { buildInternalGraph } = await import("./graph/internal-builder.js");
-  let graph = await buildInternalGraph(repoPath);
+  // Capture the cheap Git state on both sides of the authoritative build. Only an unchanged pair is
+  // safe to persist: if the working tree moves while parsing, the next process must take the slow path.
+  const probeBefore = scope ? null : repositoryFreshnessProbe(repoPath);
+  let graph;
+  let refresh = null;
+  if (mode === "full" && !scope && existsSync(graphJson)) {
+    try {
+      const existing = JSON.parse(readFileSync(graphJson, "utf8"));
+      if (existing.graphBuildMode === "full" && !existing.graphBuildScope) {
+        refresh = await refreshGraphIncrementally(repoPath, existing, { buildGraph: buildInternalGraph });
+        graph = refresh.graph;
+      }
+    } catch { /* malformed/legacy graph: the safe path below is a full rebuild */ }
+  }
+  if (!graph && mode !== "full" && !scope && existsSync(graphJson)) {
+    try {
+      const existing = JSON.parse(readFileSync(graphJson, "utf8"));
+      if (existing.graphBuildMode === mode && existing.graphRevision) {
+        const snapshot = snapshotRepository(repoPath);
+        if (snapshot.revision === existing.graphRevision) {
+          graph = existing;
+          refresh = { kind: "none", changedFiles: [], reason: "content-unchanged", revision: snapshot.revision };
+        }
+      }
+    } catch { /* malformed/legacy filtered graph: rebuild below */ }
+  }
+  if (!graph) {
+    graph = await buildInternalGraph(repoPath);
+    refresh = { kind: "full", changedFiles: [], reason: "full-build-requested", revision: graph.graphRevision };
+  }
   // mode (no-tests/tests-only) + path-scope reuse the same pure filters graph-builder used.
-  if (mode === "no-tests" || mode === "tests-only") graph = filterGraphForMode(graph, mode);
+  if (mode === "no-tests" || mode === "tests-only") graph = filterGraphForMode(graph, mode, { repoRoot: repoPath });
   if (scope) graph = filterGraphByScope(graph, scope);
-  mkdirSync(central, { recursive: true });
-  writeFileSync(graphJson, JSON.stringify(graph), "utf8");
+  graph.graphBuildMode = mode;
+  graph.graphBuildScope = scope || "";
+  const probeAfter = scope ? null : repositoryFreshnessProbe(repoPath);
+  const stableProbe = probeBefore && probeAfter === probeBefore ? probeAfter : null;
+  const freshnessMetadataChanged = stampRepositoryFreshness(graph, stableProbe, mode);
+  // Auto-refresh runs before every graph/health call. A no-op must not serialize and rewrite a
+  // multi-megabyte graph merely to answer that nothing changed (or manufacture a newer mtime).
+  // A one-time metadata-only write is intentional for legacy graphs so the next MCP process can use
+  // the persisted probe instead of repeating a full repository snapshot.
+  if (refresh?.kind !== "none" || freshnessMetadataChanged) {
+    mkdirSync(central, { recursive: true });
+    atomicWriteFileSync(graphJson, JSON.stringify(graph), "utf8");
+  }
   return {
     nodes: graph.nodes.length,
     links: graph.links.length,
     communities: summarizeCommunities(graphJson),
     hotspots: summarizeHotspots(graphJson),
+    refresh,
   };
 }
 
-export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", outDir } = {}) {
+export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", outDir, graphHome } = {}) {
   if (!existsSync(repoPath)) return { ok: false, error: "Repo path not found", builder: "internal" };
-  const central = outDir || graphOutDirForRepo(repoPath);
+  const registryHome = graphHome || graphHomeDir();
+  const canonicalDir = graphHome ? join(registryHome, graphStorageKey(repoPath)) : graphOutDirForRepo(repoPath);
+  const central = outDir || canonicalDir;
   const graphJson = join(central, "graph.json");
   try {
     // In-process is the ONLY path now. The worker (buildGraphInWorker) hung web-tree-sitter's WASM inside an
@@ -78,12 +125,23 @@ export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", o
     // in ~3s on the main thread (and in a plain-Node worker). buildInternalGraph now YIELDS the event loop
     // between file chunks, so the main-thread parse no longer freezes the window — the reason the worker was
     // introduced. buildGraphInWorker/USE_BUILD_WORKER are kept for a future Electron-safe re-enable.
-    const built = USE_BUILD_WORKER
-      ? await buildGraphInWorker({ repoPath, mode, scope, graphJson, central }).catch((e) => {
+    const build = () => USE_BUILD_WORKER
+      ? buildGraphInWorker({ repoPath, mode, scope, graphJson, central }).catch((e) => {
           if (e && e.workerStartFailed) return buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central });
           throw e;
         })
-      : await buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central });
+      : buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central });
+    // Canonical graphs are shared by all local MCP clients. Serialize the complete read/refresh/write
+    // transaction so an older process cannot overwrite a newer incremental result.
+    const canonical = !scope && resolve(central) === resolve(canonicalDir);
+    const built = canonical
+      ? await withFileLock(join(central, ".graph.lock"), build, { timeoutMs: 5 * 60_000, staleMs: 10 * 60_000 })
+      : await build();
+    // Scoped builds are disposable diagnostics under modules/<scope>; registering one would retarget
+    // list_known_repos and cross-repo analysis away from the complete canonical graph.
+    if (canonical) {
+      registerRepository({ repoPath, graphDir: central, graphHome: registryHome });
+    }
     return {
       ok: true,
       builder: "internal",
@@ -95,7 +153,8 @@ export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", o
       graphDir: central,
       communities: built.communities,
       hotspots: built.hotspots,
-      log: `built-in builder: ${built.nodes} nodes, ${built.links} links`
+      refresh: built.refresh,
+      log: `built-in builder: ${built.nodes} nodes, ${built.links} links (${built.refresh?.kind || "full"}: ${built.refresh?.reason || "build"})`
     };
   } catch (error) {
     return { ok: false, error: `graph build failed: ${error.message}`, builder: "internal" };

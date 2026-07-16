@@ -43,7 +43,7 @@ export function summarizeHotspots(graphJsonPath, max = 15) {
     const inDeg = new Map();
     const outDeg = new Map();
     for (const link of graph.links || []) {
-      if (isStructuralRelation(link.relation)) continue;
+      if (isStructuralRelation(link.relation) || link.barrelProxy === true) continue;
       const s = endpoint(link.source);
       const t = endpoint(link.target);
       outDeg.set(s, (outDeg.get(s) || 0) + 1);

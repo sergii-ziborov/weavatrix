@@ -74,6 +74,60 @@ test("query_graph keeps one strong seed per architecture intent", () => {
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test("query_graph exact seed_files disable fuzzy architecture seeds unless augmentation is explicit", () => {
+  const pinned = { id: "src/main.tsx", label: "main.tsx", source_file: "src/main.tsx" };
+  const fuzzy = { id: "src/auth/AuthGate.tsx", label: "AuthGate.tsx", source_file: "src/auth/AuthGate.tsx" };
+  const fx = graphFile({nodes: [pinned, fuzzy], links: []});
+  try {
+    const strict = tQueryGraph(fx.graph, {question: "authentication", seed_files: ["src/main.tsx"], depth: 1});
+    assert.match(strict, /Seeds: main\.tsx/);
+    assert.doesNotMatch(strict, /Seeds:.*AuthGate/);
+    const augmented = tQueryGraph(fx.graph, {question: "authentication", seed_files: ["src/main.tsx"], augment_seeds: true, depth: 1});
+    assert.match(augmented, /Seeds:.*AuthGate/);
+  } finally { rmSync(fx.dir, {recursive: true, force: true}); }
+});
+
+test("barrel proxy hops do not inflate semantic hubs, modules, or dependents", () => {
+  const graph = {
+    barrelResolutionV: 1,
+    nodes: [
+      { id: "src/app/App.tsx", label: "App.tsx", source_file: "src/app/App.tsx", file_type: "code" },
+      { id: "src/page/Page.tsx", label: "Page.tsx", source_file: "src/page/Page.tsx", file_type: "code" },
+      { id: "src/shared/components/index.ts", label: "index.ts", source_file: "src/shared/components/index.ts", file_type: "code" },
+      { id: "src/ui/Button.tsx", label: "Button.tsx", source_file: "src/ui/Button.tsx", file_type: "code" },
+    ],
+    links: [
+      { source: "src/app/App.tsx", target: "src/shared/components/index.ts", relation: "imports", barrelProxy: true },
+      { source: "src/page/Page.tsx", target: "src/shared/components/index.ts", relation: "imports", barrelProxy: true },
+      { source: "src/shared/components/index.ts", target: "src/ui/Button.tsx", relation: "re_exports", barrelProxy: true },
+      { source: "src/app/App.tsx", target: "src/ui/Button.tsx", relation: "imports", semanticOrigin: true, viaBarrel: "src/shared/components/index.ts" },
+      { source: "src/page/Page.tsx", target: "src/ui/Button.tsx", relation: "imports", semanticOrigin: true, viaBarrel: "src/shared/components/index.ts" },
+    ],
+  };
+  const fx = graphFile(graph);
+  try {
+    const hubs = tGodNodes(fx.graph, { top_n: 10 });
+    assert.match(hubs, /Button\.tsx\s+\(2 unique/);
+    assert.doesNotMatch(hubs, /index\.ts\s+\(/, "facade is not ranked as the architectural hub");
+
+    const dependents = tGetDependents(fx.graph, { label: "src/ui/Button.tsx", depth: 2 });
+    assert.match(dependents, /App\.tsx/);
+    assert.match(dependents, /Page\.tsx/);
+    assert.doesNotMatch(dependents, /index\.ts/, "reverse impact reports real consumers, not the facade hop");
+    assert.match(tGetDependents(fx.graph, { label: "src/shared/components/index.ts", depth: 2 }), /No dependents found/);
+
+    const aggregate = aggregateGraph(graph, null);
+    assert.deepEqual(
+      aggregate.moduleEdges.map(({ from, to, count }) => ({ from, to, count })),
+      [
+        { from: "src/app", to: "src/ui", count: 1 },
+        { from: "src/page", to: "src/ui", count: 1 },
+      ],
+      "module rollup looks through the barrel instead of assigning coupling to it",
+    );
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
 test("query_graph preserves importer-to-imported direction when traversing from the imported seed", () => {
   const editor = { id: "src/widget/EditWidget.tsx", label: "EditWidget.tsx", source_file: "src/widget/EditWidget.tsx" };
   const store = { id: "src/store/useDynamicStore.ts", label: "useDynamicStore.ts", source_file: "src/store/useDynamicStore.ts" };

@@ -40,6 +40,7 @@ export function tGraphStats(g, ctx) {
         `- Nodes: ${g.nodes.length} (${files} files, ${symbols} symbols)`,
         `- Edges: ${g.links.length}`,
         g.edgeTypesV ? `- Typed-edge metadata: v${g.edgeTypesV} (${typeOnlyEdges} type-only, ${compileOnlyEdges} compile-only edges)` : `- Typed-edge metadata: unavailable (rebuild_graph required)`,
+        g.barrelResolutionV ? `- Barrel resolution: v${g.barrelResolutionV} (semantic tools look through JS/TS re-export facades)` : `- Barrel resolution: unavailable (rebuild_graph required for JS/TS barrel transparency)`,
         `- Relations: ${fmt(relCount)}`,
         Object.keys(confCount).length ? `- Confidence: ${fmt(confCount)}` : null,
         `- Communities: ${comm.size} (top by size: ${topComm.map(([c, n]) => `#${c}=${n}`).join(', ')})`,
@@ -58,6 +59,8 @@ export function tGetNode(g, {label} = {}, ctx) {
     const drift = ctx ? fileStalenessNote(ctx, n.source_file || (isSymbol(id) ? id.split('#')[0] : id)) : null
     const outs = g.out.get(id) || []
     const ins = g.inn.get(id) || []
+    const semanticOuts = connList(outs)
+    const semanticIns = connList(ins)
     const sample = (list, dir) =>
         list
             .slice(0, 12)
@@ -70,7 +73,7 @@ export function tGetNode(g, {label} = {}, ctx) {
         `- kind: ${isSymbol(id) ? 'symbol' : 'file'}${n.file_type ? ` (${n.file_type})` : ''}`,
         n.source_file ? `- source: ${n.source_file}${n.source_location ? ` ${n.source_location}` : ''}` : null,
         n.community != null ? `- community: ${n.community}` : null,
-        `- degree: ${outs.length + ins.length} (out ${outs.length}, in ${ins.length})`,
+        `- semantic degree: ${semanticOuts.length + semanticIns.length} (out ${semanticOuts.length}, in ${semanticIns.length})${outs.length + ins.length !== semanticOuts.length + semanticIns.length ? `; ${outs.length + ins.length} physical/structural edges retained` : ''}`,
         `Outgoing:\n${sample(outs, 'out')}`,
         `Incoming:\n${sample(ins, 'in')}`,
         drift,
@@ -151,9 +154,13 @@ export function tGetCommunity(g, {community_id} = {}) {
 // A plain BFS/DFS flood dumps every reached node (thousands on a real graph) at near-zero signal.
 // Instead: traverse to record reach + distance-from-seed, then show only the closest, most-connected
 // slice as a coherent subgraph (edges kept only among shown nodes). Honest about what was trimmed.
-export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, seed_files, token_budget = 2000} = {}) {
+export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, seed_files, augment_seeds = false, token_budget = 2000} = {}) {
     const pinned = resolveSeedFiles(g, seed_files)
-    const automatic = findSeeds(g, question, Math.max(0, 8 - pinned.seeds.length))
+    // Exact seed files are a control surface, not a hint: by default they disable fuzzy keyword seeds.
+    // Callers can opt back into augmentation when they explicitly want both behaviors.
+    const automatic = pinned.seeds.length && augment_seeds !== true
+        ? []
+        : findSeeds(g, question, Math.max(0, 8 - pinned.seeds.length))
     const seeds = [...pinned.seeds, ...automatic.filter((node) => !pinned.seeds.some((seed) => String(seed.id) === String(node.id)))]
     if (!seeds.length) return `No nodes matched "${question}".`
     const maxDepth = Math.max(1, Math.min(6, Number(depth) || 3))
@@ -205,7 +212,7 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
     for (const source of shownIds) {
         for (const edge of g.out.get(source) || []) {
             const target = String(edge.id)
-            if (!shownIds.has(target) || !relOk(edge.relation)) continue
+            if (edge.barrelProxy === true || !shownIds.has(target) || !relOk(edge.relation)) continue
             const key = `${source}|${edge.relation}|${target}`
             if (edgeSeen.has(key)) continue
             edgeSeen.add(key)

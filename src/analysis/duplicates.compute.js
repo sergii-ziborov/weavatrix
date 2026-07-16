@@ -1,8 +1,8 @@
 // duplicates.compute.js — fragment extraction, inverted-index pairing, and the computeDuplicates
 // pipeline (split from duplicates.js; see the facade there for the full algorithm overview).
 import { readFileSync } from "node:fs";
-import { isTestPath } from "../graph/graph-filter.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { createPathClassifier, hasPathClass } from "../path-classification.js";
 import { listRepoFiles } from "./internal-audit.collect.js";
 import { stripNonCode, bodyEndLineCount, tokenize, fingerprints, extractLargeStrings } from "./duplicates.tokenize.js";
 
@@ -113,9 +113,19 @@ function symbolRanges(graph) {
   return byFile;
 }
 
+function loadGraph(graphInput) {
+  if (graphInput && typeof graphInput === "object" && !Array.isArray(graphInput)) {
+    return { nodes: Array.isArray(graphInput.nodes) ? graphInput.nodes : [] };
+  }
+  if (typeof graphInput !== "string" || !graphInput) throw new TypeError("graph path or graph object is required");
+  const parsed = JSON.parse(readFileSync(graphInput, "utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new TypeError("graph must be an object");
+  return { nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [] };
+}
+
 export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   const includeStrings = !!opts.includeStrings;
-  const graph = JSON.parse(readFileSync(graphJsonPath, "utf8"));
+  const graph = loadGraph(graphJsonPath);
   const byFile = symbolRanges(graph);
   // total symbol nodes in the graph — 0 means a file-only graph (built by an older builder before
   // symbol extraction, or a stale graph): clone detection has nothing to work with, and the UI must
@@ -126,6 +136,18 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   for (const [file, arr] of byFile) if (allowedFiles.has(file)) graphSymbols += arr.length;
   const frags = [];
   const boundary = createRepoBoundary(repoPath);
+  const classifier = createPathClassifier(repoPath);
+  const classificationByFile = new Map();
+  const classify = (file, content) => {
+    if (!classificationByFile.has(file)) classificationByFile.set(file, classifier.explain(file, { content }));
+    return classificationByFile.get(file);
+  };
+  const classificationFields = (info) => ({
+    test: hasPathClass(info, "test", "e2e"),
+    classes: info.classes,
+    excluded: info.excluded,
+    matchedRule: info.matchedRule,
+  });
   for (const [file, syms] of byFile) {
     if (!allowedFiles.has(file)) continue;
     const resolved = boundary.resolve(file);
@@ -134,6 +156,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
     let lines;
     try { lines = readFileSync(full, "utf8").split(/\r?\n/); } catch { continue; }
     const py = /\.py$/i.test(file);
+    const pathInfo = classify(file, lines.join("\n"));
     for (let i = 0; i < syms.length; i++) {
       const start = syms[i].line;
       // hard cap first (next symbol, or EOF, whichever comes first, ≤ MAX_BODY_LINES) …
@@ -150,7 +173,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       frags.push({
         id: syms[i].id, label: syms[i].label, file, start, end,
         n: toks.strict.length,
-        test: isTestPath(file),
+        ...classificationFields(pathInfo),
         fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
       });
     }
@@ -164,7 +187,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
         if (toks.strict.length < FLOOR_TOKENS) return;
         frags.push({
           id: `${file}#str@${startLine}`, label: `${base}:${startLine} ~${endLine - startLine + 1}-line string`,
-          file, start: startLine, end: endLine, n: toks.strict.length, test: isTestPath(file), kind: "string",
+          file, start: startLine, end: endLine, n: toks.strict.length, ...classificationFields(pathInfo), kind: "string",
           fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
         });
       };
@@ -188,13 +211,15 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   // ---- windowed fragments for symbol-less file types (CSS/HTML/MD/…), found by walking the repo (NOT the
   // graph — assets are dedup-only). Each file is sliced into WINDOW_LINES blocks and fingerprinted.
   const symFiles = new Set(byFile.keys());
-  const assetFiles = repoFiles.filter((file) => WINDOW_EXTS.test(file)).slice(0, MAX_ASSET_FILES);
+  const allAssetFiles = repoFiles.filter((file) => WINDOW_EXTS.test(file));
+  const assetFiles = allAssetFiles.slice(0, MAX_ASSET_FILES);
   for (const file of assetFiles) {
     if (symFiles.has(file)) continue;
     const resolved = boundary.resolve(file);
     if (!resolved.ok) continue;
     let lines;
     try { lines = readFileSync(resolved.path, "utf8").split(/\r?\n/); } catch { continue; }
+    const pathInfo = classify(file, lines.join("\n"));
     for (let start = 1; start <= lines.length; start += WINDOW_LINES) {
       const end = Math.min(start + WINDOW_LINES - 1, lines.length);
       if (end - start < 2) continue;
@@ -202,7 +227,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       if (toks.strict.length < FLOOR_TOKENS) continue;
       frags.push({
         id: `${file}#win@${start}`, label: `${file.split("/").pop()}:${start}-${end}`, file, start, end,
-        n: toks.strict.length, test: isTestPath(file),
+        n: toks.strict.length, ...classificationFields(pathInfo),
         fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
       });
     }
@@ -211,5 +236,20 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   const nameTwins = opts.nameTwins ? computeNameTwins(frags) : null;
   // fp sets are worker-internal — strip them from the payload that crosses the thread boundary
   const slim = frags.map(({ fp, ...rest }) => rest);
-  return { ok: true, frags: slim, modes, ...(nameTwins ? { nameTwins } : {}), graphSymbols, floors: { tokens: FLOOR_TOKENS, sim: FLOOR_SIM * 100 } };
+  return {
+    ok: true,
+    frags: slim,
+    modes,
+    ...(nameTwins ? { nameTwins } : {}),
+    graphSymbols,
+    completeness: {
+      assetFiles: {
+        total: allAssetFiles.length,
+        scanned: assetFiles.length,
+        truncated: allAssetFiles.length > assetFiles.length,
+      },
+      nameTwinsTruncated: !!nameTwins && nameTwins.length >= 200,
+    },
+    floors: { tokens: FLOOR_TOKENS, sim: FLOOR_SIM * 100 },
+  };
 }

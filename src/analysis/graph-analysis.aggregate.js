@@ -110,7 +110,7 @@ export function aggregateGraph(graph, repoRoot) {
     if (link.relation) edge.rels[link.relation] = (edge.rels[link.relation] || 0) + 1;
   };
   for (const link of links) {
-    if (link.relation === "contains") continue;
+    if (link.relation === "contains" || link.barrelProxy === true) continue;
     const fromFile = id2file.get(endpoint(link.source));
     const toFile = id2file.get(endpoint(link.target));
     if (fromFile && toFile && fromFile !== toFile) {
@@ -133,7 +133,7 @@ export function aggregateGraph(graph, repoRoot) {
   // tagged with its file's module so the Symbols view can still cluster into module regions.
   const symEdges = new Map();
   for (const link of links) {
-    if (link.relation === "contains") continue;
+    if (link.relation === "contains" || link.barrelProxy === true) continue;
     const s = endpoint(link.source);
     const t = endpoint(link.target);
     if (s === t || !symbolIds.has(s) || !symbolIds.has(t)) continue;
