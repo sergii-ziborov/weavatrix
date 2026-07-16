@@ -152,12 +152,13 @@ test("filterGraphByScope: normalises backslash paths before matching", () => {
 
 test("graphOutDir helpers use one global collision-safe graph home", () => {
   const previous = process.env.WEAVATRIX_GRAPH_HOME;
-  process.env.WEAVATRIX_GRAPH_HOME = join("C:", "graph-home");
+  const configuredHome = join(tmpdir(), "weavatrix-graph-home-test");
+  process.env.WEAVATRIX_GRAPH_HOME = configuredHome;
   assert.equal(repoBaseName("C:/work/my-repo"), "my-repo");
   try {
-    const repo = join("C:", "work", "my-repo");
-    const other = join("D:", "other", "my-repo");
-    assert.equal(graphHomeDir(), join("C:", "graph-home"));
+    const repo = join(tmpdir(), "fixtures", "work", "my-repo");
+    const other = join(tmpdir(), "fixtures", "other", "my-repo");
+    assert.equal(graphHomeDir(), configuredHome);
     assert.match(graphStorageKey(repo), /^my-repo-[a-f0-9]{12}$/);
     assert.notEqual(graphStorageKey(repo), graphStorageKey(other));
     assert.equal(graphOutDirForRepo(repo), join(graphHomeDir(), graphStorageKey(repo)));
