@@ -28,7 +28,7 @@ export const TOP_PACKAGES = new Set([
 // Legit close pairs to NOT flag (real distinct packages that happen to sit distance-1/2 apart).
 const KNOWN_LEGIT = new Set([
   "cross-spawn", "react-dom", "react-router", "bcryptjs", "mysql2", "colors", "underscore", "querystring",
-  "markdown-it", "babel-loader", "css-loader", "style-loader",
+  "markdown-it", "babel-loader", "css-loader", "style-loader", "query-string",
 ]);
 
 const norm = (name) => String(name || "").toLowerCase().replace(/^@[^/]+\//, ""); // drop scope for the compare

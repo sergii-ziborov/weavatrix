@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps } from "./manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { childProcessEnv } from "../child-env.js";
+import { filterWeavatrixIgnored } from "../path-ignore.js";
 
 export const readText = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 export const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
@@ -33,7 +34,7 @@ export function listRepoFiles(repoRoot) {
       encoding: "utf8", windowsHide: true, timeout: 15_000, maxBuffer: 32 * 1024 * 1024,
       env: childProcessEnv(),
     });
-    if (r.status === 0) return String(r.stdout || "").split("\0").filter(Boolean).map((f) => f.replace(/\\/g, "/"));
+    if (r.status === 0) return filterWeavatrixIgnored(repoRoot, String(r.stdout || "").split("\0").filter(Boolean).map((f) => f.replace(/\\/g, "/")));
   } catch { /* non-Git repo or git unavailable: use the bounded walker below */ }
 
   const files = [];
@@ -47,7 +48,7 @@ export function listRepoFiles(repoRoot) {
     }
   };
   walk(repoRoot);
-  return files;
+  return filterWeavatrixIgnored(repoRoot, files);
 }
 
 const NON_RUNTIME_DIR_RE = /^(?:templates?|examples?|samples?|fixtures?|snippets?|__fixtures__)$/i;

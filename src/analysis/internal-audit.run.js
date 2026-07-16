@@ -53,7 +53,10 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   const unusedExports = computeUnusedExports(graph, sources, { dynamicTargets, entrySet: entries });
   const reachable = computeReachability(graph, entries);
   const configTexts = collectConfigTexts(repoPath);
-  const dep = computeScopedDepFindings({ externalImports, packageScopes, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts, nonRuntimeRoots });
+  const dep = computeScopedDepFindings({
+    externalImports, packageScopes, workspacePkgNames: workspacePkgNames(repoPath, pkg), configTexts,
+    nonRuntimeRoots, sourceFiles: [...sources.keys()],
+  });
   // non-npm ecosystems: Go (go.mod) + Python (requirements/pyproject/Pipfile) — same findings shape
   const goModText = readRepoText(boundary, "go.mod");
   const goDep = computeGoDepFindings({ externalImports, goMod: goModText != null ? parseGoMod(goModText) : null, nonRuntimeRoots });

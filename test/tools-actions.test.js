@@ -134,7 +134,7 @@ test("sync_graph: uploads only the versioned metadata allowlist", async () => {
   globalThis.fetch = async (_url, options) => { sent = options; return { ok: true, status: 200 }; };
   try {
     const graph = loadGraph(graphPath);
-    const out = await tSyncGraph(graph, {}, { graphPath, repoRoot: dir });
+    const out = await tSyncGraph(graph, { payload_version: 2 }, { graphPath, repoRoot: dir });
     assert.match(out, /pushed to/);
     assert.ok(sent);
     assert.equal(sent.headers["content-type"], "application/json");
@@ -152,6 +152,52 @@ test("sync_graph: uploads only the versioned metadata allowlist", async () => {
     assert.deepEqual(payload.nodes[0].complexity, { startLine: 1, endLine: 3, cyclomatic: 2, confidence: "medium" });
     assert.equal(payload.nodes[0].source_text, undefined);
     assert.equal(payload.externalImports[0].source_text, undefined);
+  } finally {
+    if (previousUrl == null) delete process.env.WEAVATRIX_SYNC_URL;
+    else process.env.WEAVATRIX_SYNC_URL = previousUrl;
+    globalThis.fetch = previousFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sync_graph: payload v3 derives and uploads a bounded evidence snapshot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-sync-evidence-"));
+  const graphPath = join(dir, "graph.json");
+  const secret = "PRIVATE_SOURCE_BODY_v3_7b12";
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(join(dir, "src", "a.js"), "export function run() { return 1 }\n");
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0" }));
+  writeFileSync(graphPath, JSON.stringify({
+    repoBoundaryV: 1, edgeTypesV: 2, extImportsV: 2, complexityV: 1,
+    nodes: [
+      { id: "src/a.js", file_type: "code", source_file: "src/a.js" },
+      { id: "src/a.js#run@1", label: "run()", file_type: "code", source_file: "src/a.js", source_text: secret,
+        complexity: { startLine: 1, endLine: 350, loc: 350, cyclomatic: 2, params: 0, evidence: [secret] } },
+    ],
+    links: [{ source: "src/a.js", target: "src/a.js#run@1", relation: "contains" }],
+    externalImports: [],
+  }));
+  const previousUrl = process.env.WEAVATRIX_SYNC_URL;
+  const previousFetch = globalThis.fetch;
+  let sent;
+  process.env.WEAVATRIX_SYNC_URL = "https://sync.invalid/upload";
+  globalThis.fetch = async (_url, options) => {
+    sent = options;
+    return { ok: true, status: 200, headers: { get: () => null } };
+  };
+  try {
+    const out = await tSyncGraph(loadGraph(graphPath), {}, { graphPath, repoRoot: dir });
+    assert.match(out, /evidence [a-f0-9]{12}/);
+    const payload = JSON.parse(sent.body);
+    assert.equal(payload.syncPayloadV, 3);
+    assert.equal(payload.evidenceV, 1);
+    assert.match(payload.evidence.snapshotHash, /^[a-f0-9]{64}$/);
+    assert.equal(payload.evidence.sections.health.checks.osv, "NOT_CHECKED");
+    assert.equal(payload.evidence.sections.health.verdict, "FAIL");
+    assert.equal(payload.evidence.sections.health.complexity.hotspots[0].file, "src/a.js");
+    assert.equal(sent.headers["x-weavatrix-payload-version"], "3");
+    assert.equal(sent.body.includes(secret), false);
+    assert.equal(sent.body.includes(dir.replace(/\\/g, "/")), false);
   } finally {
     if (previousUrl == null) delete process.env.WEAVATRIX_SYNC_URL;
     else process.env.WEAVATRIX_SYNC_URL = previousUrl;

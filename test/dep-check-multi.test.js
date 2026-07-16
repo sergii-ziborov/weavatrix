@@ -28,6 +28,7 @@ test("go: direct-unused flagged, indirect + used + replaced never flagged; missi
   const missing = findings.filter((f) => f.rule === "missing-dep").map((f) => f.package);
   assert.deepEqual(unused, ["github.com/unused/dep"]);
   assert.deepEqual(missing, ["github.com/not/declared"]); // replaced module suppressed
+  assert.ok(findings.every((finding) => finding.reason), "every Go dependency finding explains its confidence basis");
 });
 
 test("go: no go.mod → no findings (can't judge)", () => {
@@ -49,6 +50,7 @@ test("py: alias (yaml→PyYAML) and python-X naming suppress unused; CLI tools +
   ];
   const { findings } = computePyDepFindings({ externalImports, pyManifest });
   assert.deepEqual(findings.map((f) => [f.rule, f.package]), [["unused-dep", "leftover-lib"]]);
+  assert.match(findings[0].reason, /mapping.*heuristic/i);
   assert.equal(findings[0].confidence, "low"); // import↔dist mapping is heuristic — never higher
 });
 
@@ -61,6 +63,7 @@ test("py: missing dep found with dist-name hint; test-only imports downgraded; n
   const req = withManifest.findings.find((f) => f.package === "requests");
   const cv = withManifest.findings.find((f) => f.package === "opencv-python");
   assert.equal(req.severity, "medium");
+  assert.match(req.reason, /no declared distribution covers it/);
   assert.equal(cv.severity, "low"); // test-only
   assert.match(cv.fixHint, /pip install opencv-python/);
   const noManifest = computePyDepFindings({ externalImports: imports, pyManifest: { present: false, deps: [] } });

@@ -22,6 +22,7 @@ import process from 'node:process'
 import {loadGraph} from './mcp/graph-context.mjs'
 import {graphOutDirForRepo} from './graph/layout.js'
 import {createRequire} from 'node:module'
+import {createStalenessNoticeGate} from './mcp/staleness-notice.mjs'
 
 // version comes from package.json so serverInfo can never drift from the published package again
 const PKG_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version } catch { return '0.0.0' } })()
@@ -33,7 +34,7 @@ const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 // otherwise it is the graph.json path and the repo root follows it.
 let GRAPH_PATH = process.argv[2]
 let repoArg = process.argv[3]
-// caps ABSENT (undefined) = offline defaults (including explicit-call repo retargeting, no network).
+// caps ABSENT (undefined) = repository-pinned offline defaults (no retargeting, no network).
 // PRESENT (even the empty string) = explicit set — see catalog.loadHotApi.
 let CAPS_ARG = process.argv[4]
 try {
@@ -87,6 +88,11 @@ async function main() {
     log(`capabilities: ${[...api.caps].join(',') || '(none)'} (${api.tools.length} tools)`)
 
     let protocolVersion = DEFAULT_PROTOCOL
+    const staleNotices = createStalenessNoticeGate()
+    // Only build/retarget tools mutate the process-wide graph target. Serialize those mutations while
+    // ordinary tools use a per-call graph/context snapshot, so an explicitly retargetable registration
+    // cannot mix one repo's in-memory graph with another repo's source root under concurrent MCP calls.
+    let targetMutation = Promise.resolve()
     const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n')
     const reply = (id, result) => send({jsonrpc: '2.0', id, result})
     const fail = (id, code, message) => send({jsonrpc: '2.0', id, error: {code, message}})
@@ -129,21 +135,33 @@ async function main() {
             if (!tool) return reply(id, {content: [{type: 'text', text: `Unknown tool: ${params?.name}`}], isError: true})
             // action tools can establish/retarget a graph; read tools need one already loaded
             if (!graph && tool.cap !== 'build' && tool.cap !== 'retarget') return reply(id, {content: [{type: 'text', text: `Graph unavailable: ${graphError}`}], isError: true})
-            try {
-                let text = String(await tool.run(graph, params?.arguments || {}, ctx))
-                if (graph && graph.edgeTypesV < 2 && (tool.cap === 'graph' || tool.cap === 'health')) {
-                    text += '\n\nWarning: this saved graph predates compile-only edge metadata (edge schema v2), so Rust module/use dependencies may be absent or misclassified. Call rebuild_graph once before acting on cycle, boundary, dependency, or blast-radius findings.'
-                }
-                // Graph answers silently reflect a point-in-time build — surface staleness on every graph tool.
+            const mutatesTarget = tool.cap === 'build' || tool.cap === 'retarget'
+            const graphSnapshot = graph
+            const callCtx = mutatesTarget ? ctx : {...ctx}
+            const execute = async () => {
+                try {
+                    // A queued rebuild must see a preceding retarget's graph, while non-mutating calls stay
+                    // pinned to the graph that was active when their request arrived.
+                    const callGraph = mutatesTarget ? graph : graphSnapshot
+                    let text = String(await tool.run(callGraph, params?.arguments || {}, callCtx))
+                    if (callGraph && callGraph.edgeTypesV < 2 && (tool.cap === 'graph' || tool.cap === 'health')) {
+                        text += '\n\nWarning: this saved graph predates compile-only edge metadata (edge schema v2), so Rust module/use dependencies may be absent or misclassified. Call rebuild_graph once before acting on cycle, boundary, dependency, or blast-radius findings.'
+                    }
+                    // Graph answers silently reflect a point-in-time build — surface staleness on every graph tool.
                 if (tool.cap === 'graph') {
-                    const warn = api.stalenessLine(ctx)
-                    if (warn) text += `\n\n${warn}`
+                    const warn = api.stalenessLine(callCtx)
+                    if (staleNotices.shouldShow({line: warn, graphPath: callCtx.graphPath, force: tool.name === 'graph_stats'})) text += `\n\n${warn}`
                 }
-                return reply(id, {content: [{type: 'text', text}]})
-            } catch (e) {
-                log(`tool ${params?.name} threw: ${e.stack || e.message}`)
-                return reply(id, {content: [{type: 'text', text: `Tool error: ${e.message}`}], isError: true})
+                    return reply(id, {content: [{type: 'text', text}]})
+                } catch (e) {
+                    log(`tool ${params?.name} threw: ${e.stack || e.message}`)
+                    return reply(id, {content: [{type: 'text', text: `Tool error: ${e.message}`}], isError: true})
+                }
             }
+            if (!mutatesTarget) return execute()
+            const pending = targetMutation.then(execute, execute)
+            targetMutation = pending.catch(() => {})
+            return pending
         }
         if (!isNotification) return fail(id, -32601, `Method not found: ${method}`)
     }

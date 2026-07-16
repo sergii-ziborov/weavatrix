@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { isPathInside } from "../repo-path.js";
 import { childProcessEnv } from "../child-env.js";
+import { filterWeavatrixIgnored } from "../path-ignore.js";
 import LANG_JS from "./builder/lang-js.js";
 import LANG_PY from "./builder/lang-python.js";
 import LANG_GO from "./builder/lang-go.js";
@@ -132,7 +133,7 @@ function gitFileUniverse(dir) {
 }
 
 function walk(dir) {
-  return gitFileUniverse(dir) ?? walkFallback(dir);
+  return filterWeavatrixIgnored(dir, gitFileUniverse(dir) ?? walkFallback(dir));
 }
 
 export { Parser, Query, GRAMMARS, LANGS, EXT_LANG, FAMILY, isDataFile, isDocFile, MAX_PARSE_BYTES, ensureParser, walk };

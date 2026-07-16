@@ -7,10 +7,10 @@
 // built from EXTRACTED import edges → high confidence.
 import { makeFinding } from "./findings.js";
 import { ENTRY_FILE } from "./dead-check.js";
+import { formatRepresentativeCycle } from "./cycle-route.js";
 const TEST_FILE_RE = /(^|[/])(test|tests|__tests__|spec|e2e|__mocks__)([/]|$)|[._-](test|spec)\.[a-z0-9]+$/i;
 // config/data/docs: never "orphans" — nothing imports them by design
 const NON_CODE_RE = /\.(json|ya?ml|sh|ps1|md|txt|html?|css|scss|less)$|(^|[/])(dockerfile|containerfile)/i;
-
 const ep = (v) => String(v && typeof v === "object" ? v.id : v);
 const fileOf = (v) => { const s = ep(v); const h = s.indexOf("#"); return h < 0 ? s : s.slice(0, h); };
 const dirOf = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
@@ -63,7 +63,6 @@ export function buildFileImportGraph(graph, { includeTypeOnly = false, includeCo
     compileTimeEdges: pureCompileTimeEdges,
   };
 }
-
 // Iterative Tarjan (deep graphs must not blow the JS stack). Returns only non-trivial SCCs (size > 1).
 export function findSccs(adj) {
   const index = new Map(), low = new Map(), onStack = new Set(), S = [];
@@ -99,7 +98,6 @@ export function findSccs(adj) {
   }
   return sccs;
 }
-
 // One representative (shortest) cycle through an SCC's lexicographically-first file — a readable path,
 // not the full Johnson enumeration (which explodes combinatorially on big tangles).
 export function representativeCycle(adj, scc) {
@@ -109,7 +107,7 @@ export function representativeCycle(adj, scc) {
   const q = [start];
   while (q.length) {
     const cur = q.shift();
-    for (const nxt of adj.get(cur) || []) {
+    for (const nxt of [...(adj.get(cur) || [])].sort()) {
       if (nxt === start) {
         const path = [];
         for (let c = cur; c != null; c = prev.get(c)) path.push(c);
@@ -120,9 +118,9 @@ export function representativeCycle(adj, scc) {
       q.push(nxt);
     }
   }
-  return [...scc, scc[0]]; // unreachable in a true SCC; safe fallback
+  const fallback = [...scc].sort();
+  return [...fallback, fallback[0]]; // unreachable in a true SCC; deterministic safe fallback
 }
-
 // Orphans: file nodes with ZERO non-contains graph degree (nothing in, nothing out — imports, calls,
 // references all collapsed to files). Entries/tests/config-data are exempt. A file that DOES import
 // npm packages (externalImports) is a working script, not an island — confidence drops, not the verdict.
@@ -146,7 +144,6 @@ export function findOrphans(graph, { entrySet = new Set(), externalImportFiles =
   }
   return out;
 }
-
 // Boundary DSL — the useful subset of depcruise's forbidden rules, as plain JSON globs:
 //   { "forbidden":  [{ "name", "comment"?, "severity"?, "from": "main/**", "to": "renderer/**" }],
 //     "allowedOnly":[{ "name", "comment"?, "severity"?, "from": "src/ui/**", "to": ["src/ui/**", "src/shared/**"] }] }
@@ -180,13 +177,15 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
   const sccs = findSccs(adj).sort((a, b) => b.length - a.length);
   for (const scc of sccs.slice(0, MAX_CYCLE_FINDINGS)) {
     const cycle = representativeCycle(adj, scc);
+    const cycleRoute = formatRepresentativeCycle(cycle);
     findings.push(makeFinding({
       category: "structure",
       rule: "circular-dep",
       severity: scc.length > 4 ? "high" : "medium",
       confidence: "high",
       title: `Circular dependency: ${scc.length} files`,
-      detail: `${cycle.join(" → ")}${scc.length + 1 > cycle.length ? ` (representative loop; the tangle spans ${scc.length} files)` : ""}. Break the cycle by extracting the shared piece or inverting one import.`,
+      detail: `${cycleRoute}${scc.length + 1 > cycle.length ? ` (representative loop; the tangle spans ${scc.length} files)` : ""}. Break the cycle by extracting the shared piece or inverting one import.`,
+      cycleRoute,
       file: cycle[0],
       graphNodeId: cycle[0],
       evidence: cycle.map((f) => ({ file: f, line: 0, snippet: "" })),
@@ -207,6 +206,7 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
   };
   for (const scc of compileTimeCouplings.slice(0, MAX_CYCLE_FINDINGS)) {
     const cycle = representativeCycle(allAdj, scc);
+    const cycleRoute = formatRepresentativeCycle(cycle);
     const runtimeInside = edgeCountIn(scc, edges);
     const typeInside = edgeCountIn(scc, typeOnlyEdges);
     const compileInside = edgeCountIn(scc, compileOnlyEdges);
@@ -220,7 +220,8 @@ export function computeStructureFindings(graph, { rules = {}, entrySet = new Set
       title: `${containsRuntimeCycle
         ? (typeSpecific ? "Type imports expand dependency coupling" : "Compile-time edges expand dependency coupling")
         : (typeSpecific ? "Type-induced dependency cycle (no runtime cycle)" : "Compile-time dependency cycle (no runtime cycle)")}: ${scc.length} files`,
-      detail: `${cycle.join(" → ")}. This strongly-connected group needs compile-time-only edges to close; it contains ${runtimeInside} runtime edge(s), ${typeInside} type-only edge(s), and ${compileInside} compile-only edge(s)${containsRuntimeCycle ? ", with a smaller runtime cycle reported separately" : ", while its runtime import graph is acyclic"}. Treat this as design coupling, not an initialization-order failure.`,
+      detail: `${cycleRoute}. This strongly-connected group needs compile-time-only edges to close; it contains ${runtimeInside} runtime edge(s), ${typeInside} type-only edge(s), and ${compileInside} compile-only edge(s)${containsRuntimeCycle ? ", with a smaller runtime cycle reported separately" : ", while its runtime import graph is acyclic"}. Treat this as design coupling, not an initialization-order failure.`,
+      cycleRoute,
       file: cycle[0],
       graphNodeId: cycle[0],
       evidence: cycle.map((f) => ({ file: f, line: 0, snippet: "" })),

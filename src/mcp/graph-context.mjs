@@ -101,21 +101,90 @@ export function ambiguityNote(query, info) {
 const bestByDegree = (g, list) =>
     list.reduce((best, n) => (degreeOf(g, n.id) > degreeOf(g, best.id) ? n : best), list[0])
 
-// seeds for traversal/search: rank substring/token matches by degree
-export function findSeeds(g, query, limit = 8) {
-    const q = String(query ?? '').trim().toLowerCase()
-    if (!q) return []
-    const tokens = q.split(/[^a-z0-9_]+/i).filter((t) => t.length > 1)
-    const scored = []
-    for (const n of g.nodes) {
-        const hay = `${String(n.id)} ${String(n.label ?? '')} ${String(n.source_file ?? '')}`.toLowerCase()
-        let score = 0
-        if (hay.includes(q)) score += 5
-        for (const t of tokens) if (hay.includes(t)) score += 1
-        if (score > 0) scored.push({n, score: score + Math.min(3, degreeOf(g, n.id) / 20)})
+const QUERY_STOP = new Set('a an and are around architecture code do does explain find for from how in is me of or project repository show the through to trace what where which with'.split(' '))
+const QUERY_INTENTS = [
+    ['bootstrap', ['bootstrap', 'startup', 'entrypoint', 'entry', 'main', 'root', 'app', 'index']],
+    ['auth', ['auth', 'authentication', 'authorization', 'login', 'session', 'authgate']],
+    ['routing', ['routing', 'router', 'routes', 'route', 'navigation']],
+    ['layout', ['layout', 'layouts', 'shell']],
+    ['api', ['api', 'apis', 'endpoint', 'endpoints', 'client']],
+    ['state', ['state', 'store', 'stores', 'reducer', 'context']],
+]
+const INTENT_BY_TERM = new Map(QUERY_INTENTS.flatMap(([id, terms]) => terms.map((term) => [term, {id, terms}])))
+const wordsOf = (value) => String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean)
+const normPath = (value) => String(value ?? '').replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+
+function queryConcepts(query) {
+    const seen = new Set()
+    const concepts = []
+    for (const raw of wordsOf(query)) {
+        if (raw.length < 2 || QUERY_STOP.has(raw)) continue
+        const intent = INTENT_BY_TERM.get(raw)
+        const id = intent?.id || raw
+        if (seen.has(id)) continue
+        seen.add(id)
+        concepts.push({id, raw, terms: intent ? [raw, ...intent.terms.filter((term) => term !== raw)] : [raw]})
     }
-    scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, limit).map((s) => s.n)
+    return concepts
+}
+
+function conceptScore(g, node, concept) {
+    const id = normPath(node.id)
+    const label = String(node.label ?? '').toLowerCase()
+    const source = normPath(node.source_file)
+    const stem = (label.split('/').pop() || '').replace(/\.[^.]+$/, '')
+    const words = new Set(wordsOf(`${node.id} ${node.label ?? ''} ${node.source_file ?? ''}`))
+    const segments = new Set(source.split('/').flatMap((part) => wordsOf(part.replace(/\.[^.]+$/, ''))))
+    let match = 0
+    concept.terms.forEach((term, index) => {
+        const primary = index === 0
+        if (label === term || stem === term) match = Math.max(match, primary ? 60 : 42)
+        else if (segments.has(term)) match = Math.max(match, primary ? 48 : 36)
+        else if (words.has(term)) match = Math.max(match, primary ? 36 : 25)
+        else if (term.length >= 4 && (id.includes(term) || label.includes(term))) match = Math.max(match, primary ? 12 : 7)
+    })
+    if (!match) return 0
+    const fileNode = !isSymbol(node.id)
+    const depth = source ? source.split('/').length : 9
+    const entryBoost = concept.id === 'bootstrap' && /^(bootstrap|main|app|index|root)$/.test(stem) ? 10 : 0
+    return match + (fileNode ? 7 : 0) + Math.max(0, 4 - depth) + entryBoost + Math.min(2, degreeOf(g, node.id) / 40)
+}
+
+// Natural-language graph search keeps one strong candidate per concept before filling by aggregate
+// score. This prevents a broad architecture question from spending every seed on one dense API area.
+export function findSeeds(g, query, limit = 8) {
+    const concepts = queryConcepts(query)
+    if (!concepts.length || limit <= 0) return []
+    const rows = g.nodes.map((node) => {
+        const scores = concepts.map((concept) => conceptScore(g, node, concept))
+        return {node, scores, total: Math.max(...scores) + scores.reduce((sum, score) => sum + score, 0) / 10}
+    })
+    const chosen = []
+    const used = new Set()
+    for (let index = 0; index < concepts.length && chosen.length < limit; index++) {
+        const best = rows.filter((row) => !used.has(String(row.node.id)) && row.scores[index] > 0)
+            .sort((a, b) => b.scores[index] - a.scores[index] || String(a.node.id).localeCompare(String(b.node.id)))[0]
+        if (best) { chosen.push(best.node); used.add(String(best.node.id)) }
+    }
+    rows.filter((row) => row.total > 0 && !used.has(String(row.node.id)))
+        .sort((a, b) => b.total - a.total || String(a.node.id).localeCompare(String(b.node.id)))
+        .slice(0, Math.max(0, limit - chosen.length))
+        .forEach((row) => chosen.push(row.node))
+    return chosen
+}
+
+export function resolveSeedFiles(g, requested, limit = 12) {
+    const files = Array.isArray(requested) ? requested.slice(0, limit) : []
+    const seeds = []
+    const missing = []
+    for (const raw of files) {
+        const wanted = normPath(raw)
+        const node = g.nodes.find((candidate) => !isSymbol(candidate.id)
+            && (normPath(candidate.id) === wanted || normPath(candidate.source_file) === wanted))
+        if (!node) missing.push(String(raw))
+        else if (!seeds.some((seed) => String(seed.id) === String(node.id))) seeds.push(node)
+    }
+    return {seeds, missing}
 }
 
 // undirected adjacency for reachability (query/shortest path)

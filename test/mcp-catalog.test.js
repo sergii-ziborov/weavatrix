@@ -4,20 +4,20 @@ import { DEFAULT_CAPS, loadHotApi } from "../src/mcp/catalog.mjs";
 
 const names = (api) => new Set(api.tools.map((tool) => tool.name));
 
-test("MCP capabilities: absent caps expose offline tools including convenient retargeting", async () => {
+test("MCP capabilities: absent caps pin the startup repository", async () => {
   const api = await loadHotApi(0, undefined);
   const got = names(api);
   assert.deepEqual([...api.caps], [...DEFAULT_CAPS]);
-  assert.equal(api.tools.length, 21);
+  assert.equal(api.tools.length, 19);
   assert.ok(got.has("read_source"));
   assert.ok(got.has("rebuild_graph"));
-  assert.ok(got.has("open_repo"));
-  assert.ok(got.has("list_known_repos"));
+  assert.ok(!got.has("open_repo"));
+  assert.ok(!got.has("list_known_repos"));
   assert.ok(!got.has("refresh_advisories"));
   assert.ok(!got.has("sync_graph"));
 });
 
-test("MCP capabilities: an explicit core-only selection pins one repository", async () => {
+test("MCP capabilities: an explicit core-only selection also pins one repository", async () => {
   const api = await loadHotApi(0, "graph,search,source,health,build");
   const got = names(api);
   assert.ok(got.has("read_source"));
@@ -35,11 +35,18 @@ test("MCP capabilities: explicit groups select only their tools", async () => {
 });
 
 test("MCP capabilities: explicit full selection exposes all available tools", async () => {
-  const api = await loadHotApi(0, `${DEFAULT_CAPS.join(",")},online`);
+  const api = await loadHotApi(0, `${DEFAULT_CAPS.join(",")},retarget,online`);
   assert.equal(api.tools.length, 23);
 });
 
 test("MCP capabilities: an explicit empty selection exposes no tools", async () => {
   const api = await loadHotApi(0, "");
   assert.equal(api.tools.length, 0);
+});
+
+test("query_graph schema exposes exact seed-file pinning", async () => {
+  const api = await loadHotApi(0, "graph");
+  const schema = api.byName.get("query_graph").inputSchema;
+  assert.equal(schema.properties.seed_files.items.type, "string");
+  assert.equal(schema.properties.seed_files.maxItems, 12);
 });

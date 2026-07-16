@@ -3,12 +3,21 @@
 // Hot-reloadable (re-imported by catalog.mjs on change).
 import {readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync} from 'node:fs'
 import {join, dirname, isAbsolute} from 'node:path'
-import {prevGraphPathFor, diffGraphs, formatGraphDiff} from './graph-context.mjs'
+import {prevGraphPathFor, diffGraphs, formatGraphDiff, graphStaleness} from './graph-context.mjs'
 import {buildGraphForRepo} from '../build-graph.js'
 import {graphOutDirForRepo} from '../graph/layout.js'
 import {refreshAdvisories, storeMeta, DEFAULT_STORE} from '../security/advisory-store.js'
 import {collectInstalled} from '../security/installed.js'
-import {createSyncPayload} from './sync-payload.mjs'
+import {createSyncPayload, createSyncPayloadV3, MAX_SYNC_BODY_BYTES} from './sync-payload.mjs'
+import {createEvidenceSnapshot} from './evidence-snapshot.mjs'
+
+const MAX_SYNC_GRAPH_FILE_BYTES = 64 * 1024 * 1024
+
+function syncRepoLabel(repoRoot) {
+    const basename = String(repoRoot || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'repo'
+    const safe = basename.normalize('NFKC').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '')
+    return (safe || 'repo').slice(0, 128)
+}
 
 export async function tRebuildGraph(g, args, ctx) {
     if (!ctx.repoRoot) return 'Rebuild needs the repo root (not provided to this server).'
@@ -130,13 +139,36 @@ export async function tSyncGraph(g, args, ctx) {
     }
     if (!g) return 'No graph loaded — build one first (open_repo / rebuild_graph).'
     let raw
-    try { raw = JSON.parse(readFileSync(ctx.graphPath, 'utf8')) } catch (e) { return `Cannot read ${ctx.graphPath}: ${e.message}` }
+    try {
+        const size = statSync(ctx.graphPath).size
+        if (size > MAX_SYNC_GRAPH_FILE_BYTES) {
+            return `Cannot sync: graph.json is ${Math.ceil(size / 1024 / 1024)} MB; the local safety limit is ${MAX_SYNC_GRAPH_FILE_BYTES / 1024 / 1024} MB.`
+        }
+        raw = JSON.parse(readFileSync(ctx.graphPath, 'utf8'))
+    } catch (e) { return `Cannot read ${ctx.graphPath}: ${e.message}` }
+    const requestedVersion = Number(args.payload_version) === 2 ? 2 : 3
     let payload
-    try { payload = createSyncPayload(raw) } catch (e) {
+    try {
+        if (requestedVersion === 2) {
+            payload = createSyncPayload(raw)
+        } else {
+            if (!ctx.repoRoot) return 'Cannot build evidence: no repository root is active.'
+            if (graphStaleness(ctx).stale) {
+                return 'Cannot sync evidence from a stale graph. Run rebuild_graph, then call sync_graph again.'
+            }
+            const evidence = await createEvidenceSnapshot({repoRoot: ctx.repoRoot, graph: raw})
+            payload = createSyncPayloadV3(raw, evidence)
+        }
+    } catch (e) {
         return `Cannot sync: ${e.message}. Run rebuild_graph once before sync_graph.`
     }
     const body = JSON.stringify(payload)
-    const repoName = String(ctx.repoRoot || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'repo'
+    const bodyBytes = Buffer.byteLength(body)
+    if (bodyBytes > MAX_SYNC_BODY_BYTES) {
+        return `Cannot sync: payload is ${Math.ceil(bodyBytes / 1024)} KB; the hosted safety limit is ${MAX_SYNC_BODY_BYTES / 1024} KB. Narrow the graph scope and rebuild before retrying.`
+    }
+    const repoName = syncRepoLabel(ctx.repoRoot)
+    const timeoutMs = Math.min(120000, Math.max(1000, Number(args.timeout_ms) || 30000))
     try {
         const res = await fetch(url, {
             method: 'POST',
@@ -147,9 +179,19 @@ export async function tSyncGraph(g, args, ctx) {
                 ...(process.env.WEAVATRIX_SYNC_TOKEN ? {authorization: `Bearer ${process.env.WEAVATRIX_SYNC_TOKEN}`} : {}),
             },
             body,
+            signal: AbortSignal.timeout(timeoutMs),
         })
-        if (!res.ok) return `Sync endpoint answered HTTP ${res.status} — graph NOT accepted.`
-        return `Graph for ${repoName} (${payload.nodes.length} nodes / ${payload.links.length} edges, ${Math.round(Buffer.byteLength(body) / 1024)} KB) pushed to ${url}.`
+        if (!res.ok) {
+            const accepted = res.headers?.get?.('x-weavatrix-accept-payload-versions')
+            const compatibility = (res.status === 415 || res.status === 422) && accepted
+                ? ` Endpoint accepts payload version(s) ${accepted}; retry with payload_version:2 only if you intentionally want graph-only sync.`
+                : ''
+            return `Sync endpoint answered HTTP ${res.status} — graph NOT accepted.${compatibility}`
+        }
+        const evidenceNote = payload.syncPayloadV === 3
+            ? ` + evidence ${payload.evidence?.snapshotHash?.slice(0, 12) || 'unknown'}`
+            : ''
+        return `Graph for ${repoName} (${payload.nodes.length} nodes / ${payload.links.length} edges${evidenceNote}, ${Math.round(bodyBytes / 1024)} KB) pushed to ${url}.`
     } catch (e) {
         return `Sync failed: ${e.message} — the graph stays local.`
     }

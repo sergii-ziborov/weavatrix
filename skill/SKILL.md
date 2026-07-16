@@ -6,8 +6,8 @@ description: Drive the weavatrix MCP — code graph, blast-radius (get_dependent
 # weavatrix MCP
 
 Structure-analysis tools over a prebuilt code graph plus the weavatrix analysis engines. The default
-is offline and includes `open_repo` for one-call switching between local Git repositories. A custom
-capability list that omits `retarget` pins the registration to its initial repository.
+is offline and pinned to its startup repository. `open_repo` appears only when the operator explicitly
+adds the `retarget` capability; this avoids cross-session target changes in a shared MCP process.
 
 ## Step 0 — if the tools are missing
 
@@ -35,7 +35,13 @@ If only `refresh_advisories` or `sync_graph` is missing, do not diagnose a broke
   compile-time-only edges.
 - **Repository universe**: in Git repositories, graph and duplicate scans include tracked plus
   non-ignored untracked files. If an old graph still contains packaged/generated output, rebuild it
-  before interpreting the result.
+  before interpreting the result. Repository-root `.weavatrixignore` applies the same tracked-file
+  exclusions to graph, audit and duplicate passes; use it for generated/e2e fixtures that must stay
+  committed. `no-tests` also recognizes Cypress, Playwright, `test-e2e`, acceptance and integration
+  roots.
+- **Architectural queries**: for bootstrap/routing/authentication questions, inspect the returned
+  seeds before trusting the traversal. Pass exact repository-relative `seed_files` to `query_graph`
+  when the intended entry points are already known.
 - **Coverage**: `coverage_map` reads an existing report. `unavailable` means no supported report was
   found, not 0% coverage; do not rank testing risk from that state.
 - **Audit completeness**: read `checks.osv.status` and `checks.malware.status`. For OSV, `OK` is
@@ -47,14 +53,16 @@ If only `refresh_advisories` or `sync_graph` is missing, do not diagnose a broke
 - **Offline by design**: scans and graph queries run in-process against local files; coverage tools
   read existing reports and never run tests. The ONLY network-touching tools live in the `online`
   capability group and run solely when explicitly called: `refresh_advisories` (queries OSV.dev with
-  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (pushes a
-  versioned allowlist of graph metadata, discarding unknown fields and never reading source file
-  bodies for sync, to a user-configured endpoint; disabled until
+  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (derives a
+  bounded evidence snapshot locally, then pushes only an allowlisted graph/evidence contract to a
+  user-configured endpoint; analyzers may read local source, but the wire contract has no body,
+  snippet, absolute-host-path or environment fields, and unknown fields are discarded; disabled until
   `WEAVATRIX_SYNC_URL` is set). `online` is
   absent from the default capability set and must be enabled explicitly.
 - **Repository boundary**: source reads and graph-derived paths are realpath-contained. `open_repo`
-  intentionally changes the active boundary through an explicit offline tool call. It is available
-  by default; omit `retarget` from a custom capability list to hide it.
+  intentionally changes the active boundary through an explicit offline tool call and exists only
+  when `retarget` was added to the registration. Concurrent non-mutating calls retain the graph/root
+  snapshot with which they started.
 
 ## Recipes
 
@@ -102,10 +110,16 @@ visible. `managedDependencies` documents modules provided outside the repo's Pyt
 
 ## Sync
 
-`sync_graph` uses allowlisted payload v2, including type-only/compile-only edge metadata but no
-source bodies. A graph built before `0.1.4` must be rebuilt first; normal `open_repo` does this
-automatically. Sync remains
-unavailable until the user opts into `online` and configures `WEAVATRIX_SYNC_URL`.
+`sync_graph` defaults to payload v3: graph metadata plus deterministic architecture, health, stack
+and package evidence. Read each section's `state`, `verdict` and completeness counts; `PARTIAL`,
+`NOT_CHECKED` and `ERROR` are unknown/incomplete, never a clean result. Architecture evidence
+contains concrete runtime versus compile-time cycles, declared boundary violations and separated
+runtime/type-only/compile-only module dependencies. Package evidence is currently a flat pinned
+inventory plus direct usage and therefore says `PARTIAL`; architecture style and transitive package
+edges are not inferred. Use `payload_version: 2` only when the user explicitly wants graph-only
+compatibility—Weavatrix never silently downgrades. A graph built before `0.1.4`, or one stale against
+the working tree, must be rebuilt first. Sync remains unavailable until the user opts into `online`
+and configures `WEAVATRIX_SYNC_URL`.
 
 ## Troubleshooting
 

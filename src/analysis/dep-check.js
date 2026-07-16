@@ -36,6 +36,18 @@ const FRAMEWORK_RUNTIME_PEERS = new Map([
   ["@cloudflare/vite-plugin", ["vite", "wrangler"]],
 ]);
 
+// Style preprocessors are compiler inputs rather than JavaScript imports. Their presence is proven by
+// source extensions in the same package scope, so do not report them as unused merely because Vite,
+// webpack, etc. load them internally. Keep this list to exact compiler/package contracts.
+const IMPLICIT_STYLE_COMPILERS = new Map([
+  ["sass", /\.(?:scss|sass)$/i],
+  ["sass-embedded", /\.(?:scss|sass)$/i],
+  ["less", /\.less$/i],
+  ["stylus", /\.styl(?:us)?$/i],
+]);
+
+const isStylesheetSpecifier = (spec) => /\.(?:css|scss|sass|less|styl(?:us)?)(?:[?#].*)?$/i.test(String(spec || ""));
+
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // word-ish mention: the name not embedded inside a longer identifier/path segment
 const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\w.-])`).test(blob);
@@ -47,7 +59,7 @@ const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\
 //   configTexts     — Map<fileName, text> of root config files + CI workflows (mention scanning)
 export function computeDepFindings({
   externalImports = [], pkg = {}, workspacePkgNames = new Set(), configTexts = new Map(),
-  aliases = [], scope = "", manifest = "package.json", nonRuntimeRoots = [],
+  aliases = [], scope = "", manifest = "package.json", nonRuntimeRoots = [], sourceFiles = [],
 } = {}) {
   const findings = [];
   const meta = { scope: scope || ".", manifest };
@@ -101,9 +113,15 @@ export function computeDepFindings({
   for (const [provider, peers] of FRAMEWORK_RUNTIME_PEERS) {
     if (allDeclared.has(provider)) for (const peer of peers) frameworkRuntime.add(peer);
   }
+  const implicitCompilerUsage = new Set();
+  for (const [name, sourcePattern] of IMPLICIT_STYLE_COMPILERS) {
+    if (allDeclared.has(name) && sourceFiles.some((file) => sourcePattern.test(String(file || "")))) {
+      implicitCompilerUsage.add(name);
+    }
+  }
 
   // ---- usage index from the graph's recorded imports ----
-  const usedPackages = new Map(); // pkgName -> { files:Set, lines:Map(file→first line), kinds:Set }
+  const usedPackages = new Map(); // pkgName -> { files:Set, lines:Map(file→first line), kinds/specs:Set, typeOnly:boolean }
   let builtinUsed = false;
   for (const e of externalImports) {
     if (e.ecosystem && e.ecosystem !== "npm") continue; // go/python imports have their own checkers
@@ -112,10 +130,12 @@ export function computeDepFindings({
     if (e.builtin) { builtinUsed = true; continue; }
     if (!e.pkg) continue;
     let u = usedPackages.get(e.pkg);
-    if (!u) usedPackages.set(e.pkg, (u = { files: new Set(), lines: new Map(), kinds: new Set() }));
+    if (!u) usedPackages.set(e.pkg, (u = { files: new Set(), lines: new Map(), kinds: new Set(), specs: new Set(), typeOnly: true }));
     u.files.add(e.file);
     if (!u.lines.has(e.file)) u.lines.set(e.file, e.line || 0);
     u.kinds.add(e.kind);
+    u.specs.add(e.spec || e.pkg);
+    if (!e.typeOnly) u.typeOnly = false;
   }
 
   const scriptBlob = Object.values(pkg.scripts || {}).join("\n");
@@ -132,7 +152,7 @@ export function computeDepFindings({
   for (const [section, deps] of Object.entries(sections)) {
     if (section === "peerDependencies") continue; // peers are consumer-facing contracts, not usage
     for (const name of Object.keys(deps)) {
-      if (name === selfName || usedPackages.has(name) || frameworkRuntime.has(name)) continue;
+      if (name === selfName || usedPackages.has(name) || frameworkRuntime.has(name) || implicitCompilerUsage.has(name)) continue;
       const tb = typesBase(name);
       if (tb) { // @types/x is used iff x is used (or it types the Node builtins)
         if (tb === "node" ? builtinUsed : usedPackages.has(tb) || frameworkRuntime.has(tb) || mentioned(configBlob, tb)) continue;
@@ -147,6 +167,7 @@ export function computeDepFindings({
         severity: dev ? "info" : "low",
         confidence: dev || ecosystem ? "low" : "medium",
         title: `Unused ${section === "dependencies" ? "dependency" : section.replace(/ies$/, "y")}: ${name}`,
+        reason: "No recorded package import, package-script command, recognized config mention, framework peer contract, or implicit style-compiler input uses this declaration.",
         detail: `"${name}" is declared in ${section} but never imported in source, never referenced by a script, and not mentioned in any known config file. Dynamic/config-convention usage can't be fully ruled out — review before removing.`,
         package: name,
         source: "internal",
@@ -162,12 +183,19 @@ export function computeDepFindings({
     const files = [...use.files];
     if (files.every(isNonRuntimeFile) || isGeneratedNapiPackage(name, files)) continue;
     const testOnly = files.every((f) => /(^|[/\\])(test|tests|__tests__|spec|e2e|__mocks__)([/\\]|$)|[._-](test|spec)\.[a-z]+$/i.test(f));
+    const stylesheetOnly = [...use.specs].length > 0 && [...use.specs].every(isStylesheetSpecifier);
+    const usageReason = stylesheetOnly
+      ? `Direct stylesheet import(s) resolve through "${name}"; CSS-only imports are build/runtime inputs even without JavaScript bindings.`
+      : use.typeOnly
+        ? `Direct type-only import(s) resolve through "${name}"; the compiler still requires a declared package.`
+        : `Direct source import(s) resolve through "${name}", but the nearest package manifest does not declare it.`;
     findings.push(makeFinding({
       category: "unused",
       rule: "missing-dep",
       severity: testOnly ? "low" : "medium",
       confidence: "high",
       title: `Missing dependency: ${name}`,
+      reason: usageReason,
       detail: `"${name}" is imported by ${files.length} file(s) in scope ${meta.scope} but not declared in ${manifest} — it only works via a transitive install (phantom dependency) and can break on any lockfile change.`,
       package: name,
       file: files[0],
@@ -191,6 +219,7 @@ export function computeDepFindings({
       severity: "info",
       confidence: "high",
       title: `Duplicate declaration: ${name}`,
+      reason: `The same package is declared in multiple manifest sections: ${ss.join(" + ")}.`,
       detail: `"${name}" is declared in ${ss.join(" + ")} — npm resolves one of them; keep a single section.`,
       package: name,
       source: "internal",
@@ -244,15 +273,20 @@ const ownsFile = (scope, file) => !scope || file === scope || String(file || "")
 // Node's package scope and prevents nested Next/Vite apps from inheriting the root manifest by accident.
 export function computeScopedDepFindings({
   externalImports = [], packageScopes = [], workspacePkgNames = new Set(), configTexts = new Map(),
-  nonRuntimeRoots = [],
+  nonRuntimeRoots = [], sourceFiles = [],
 } = {}) {
   const scopes = packageScopes.length
     ? packageScopes.map((s) => ({ ...s, root: normScope(s.root) })).sort((a, b) => b.root.length - a.root.length)
     : [{ root: "", manifest: "package.json", pkg: {}, aliases: [] }];
   const importsByScope = new Map(scopes.map((s) => [s, []]));
+  const sourceFilesByScope = new Map(scopes.map((s) => [s, []]));
   for (const e of externalImports) {
     const owner = scopes.find((s) => ownsFile(s.root, e.file)) || scopes[scopes.length - 1];
     importsByScope.get(owner).push(e);
+  }
+  for (const file of sourceFiles) {
+    const owner = scopes.find((s) => ownsFile(s.root, file)) || scopes[scopes.length - 1];
+    sourceFilesByScope.get(owner).push(file);
   }
   const configOwner = new Map();
   for (const [file] of configTexts) configOwner.set(file, scopes.find((scope) => ownsFile(scope.root, file)) || scopes[scopes.length - 1]);
@@ -262,7 +296,7 @@ export function computeScopedDepFindings({
     const r = computeDepFindings({
       externalImports: importsByScope.get(s), pkg: s.pkg || {}, workspacePkgNames, configTexts: scopeConfig,
       aliases: s.aliases || [], scope: s.root, manifest: s.manifest || (s.root ? `${s.root}/package.json` : "package.json"),
-      nonRuntimeRoots,
+      nonRuntimeRoots, sourceFiles: sourceFilesByScope.get(s),
     });
     findings.push(...r.findings);
     for (const [name, use] of r.usedPackages) usedPackages.set(`${s.root || "."}:${name}`, use);

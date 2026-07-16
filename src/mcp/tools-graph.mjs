@@ -3,7 +3,7 @@
 // staleness probe in graph-context. Hot-reloadable (re-imported by catalog.mjs on change).
 import {
     isSymbol, degreeOf, labelOf, connList,
-    resolveNodeInfo, resolveNode, ambiguityNote, findSeeds, undirectedNeighbors,
+    resolveNodeInfo, resolveNode, ambiguityNote, findSeeds, resolveSeedFiles, undirectedNeighbors,
     graphStaleness, fileStalenessNote,
 } from './graph-context.mjs'
 
@@ -151,8 +151,10 @@ export function tGetCommunity(g, {community_id} = {}) {
 // A plain BFS/DFS flood dumps every reached node (thousands on a real graph) at near-zero signal.
 // Instead: traverse to record reach + distance-from-seed, then show only the closest, most-connected
 // slice as a coherent subgraph (edges kept only among shown nodes). Honest about what was trimmed.
-export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, token_budget = 2000} = {}) {
-    const seeds = findSeeds(g, question, 6)
+export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, seed_files, token_budget = 2000} = {}) {
+    const pinned = resolveSeedFiles(g, seed_files)
+    const automatic = findSeeds(g, question, Math.max(0, 8 - pinned.seeds.length))
+    const seeds = [...pinned.seeds, ...automatic.filter((node) => !pinned.seeds.some((seed) => String(seed.id) === String(node.id)))]
     if (!seeds.length) return `No nodes matched "${question}".`
     const maxDepth = Math.max(1, Math.min(6, Number(depth) || 3))
     const ctx = Array.isArray(context_filter) && context_filter.length ? new Set(context_filter.map((c) => String(c).toLowerCase())) : null
@@ -161,7 +163,6 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
     // node budget scales gently with the token budget; edges follow the surviving nodes.
     const nodeBudget = Math.max(20, Math.min(120, Math.round((Number(token_budget) || 2000) / 40)))
     const depthOf = new Map() // id -> shortest distance from any seed
-    const edges = []
     const start = seeds.map((s) => String(s.id))
     if (mode === 'dfs') {
         const stack = start.map((id) => ({id, d: 0}))
@@ -174,7 +175,6 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
             if (d >= maxDepth) continue
             for (const [nid, rel] of undirectedNeighbors(g, id)) {
                 if (!relOk(rel)) continue
-                edges.push([id, rel, nid])
                 if (!seen.has(nid)) stack.push({id: nid, d: d + 1})
             }
         }
@@ -186,7 +186,6 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
             for (const id of frontier)
                 for (const [nid, rel] of undirectedNeighbors(g, id)) {
                     if (!relOk(rel)) continue
-                    edges.push([id, rel, nid])
                     if (!depthOf.has(nid)) {
                         depthOf.set(nid, d + 1)
                         next.push(nid)
@@ -203,24 +202,29 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
     const shownIds = new Set(shown.map((n) => n.id))
     const edgeSeen = new Set()
     const shownEdges = []
-    for (const [s, r, t] of edges) {
-        if (!shownIds.has(s) || !shownIds.has(t)) continue
-        const key = `${s}|${r}|${t}`
-        if (edgeSeen.has(key)) continue
-        edgeSeen.add(key)
-        shownEdges.push([s, r, t])
+    for (const source of shownIds) {
+        for (const edge of g.out.get(source) || []) {
+            const target = String(edge.id)
+            if (!shownIds.has(target) || !relOk(edge.relation)) continue
+            const key = `${source}|${edge.relation}|${target}`
+            if (edgeSeen.has(key)) continue
+            edgeSeen.add(key)
+            shownEdges.push([source, edge.relation, target])
+            if (shownEdges.length >= 160) break
+        }
         if (shownEdges.length >= 160) break
     }
     const head = [
         `Query: "${question}" (${mode}, depth ${maxDepth}${ctx ? `, context ${[...ctx].join('/')}` : ''})`,
         `Seeds: ${seeds.map((s) => s.label ?? s.id).join(', ')}`,
+        pinned.missing.length ? `Unresolved pinned seed files: ${pinned.missing.join(', ')}` : null,
         `Reached ${depthOf.size} nodes; showing ${shown.length} closest by proximity + connectivity, ${shownEdges.length} edges among them.`,
         ``,
         `Nodes:`,
     ]
     const nodeLines = shown.map((n) => `  [d${n.d}] ${labelOf(g, n.id)}  (deg ${n.deg})  [${n.id}]`)
     const edgeLines = ['', 'Edges:', ...shownEdges.map(([s, r, t]) => `  ${labelOf(g, s)} --${r || 'rel'}--> ${labelOf(g, t)}`)]
-    let text = [...head, ...nodeLines, ...edgeLines].join('\n')
+    let text = [...head.filter(Boolean), ...nodeLines, ...edgeLines].join('\n')
     if (text.length > charBudget) text = text.slice(0, charBudget) + `\n... (truncated to ~${token_budget} tokens)`
     return text
 }

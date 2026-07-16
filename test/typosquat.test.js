@@ -23,6 +23,8 @@ test("classifyTyposquat: legit popular names + known pairs are NOT flagged", () 
   for (const name of ["react", "lodash", "express", "cross-env", "cross-spawn", "react-dom", "mysql2", "bcryptjs"]) {
     assert.equal(classifyTyposquat(name), null, `${name} should be clean`);
   }
+  assert.equal(classifyTyposquat("query-string"), null, "query-string is a legitimate package, not querystring bait");
+  assert.equal(classifyTyposquat("querystring"), null);
   // scope-only difference of a popular name is not a squat
   assert.equal(classifyTyposquat("@myorg/react"), null);
 });

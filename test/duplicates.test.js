@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { computeDuplicates, runDuplicates } from "../src/analysis/duplicates.js";
+import { tFindDuplicates } from "../src/mcp/tools-health.mjs";
 
 const CLONE = `function collectRows(items) {
   const out = [];
@@ -35,6 +36,7 @@ function makeRepo() {
     "src/b.js": `${CLONE}\n`,
     "src/c.js": `${RENAMED}\n`,
     "test/a.test.js": `${CLONE}\n`,
+    "test-e2e/cypress/support/testLocators/a.js": `${CLONE}\n`,
   };
   const nodes = [];
   for (const [rel, content] of Object.entries(files)) {
@@ -158,9 +160,21 @@ test("duplicates: fragments carry the test-file flag so the UI can exclude them"
   try {
     const r = computeDuplicates(dir, graphJson);
     const testFrag = r.frags.find((f) => f.file === "test/a.test.js");
+    const cypressFrag = r.frags.find((f) => f.file === "test-e2e/cypress/support/testLocators/a.js");
     const prodFrag = r.frags.find((f) => f.file === "src/a.js");
     assert.equal(testFrag?.test, true);
+    assert.equal(cypressFrag?.test, true);
     assert.equal(prodFrag?.test, false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("find_duplicates: include_tests=false excludes Cypress test-root clones", () => {
+  const { dir, graphJson } = makeRepo();
+  try {
+    const hidden = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: false }, { repoRoot: dir, graphPath: graphJson });
+    assert.doesNotMatch(hidden, /test-e2e\/cypress/);
+    const included = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: true }, { repoRoot: dir, graphPath: graphJson });
+    assert.match(included, /test-e2e\/cypress/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

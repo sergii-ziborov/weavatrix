@@ -2,7 +2,18 @@
 // filter, so we post-process the graph object: drop test nodes, keep only a subpath, etc.
 
 export function isTestPath(path) {
-  return /(^|[\\/])(__tests?__|tests?)([\\/]|$)|\.(test|itest|spec|e2e)\.|_test\.go$|(^|[\\/])test_[^\\/]*\.py$/i.test(String(path || ""));
+  const value = String(path || "");
+  const testRoot = /(^|[\\/])(__tests?__|tests?|e2e|cypress|playwright|tests?[-_](e2e|integration|acceptance)|(e2e|integration|acceptance)[-_]tests?)([\\/]|$)/i;
+  return testRoot.test(value)
+    || /\.(test|itest|spec|e2e)\.|_test\.go$|(^|[\\/])test_[^\\/]*\.py$/i.test(value);
+}
+
+const normalizedPath = (value) => String(value || "").replace(/\\/g, "/");
+
+function externalImportsForNodes(graph, nodes) {
+  if (!Array.isArray(graph.externalImports)) return undefined;
+  const files = new Set(nodes.map((node) => normalizedPath(node.source_file)).filter(Boolean));
+  return graph.externalImports.filter((item) => files.has(normalizedPath(item?.file)));
 }
 
 // Filter a built graph.json by test-mode: drop test nodes ("no-tests") or keep only tests + the
@@ -22,23 +33,29 @@ export function filterGraphForMode(graph, mode) {
       if (testIds.has(endpoint(link.source))) keep.add(endpoint(link.target)); // a test's dependency
     }
   }
+  const keptNodes = nodes.filter((node) => keep.has(node.id));
+  const externalImports = externalImportsForNodes(graph, keptNodes);
   return {
     ...graph,
-    nodes: nodes.filter((node) => keep.has(node.id)),
-    links: links.filter((link) => keep.has(endpoint(link.source)) && keep.has(endpoint(link.target)))
+    nodes: keptNodes,
+    links: links.filter((link) => keep.has(endpoint(link.source)) && keep.has(endpoint(link.target))),
+    ...(externalImports ? { externalImports } : {})
   };
 }
 
 // Keep only nodes under a subpath (path-scope), drop links touching removed nodes.
 export function filterGraphByScope(graph, scope) {
   if (!scope) return graph;
-  const norm = (p) => String(p || "").replace(/\\/g, "/");
+  const norm = normalizedPath;
   const prefix = norm(scope).replace(/\/+$/, "") + "/";
   const endpoint = (value) => (value && typeof value === "object" ? value.id : value);
   const keep = new Set((graph.nodes || []).filter((node) => (norm(node.source_file) + "/").startsWith(prefix)).map((node) => node.id));
+  const keptNodes = (graph.nodes || []).filter((node) => keep.has(node.id));
+  const externalImports = externalImportsForNodes(graph, keptNodes);
   return {
     ...graph,
-    nodes: (graph.nodes || []).filter((node) => keep.has(node.id)),
-    links: (graph.links || []).filter((link) => keep.has(endpoint(link.source)) && keep.has(endpoint(link.target)))
+    nodes: keptNodes,
+    links: (graph.links || []).filter((link) => keep.has(endpoint(link.source)) && keep.has(endpoint(link.target))),
+    ...(externalImports ? { externalImports } : {})
   };
 }

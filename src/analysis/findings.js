@@ -18,6 +18,7 @@ export function makeFinding(f) {
     confidence: "medium",
     title: "",
     detail: "",
+    reason: "",
     file: "",
     line: 0,
     symbol: "",

@@ -5,8 +5,8 @@
 Grep sees text. Weavatrix sees structure. It builds a dependency graph of any local repository —
 files, symbols, and the imports/calls/inheritance connecting them — and serves it to Claude Code,
 Codex, or any MCP client: change impact, transitive dependents, health audit, clone detection,
-coverage mapping. **23 tools available; 21 offline tools enabled by default, including one-call
-repository switching. Local-first: with the defaults, no repository data leaves your machine.**
+coverage mapping. **23 tools available; 19 offline tools enabled by default, pinned to the startup
+repository. Local-first: with the defaults, no repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
 - Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
@@ -32,7 +32,7 @@ answers grep can't produce:
 Requires Node ≥ 18. One command:
 
 ```sh
-# Claude Code — offline default; open_repo can switch local repositories:
+# Claude Code — offline default, pinned to this repository:
 claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot>
 ```
 
@@ -51,17 +51,14 @@ startup_timeout_sec = 20
 tool_timeout_sec = 60
 ```
 
-The default includes offline repository switching but excludes every network tool. Pass a final
-comma-separated capability list only to restrict or extend it:
+The default pins the server to its startup repository and excludes every network tool. Pass a final
+comma-separated capability list only to opt into retargeting or network tools:
 
 ```sh
-# Pin the registration to one repository (hide open_repo/list_known_repos):
-claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot> graph,search,source,health,build
-
 # Add network tools while pinning one repository:
 claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot> graph,search,source,health,build,online
 
-# Add network tools and keep the default repository switching:
+# Explicitly enable repository switching (and, here, network tools):
 claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot> graph,search,source,health,build,retarget,online
 ```
 
@@ -78,11 +75,11 @@ claude mcp add -s user weavatrix -- node <path-to>/weavatrix/bin/weavatrix-mcp.m
   `<graph.json> <repoRoot>` pair instead if you keep graphs elsewhere.
 
 No graph yet? Ask the agent to call `rebuild_graph`; it builds the missing graph locally.
-`open_repo` can change the active repository and builds a missing graph automatically. A normal
+When the registration explicitly includes `retarget`, `open_repo` can change the active repository
+and builds a missing graph automatically. A normal
 `open_repo` call also upgrades graphs created before `0.1.4` to edge metadata v2; `build:false`
 probes without building and refuses a legacy graph. Retargeting is offline but intentionally changes
-the filesystem boundary for subsequent tools; omit `retarget` from an explicit capability list when
-a registration must stay pinned to one repository.
+the filesystem boundary for subsequent tools; it is absent from the safe default.
 
 An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — install as
 `~/.claude/skills/weavatrix/SKILL.md`.
@@ -108,12 +105,17 @@ ranked by connectivity — tests are never executed)
 **build** — `rebuild_graph` (reports the structural delta, keeps the prior state as
 `graph.prev.json`)
 
-**retarget** *(enabled by default, offline, explicit tool call)* — `open_repo`, `list_known_repos`;
+**retarget** *(explicit opt-in, offline, explicit tool call)* — `open_repo`, `list_known_repos`;
 changes the active repository boundary
+
+`query_graph` accepts optional `seed_files` when an architectural question must start from exact
+entry points. Broad bootstrap/routing/authentication questions otherwise rank conventional entry
+points and high-level modules ahead of incidental keyword matches.
 
 **online** *(explicit opt-in — see Privacy)* — `refresh_advisories`, `sync_graph`
 
-Quality of life: graph tools self-report staleness vs the repo HEAD; ambiguous name lookups are
+Quality of life: graph tools self-report changed staleness immediately and throttle identical
+reminders for five minutes (`graph_stats` always shows freshness); ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
@@ -125,6 +127,11 @@ Java graphs:
 
 - In Git repositories, graph and clone scans use tracked plus non-ignored untracked files, so
   `.gitignore`-excluded build outputs such as packaged applications do not dominate findings.
+- Add a repository-root `.weavatrixignore` for analysis-only exclusions that should remain tracked
+  in Git. It supports `*`, `**`, `?`, root-anchored `/patterns`, directory suffixes and ordered `!`
+  re-includes. The same file universe is used by graph building, audits and clone scanning.
+- `mode: "no-tests"` and `find_duplicates(include_tests:false)` classify `test-e2e`, Cypress,
+  Playwright, acceptance and integration roots as tests, not only `*.test`/`*.spec` filenames.
 - TypeScript `import type` and type-only re-exports remain visible as compile-time coupling but do
   not inflate runtime-cycle severity. `module_map`, `change_impact` and structural diffs preserve
   that distinction. `god_nodes` ranks unique neighbors with runtime connectivity first and reports
@@ -191,12 +198,25 @@ tools; both require the explicit `online` group and a tool call:
 - `refresh_advisories` — queries [OSV.dev](https://osv.dev) with your lockfile's package
   **names + versions** (that is what an OSV query is; never source code) and caches the advisories
   in `~/.weavatrix/advisories.json`. `run_audit` then matches against that store fully offline.
-- `sync_graph` — constructs a versioned, allowlisted payload from `graph.json`: relative paths,
-  symbol names and line ranges, import/dependency identifiers, edges and numeric metrics. Unknown
-  fields are discarded; source file bodies are never read for sync or included in the payload. The
-  endpoint is **yours**, configured via `WEAVATRIX_SYNC_URL` / `WEAVATRIX_SYNC_TOKEN`. Off by default.
-  Sync payload v2 preserves type-only and compile-only edge metadata. Graphs built before `0.1.4` must be rebuilt
-  once before syncing; a normal `open_repo` call performs that upgrade automatically.
+- `sync_graph` — builds a bounded evidence snapshot locally, then sends payload v3: the v2 graph
+  allowlist plus module dependencies, runtime/compile-time cycles, declared boundary violations,
+  health findings, complexity-threshold breaches, stack identifiers, pinned package inventory and
+  direct package usage. Local analyzers may read repository source and manifests to derive those
+  facts. The wire contract has no fields for file bodies, snippets, absolute host paths, environment
+  values or Git remotes; unknown fields are discarded and unsafe optional path metadata is omitted.
+  The request also carries the normalized repository display name used by the
+  hosted list. The endpoint is **yours**, configured through `WEAVATRIX_SYNC_URL` and the optional
+  `WEAVATRIX_SYNC_TOKEN`; the feature is off by default. Pass `payload_version: 2` only for an
+  intentional graph-only compatibility sync—there is no silent downgrade that discards evidence.
+  Graphs built before `0.1.4` must be rebuilt once before syncing; V3 also refuses a stale graph so
+  source-derived evidence cannot be mixed with old topology.
+
+Evidence sections carry independent `state` (`COMPLETE`, `PARTIAL`, `NOT_CHECKED`,
+`NOT_APPLICABLE`, `ERROR`) and `verdict` (`PASS`, `FAIL`, `UNKNOWN`) fields plus exact
+`total/returned/truncated` counts. An incomplete check is never converted into a clean zero. V3 is
+deterministic: volatile timestamps are excluded and the allowlisted snapshot has a canonical SHA-256
+fingerprint, so identical evidence does not manufacture a hosted revision. The client mirrors the
+hosted 8 MiB / 25,000-node / 100,000-edge / 50,000-external-import safety limits before networking.
 
 If `refresh_advisories` is not listed by the MCP client, that is the expected default: the
 registration does not include `online`. Only with the user's approval, add `online` to the final
@@ -215,11 +235,11 @@ vulnerability findings. This is where each capability comes from and how it is c
 
 | Capability alert | Why it exists | Activation and boundary |
 |---|---|---|
-| Network access | `refresh_advisories` sends pinned package names and versions to OSV; `sync_graph` sends a versioned allowlist of graph metadata (relative paths, symbols and line ranges, import/dependency identifiers, edges and numeric metrics). It discards unknown graph fields and does not read source file bodies | `online` is disabled by default; each request requires a tool call, and sync additionally requires `WEAVATRIX_SYNC_URL` |
+| Network access | `refresh_advisories` sends pinned package names and versions to OSV; `sync_graph` sends a normalized repository label plus an allowlisted graph/evidence payload. Evidence is derived locally from source and manifests, but source bodies, snippets, absolute paths, environment values, credentials and Git remotes are excluded | `online` is disabled by default; each request requires a tool call, and sync additionally requires `WEAVATRIX_SYNC_URL` |
 | Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; timed-out Windows child processes may be terminated | Used only by the corresponding local operation; it does not imply network access |
 | Debug / dynamic loading | Cache-busted `import()` hot-reloads watched MCP tool entry modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
 | Environment access | Reads `WEAVATRIX_*` configuration; local child processes inherit the normal host environment | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment and read only by `sync_graph` |
-| Filesystem access | Reads the active repository, graph, lockfiles and coverage reports; writes derived graphs and advisory cache | Realpath containment blocks traversal and symlink/junction escapes. `open_repo` is an explicit offline call that changes the active boundary; omit `retarget` in a custom capability list to pin one repository. The optional malware dependency scan may inspect installed dependency caches such as GOPATH |
+| Filesystem access | Reads the active repository, graph, lockfiles and coverage reports; writes derived graphs and advisory cache | Realpath containment blocks traversal and symlink/junction escapes. The default registration is pinned; add the optional `retarget` group only when `open_repo` should be allowed to change the active boundary. The optional malware dependency scan may inspect installed dependency caches such as GOPATH |
 | URL strings | Fixed OSV/documentation URLs plus a user-configured sync URL | A URL string causes no request by itself; only the two `online` tools perform requests |
 
 `read_source` accepts repo-relative regular files only, caps a read at 2 MB, and refuses lexical or

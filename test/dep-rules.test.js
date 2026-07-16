@@ -23,7 +23,50 @@ test("dep-rules: 3-node cycle detected with a readable representative path", () 
   const cyc = r.findings.filter((f) => f.rule === "circular-dep");
   assert.equal(cyc.length, 1);
   assert.equal(cyc[0].severity, "medium");
+  assert.equal(cyc[0].cycleRoute, "src/a.js → src/b.js → src/c.js → src/a.js");
+  assert.match(cyc[0].detail, /^src\/a\.js → src\/b\.js → src\/c\.js → src\/a\.js/);
   assert.match(cyc[0].detail, /→/);
+});
+
+test("dep-rules: huge representative routes stay closed and bounded", () => {
+  const files = Array.from({ length: 80 }, (_, index) => `src/n${String(index).padStart(2, "0")}.js`);
+  const graph = {
+    nodes: files.map(fileNode),
+    links: files.map((file, index) => imp(file, files[(index + 1) % files.length])),
+  };
+  const finding = computeStructureFindings(graph).findings.find((item) => item.rule === "circular-dep");
+  assert.match(finding.cycleRoute, /^src\/n00\.js → src\/n01\.js/);
+  assert.match(finding.cycleRoute, /file\(s\) omitted/);
+  assert.match(finding.cycleRoute, /→ src\/n00\.js$/);
+  assert.ok(finding.detail.length < 1_000, `cycle detail must stay bounded (got ${finding.detail.length})`);
+});
+
+test("dep-rules: a 34-file cycle keeps the complete closed route", () => {
+  const files = Array.from({ length: 34 }, (_, index) => `src/c${String(index).padStart(2, "0")}.js`);
+  const graph = {
+    nodes: files.map(fileNode),
+    links: files.map((file, index) => imp(file, files[(index + 1) % files.length])),
+  };
+  const finding = computeStructureFindings(graph).findings.find((item) => item.rule === "circular-dep");
+  const route = finding.cycleRoute.split(" \u2192 ");
+  assert.equal(route.length, 35);
+  assert.equal(route[0], route.at(-1));
+  assert.doesNotMatch(finding.cycleRoute, /omitted/);
+});
+
+test("dep-rules: representative cycle is deterministic when an SCC branches", () => {
+  const leftFirst = new Map([
+    ["a.js", new Set(["b.js", "c.js"])],
+    ["b.js", new Set(["a.js"])],
+    ["c.js", new Set(["a.js"])],
+  ]);
+  const rightFirst = new Map([
+    ["a.js", new Set(["c.js", "b.js"])],
+    ["c.js", new Set(["a.js"])],
+    ["b.js", new Set(["a.js"])],
+  ]);
+  assert.deepEqual(representativeCycle(leftFirst, ["a.js", "b.js", "c.js"]), ["a.js", "b.js", "a.js"]);
+  assert.deepEqual(representativeCycle(rightFirst, ["c.js", "a.js", "b.js"]), ["a.js", "b.js", "a.js"]);
 });
 
 test("dep-rules: two independent cycles → two findings; acyclic graph → none", () => {

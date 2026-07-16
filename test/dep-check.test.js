@@ -63,7 +63,46 @@ test("dep-check: missing dep flagged with using files; self/workspace/builtin/de
   const m = rules(r, "missing-dep")[0];
   assert.equal(m.severity, "medium");
   assert.equal(m.confidence, "high");
+  assert.match(m.reason, /Direct source import/);
   assert.equal(m.evidence.length, 2);
+});
+
+test("dep-check: stylesheet-only imports are direct usage with an explicit reason", () => {
+  const r = computeDepFindings({
+    externalImports: [ext("src/GridLayout.tsx", "react-resizable", { spec: "react-resizable/css/styles.css" })],
+    pkg: {},
+  });
+  const finding = rules(r, "missing-dep")[0];
+  assert.equal(finding.package, "react-resizable");
+  assert.equal(finding.confidence, "high");
+  assert.match(finding.reason, /CSS-only imports are build\/runtime inputs/);
+});
+
+test("dep-check: style compiler packages are used implicitly by package-local source", () => {
+  const withScss = computeDepFindings({
+    pkg: { devDependencies: { sass: "^1", "sass-embedded": "^1", unrelated: "^1" } },
+    sourceFiles: ["src/theme.scss"],
+  });
+  assert.deepEqual(pkgsOf(withScss, "unused-dep"), ["unrelated"]);
+
+  const plainCss = computeDepFindings({
+    pkg: { devDependencies: { sass: "^1" } },
+    sourceFiles: ["src/theme.css"],
+  });
+  assert.deepEqual(pkgsOf(plainCss, "unused-dep"), ["sass"]);
+});
+
+test("dep-check: implicit compiler evidence is scoped to the owning workspace", () => {
+  const r = computeScopedDepFindings({
+    sourceFiles: ["web/src/theme.scss"],
+    packageScopes: [
+      { root: "web", manifest: "web/package.json", pkg: { devDependencies: { sass: "^1" } }, aliases: [] },
+      { root: "", manifest: "package.json", pkg: { devDependencies: { sass: "^1" } }, aliases: [] },
+    ],
+  });
+  const sassFindings = rules(r, "unused-dep").filter((finding) => finding.package === "sass");
+  assert.equal(sassFindings.length, 1);
+  assert.equal(sassFindings[0].scope, ".");
 });
 
 test("dep-check: test-only missing dep downgraded to low", () => {

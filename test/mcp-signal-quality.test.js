@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadGraph, diffGraphs, formatGraphDiff } from "../src/mcp/graph-context.mjs";
-import { tGodNodes } from "../src/mcp/tools-graph.mjs";
+import { loadGraph, diffGraphs, formatGraphDiff, findSeeds } from "../src/mcp/graph-context.mjs";
+import { tGodNodes, tQueryGraph } from "../src/mcp/tools-graph.mjs";
 import { tGetDependents } from "../src/mcp/tools-impact.mjs";
-import { tModuleMap } from "../src/mcp/tools-health.mjs";
+import { tModuleMap, formatAuditFinding } from "../src/mcp/tools-health.mjs";
 import { aggregateGraph } from "../src/analysis/graph-analysis.js";
 
 function graphFile(graph) {
@@ -51,6 +51,55 @@ test("god_nodes preserves repeated-call complexity as a secondary lens", () => {
     assert.match(output.split("\n")[1], /Broad/, "unique-neighbor coupling stays the primary rank");
     assert.match(output, /High occurrence hotspots[\s\S]*Repeated  \(24 occurrences across 1 unique neighbors; 23 repeats\)/);
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph keeps one strong seed per architecture intent", () => {
+  const core = [
+    { id: "src/main.tsx", label: "main.tsx", source_file: "src/main.tsx" },
+    { id: "src/app/AuthGate.tsx", label: "AuthGate.tsx", source_file: "src/app/AuthGate.tsx" },
+    { id: "src/router/index.ts", label: "index.ts", source_file: "src/router/index.ts" },
+    { id: "src/layout/AppLayout.tsx", label: "AppLayout.tsx", source_file: "src/layout/AppLayout.tsx" },
+    { id: "src/api/index.ts", label: "index.ts", source_file: "src/api/index.ts" },
+    { id: "src/store/index.ts", label: "index.ts", source_file: "src/store/index.ts" },
+  ];
+  const noise = { id: "src/dashboard/actions.ts#validateApiState@9", label: "validateApiState()", source_file: "src/dashboard/actions.ts" };
+  const helpers = Array.from({ length: 12 }, (_, index) => ({ id: `src/dashboard/helper-${index}.ts`, label: `helper-${index}.ts` }));
+  const fx = graphFile({
+    nodes: [...core, noise, ...helpers],
+    links: helpers.map((helper) => ({ source: noise.id, target: helper.id, relation: "calls" })),
+  });
+  try {
+    const seeds = findSeeds(fx.graph, "bootstrap authentication routing layout api state", 6);
+    assert.deepEqual(new Set(seeds.map((node) => node.id)), new Set(core.map((node) => node.id)));
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph preserves importer-to-imported direction when traversing from the imported seed", () => {
+  const editor = { id: "src/widget/EditWidget.tsx", label: "EditWidget.tsx", source_file: "src/widget/EditWidget.tsx" };
+  const store = { id: "src/store/useDynamicStore.ts", label: "useDynamicStore.ts", source_file: "src/store/useDynamicStore.ts" };
+  const fx = graphFile({ nodes: [editor, store], links: [{ source: editor.id, target: store.id, relation: "imports" }] });
+  try {
+    const output = tQueryGraph(fx.graph, { question: "state", seed_files: [store.id], depth: 1 });
+    assert.match(output, /EditWidget\.tsx --imports--> useDynamicStore\.ts/);
+    assert.doesNotMatch(output, /useDynamicStore\.ts --imports--> EditWidget\.tsx/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("audit finding output exposes the complete representative cycle route", () => {
+  const output = formatAuditFinding({
+    severity: "medium", confidence: "high", rule: "circular-dep", title: "Circular dependency: 3 files",
+    file: "a.ts", cycleRoute: "a.ts → b.ts → c.ts → a.ts", fixHint: "break one import",
+  });
+  assert.match(output, /route: a\.ts → b\.ts → c\.ts → a\.ts/);
+});
+
+test("audit finding output exposes dependency confidence reasons", () => {
+  const output = formatAuditFinding({
+    severity: "medium", confidence: "high", rule: "missing-dep", title: "Missing dependency: react-resizable",
+    package: "react-resizable", reason: "A direct stylesheet import requires this package.",
+  });
+  assert.match(output, /\[medium\/high\]/);
+  assert.match(output, /reason: A direct stylesheet import requires this package\./);
 });
 
 test("get_dependents keeps a real runtime path even when a shorter type-only path exists", () => {

@@ -40,6 +40,7 @@ export function computeGoDepFindings({ externalImports = [], goMod = null, nonRu
       severity: "low",
       confidence: "medium",
       title: `Unused Go module: ${r.path}`,
+      reason: "A direct go.mod requirement has no matching recorded Go import; build-tagged usage remains possible.",
       detail: `"${r.path}" is required (direct) in go.mod but no .go file imports it or any of its packages. Build-tag-guarded files can hide usage — confirm with \`go mod tidy\` before removing.`,
       package: r.path,
       version: r.version,
@@ -57,6 +58,7 @@ export function computeGoDepFindings({ externalImports = [], goMod = null, nonRu
       severity: "medium",
       confidence: "medium",
       title: `Missing Go module: ${pkg}`,
+      reason: "A recorded Go import has no matching direct go.mod requirement or replace entry.",
       detail: `"${pkg}" is imported by ${files.length} file(s) but go.mod has no matching require — a replace/workspace/vendor setup, or the module was never added.`,
       package: pkg,
       file: files[0],
@@ -123,6 +125,7 @@ export function computePyDepFindings({
         severity: d.dev ? "info" : "low",
         confidence: "low",
         title: `Unused Python dependency: ${d.name}`,
+        reason: "No recorded Python import maps to this declared distribution; import-to-distribution mapping and plugin loading are heuristic.",
         detail: `"${d.name}" is declared but no .py file imports a module that maps to it. Import-name↔package-name mapping is heuristic and plugins/CLI tools load dynamically — review before removing.`,
         package: d.name,
         source: "internal",
@@ -144,6 +147,9 @@ export function computePyDepFindings({
       severity: present ? (testOnly ? "low" : "medium") : "low",
       confidence: present ? "medium" : "low",
       title: `Missing Python dependency: ${u.dist}`,
+      reason: present
+        ? `A recorded Python import maps to "${u.dist}", but no declared distribution covers it.`
+        : `A recorded Python import maps to "${u.dist}", but no Python dependency manifest is present; a managed runtime may provide it.`,
       detail: `"${top}" is imported by ${files.length} file(s) but ${present ? "no declared dependency provides it" : "the repo has no Python dependency manifest (requirements.txt / pyproject / Pipfile); a bundled or managed runtime may provide it"}${u.dist !== top ? ` (PyPI package is likely "${u.dist}")` : ""}.${present ? "" : " If this is intentional, declare it under python.managedDependencies in .weavatrix-deps.json."}`,
       package: u.dist,
       file: files[0],

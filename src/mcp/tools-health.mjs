@@ -86,6 +86,11 @@ export function tFindDuplicates(g, args, ctx) {
 
 const SEVERITY_RANK = {critical: 0, high: 1, medium: 2, low: 3, info: 4}
 
+export function formatAuditFinding(f) {
+    const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''}${f.manifest ? `; ${f.manifest}` : ''})` : ''
+    return `  [${f.severity}/${f.confidence || '?'}] ${f.rule}: ${f.title}${where}${f.reason ? `\n      reason: ${f.reason}` : ''}${f.cycleRoute ? `\n      route: ${f.cycleRoute}` : ''}${f.fixHint ? `\n      fix: ${f.fixHint}` : ''}`
+}
+
 // Full internal health audit: dead code + unused exports, dependency findings (npm/go/py missing &
 // unused deps), structure (import cycles / orphans / boundary rules), supply-chain (offline OSV
 // advisories, typosquat, lockfile drift), optional malware heuristics.
@@ -105,10 +110,6 @@ export async function tRunAudit(g, args, ctx) {
     const shown = filtered.slice(0, max)
     const sev = audit.summary.bySeverity
     const bycat = audit.summary.byCategory
-    const line = (f) => {
-        const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''}${f.manifest ? `; ${f.manifest}` : ''})` : ''
-        return `  [${f.severity}/${f.confidence || '?'}] ${f.rule}: ${f.title}${where}${f.fixHint ? `\n      fix: ${f.fixHint}` : ''}`
-    }
     const check = (name, state) => `${name} ${state?.status || 'ERROR'}${state?.detail ? ` — ${state.detail}` : ''}`
     return [
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
@@ -117,7 +118,7 @@ export async function tRunAudit(g, args, ctx) {
         `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`,
         ``,
         `Showing ${shown.length} of ${filtered.length} finding(s)${cat ? ` in category "${cat}"` : ''}${args.min_severity ? ` at ≥${args.min_severity}` : ''}:`,
-        ...shown.map(line),
+        ...shown.map(formatAuditFinding),
         filtered.length > shown.length ? `  … +${filtered.length - shown.length} more (raise max_findings or filter by category/min_severity)` : null,
     ].filter((x) => x != null).join('\n')
 }
