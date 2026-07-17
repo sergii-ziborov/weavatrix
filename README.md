@@ -173,6 +173,18 @@ disclosed instead of silently guessed; and the server **hot-reloads its watched 
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
 
+### 0.2.3 real-wrapper patch
+
+- Auto-discovery recognizes wrappers that pass a fixed HTTP client method and argument array to a
+  shared transport helper, such as `api(axios.get, [url, options])`.
+- Ambiguous handler names can resolve to the unique matching symbol in a module directly imported
+  by the route file, allowing proven external frontend calls to suppress only that exact backend
+  dead-code candidate.
+- Missing, ambiguous, low-confidence and capped evidence remains review-only; the patch does not
+  turn absence of a client match into a dead-code verdict.
+
+Full patch notes: [docs/releases/v0.2.3.md](docs/releases/v0.2.3.md).
+
 ### 0.2.2 regression and cross-repository evidence
 
 - Permanent TS/JS/Python/Go/Java/Rust regression fixtures now gate graph correctness, output size,

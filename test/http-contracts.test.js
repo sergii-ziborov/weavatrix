@@ -185,6 +185,75 @@ test("auto-discovery traces an imported bare wrapper only through its graph impo
   }
 });
 
+test("auto-discovery follows a fixed client method passed with its transport argument array", () => {
+  const backend = repo({
+    "src/routes.js": `router.get('/edgeAnalytics/query/:id', getQuery); router.post('/edgeAnalytics/query', saveQuery); router.delete('/edgeAnalytics/query/:id', deleteQuery);`,
+  });
+  const frontend = repo({
+    "src/http.ts": `
+      const api = (fn, args) => fn.apply(axios, args);
+      export const get = (url, options = {}) => api(axios.get, [url, options]);
+      export const post = (url, body) => api(axios.post, [url, body]);
+      export const del = (url, data) => api(axios.delete, [url, {data}]);
+    `,
+    "src/query.ts": `
+      import {get, post, del} from './http';
+      export const load = (id) => get(\`/edgeAnalytics/query/\${id}\`);
+      export const save = (body) => post('/edgeAnalytics/query', body);
+      export const remove = (id) => del(\`/edgeAnalytics/query/\${id}\`);
+    `,
+  });
+  const clientGraph = {
+    nodes: [
+      { id: "http", source_file: "src/http.ts" },
+      { id: "query", source_file: "src/query.ts" },
+    ],
+    links: [{ source: "query", target: "http", relation: "imports" }],
+  };
+  try {
+    const result = analyzeHttpContracts({
+      backend: { id: "api", repoRoot: backend, codeFiles: ["src/routes.js"] },
+      clients: [{ id: "web", repoRoot: frontend, codeFiles: ["src/http.ts", "src/query.ts"], graph: clientGraph }],
+    });
+    assert.equal(result.wrapperDiscovery[0].discovered, 3);
+    assert.equal(result.totals.matches, 3);
+    assert.equal(result.totals.notDeadExternalUse, 3);
+    assert.deepEqual(result.endpoints.map((endpoint) => endpoint.callsites[0].method).sort(), ["DELETE", "GET", "POST"]);
+    assert.ok(result.endpoints.every((endpoint) => endpoint.callsites[0].detector === "auto-wrapper"));
+  } finally {
+    rmSync(backend, { recursive: true, force: true });
+    rmSync(frontend, { recursive: true, force: true });
+  }
+});
+
+test("handler resolution prefers the unique matching symbol in a directly imported module", () => {
+  const frontend = repo({ "src/users.js": `fetch('/api/users/42');` });
+  const backendGraph = {
+    nodes: [
+      { id: "src/routes.js", label: "routes.js", source_file: "src/routes.js" },
+      { id: "src/handlers.js", label: "handlers.js", source_file: "src/handlers.js" },
+      { id: "src/handlers.js#getUser@12", label: "getUser()", source_file: "src/handlers.js" },
+      { id: "src/service.js#getUser@30", label: "getUser()", source_file: "src/service.js" },
+    ],
+    links: [{ source: "src/routes.js", target: "src/handlers.js", relation: "imports" }],
+  };
+  try {
+    const result = analyzeHttpContracts({
+      backend: {
+        id: "api",
+        graph: backendGraph,
+        endpoints: [{ method: "GET", path: "/api/users/:id", handler: "getUser", file: "src/routes.js", line: 4 }],
+      },
+      clients: [{ id: "web", repoRoot: frontend, codeFiles: ["src/users.js"] }],
+    });
+    assert.equal(result.endpoints[0].handlerNodeId, "src/handlers.js#getUser@12");
+    assert.equal(result.endpoints[0].handlerResolution, "resolved");
+    assert.equal(result.endpoints[0].liveness.canSuppressDeadCandidate, true);
+  } finally {
+    rmSync(frontend, { recursive: true, force: true });
+  }
+});
+
 test("repository config enables wrappers and missing external evidence remains UNKNOWN", () => {
   const frontend = repo({
     ".weavatrix.json": JSON.stringify({

@@ -181,6 +181,15 @@ function delegatedWrapper(mask, definition, clientNames) {
     const urlArgument = definition.parameters.indexOf(found[2]);
     if (urlArgument >= 0) matches.push({ method: found[1].toUpperCase(), urlArgument });
   }
+  // Common typed clients keep response/error handling in one helper and pass the concrete
+  // axios/http method plus its argument array: api(axios.get, [url, options]). The HTTP method and
+  // first transport argument are still statically fixed, so this is as deterministic as a direct
+  // axios.get(url) delegation without evaluating the helper.
+  const methodReference = new RegExp(`\\b[A-Za-z_$][\\w$]*\\s*\\(\\s*(?:${clients})\\s*(?:\\?\\.|\\.)\\s*(get|post|put|patch|delete|head|options)\\s*,\\s*\\[\\s*([A-Za-z_$][\\w$]*)\\s*(?=[,\\]])`, "gi");
+  while ((found = methodReference.exec(body)) && matches.length < 3) {
+    const urlArgument = definition.parameters.indexOf(found[2]);
+    if (urlArgument >= 0) matches.push({ method: found[1].toUpperCase(), urlArgument });
+  }
   const unique = [...new Map(matches.map((item) => [`${item.method}\0${item.urlArgument}`, item])).values()];
   return unique.length === 1 ? unique[0] : null;
 }

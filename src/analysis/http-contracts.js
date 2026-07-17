@@ -639,10 +639,22 @@ function bareGraphLabel(value) {
 function handlerNodeEvidence(endpoint, graph) {
   const handler = /^[A-Za-z_$][\w$]{0,127}$/.test(String(endpoint?.handler || "")) ? String(endpoint.handler) : null;
   if (!handler) return { handler: null, handlerNodeId: null, handlerResolution: "inline-or-unresolved" };
-  const matches = (graph?.nodes || []).filter((node) =>
+  const nodes = graph?.nodes || [];
+  const matches = nodes.filter((node) =>
     normalizeFile(node?.source_file) && bareGraphLabel(node?.label) === handler && String(node?.id || "") !== normalizeFile(node?.source_file));
-  const sameFile = matches.filter((node) => normalizeFile(node?.source_file) === normalizeFile(endpoint.file));
-  const resolved = sameFile.length === 1 ? sameFile[0] : matches.length === 1 ? matches[0] : null;
+  const endpointFile = normalizeFile(endpoint.file);
+  const sameFile = matches.filter((node) => normalizeFile(node?.source_file) === endpointFile);
+  const byId = new Map(nodes.map((node) => [endpointId(node?.id), node]));
+  const linkFile = (value) => {
+    const id = endpointId(value);
+    return normalizeFile(byId.get(id)?.source_file || String(id || "").split("#")[0]);
+  };
+  const directlyImportedFiles = new Set((graph?.links || [])
+    .filter((link) => ["imports", "re_exports"].includes(link?.relation) && linkFile(link?.source) === endpointFile)
+    .map((link) => linkFile(link?.target))
+    .filter(Boolean));
+  const imported = matches.filter((node) => directlyImportedFiles.has(normalizeFile(node?.source_file)));
+  const resolved = sameFile.length === 1 ? sameFile[0] : imported.length === 1 ? imported[0] : matches.length === 1 ? matches[0] : null;
   return {
     handler,
     handlerNodeId: resolved ? String(resolved.id) : null,
