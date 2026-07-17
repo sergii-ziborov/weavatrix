@@ -81,6 +81,7 @@ test("run_audit compares an immutable baseline and never relabels old debt as ne
     const ordinary = await tRunAudit(loaded, {}, ctx);
     assert.equal(typeof ordinary, "string", "run_audit with no new arguments preserves the legacy response contract");
     assert.match(ordinary, /^Internal audit of /);
+    assert.match(ordinary, /Dependency manifests: COMPLETE .* unused \d+, missing \d+/);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

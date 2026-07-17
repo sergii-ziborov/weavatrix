@@ -6,7 +6,7 @@ import { createPathClassifier, hasPathClass } from "../path-classification.js";
 import { listRepoFiles } from "./internal-audit.collect.js";
 import { stripNonCode, bodyEndLineCount, tokenize, fingerprints, extractLargeStrings } from "./duplicates.tokenize.js";
 
-const FLOOR_TOKENS = 30;   // fragments below this never enter the index (UI slider min)
+const FLOOR_TOKENS = 12;   // absolute safety floor; normal scans still default to 30+ tokens
 const FLOOR_SIM = 0.5;     // pairs below this are not reported (UI slider min)
 const MAX_BODY_LINES = 400;
 // File types with no code SYMBOLS to fragment (stylesheets, markup, docs, single-file components). The
@@ -93,7 +93,11 @@ function pairsForMode(frags, mode) {
     const i = Math.floor(key / 1000000), j = key % 1000000;
     const union = eff[i] + eff[j] - count;
     const sim = union > 0 ? count / union : 0;
-    if (sim >= FLOOR_SIM && count >= MIN_SHARED_FP) pairs.push([i, j, Math.round(sim * 100)]);
+    const smallFragment = Math.min(frags[i].n, frags[j].n) < 30;
+    const enoughEvidence = smallFragment
+      ? sim >= 0.95 && count >= 2
+      : count >= MIN_SHARED_FP;
+    if (sim >= FLOOR_SIM && enoughEvidence) pairs.push([i, j, Math.round(sim * 100)]);
   }
   return pairs;
 }
@@ -125,6 +129,7 @@ function loadGraph(graphInput) {
 
 export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
   const includeStrings = !!opts.includeStrings;
+  const scanTokenFloor = Math.max(FLOOR_TOKENS, Math.min(400, Number(opts.minTokens) || 30));
   const graph = loadGraph(graphJsonPath);
   const byFile = symbolRanges(graph);
   // total symbol nodes in the graph — 0 means a file-only graph (built by an older builder before
@@ -169,7 +174,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       const end = start + body.length - 1;
       if (end - start < 2) continue;
       const toks = tokenize(stripNonCode(body.join("\n"), py));
-      if (toks.strict.length < FLOOR_TOKENS) continue;
+      if (toks.strict.length < scanTokenFloor) continue;
       frags.push({
         id: syms[i].id, label: syms[i].label, file, start, end,
         n: toks.strict.length,
@@ -184,7 +189,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       const base = file.split("/").pop();
       const pushStr = (startLine, endLine, content) => {
         const toks = tokenize(content);
-        if (toks.strict.length < FLOOR_TOKENS) return;
+        if (toks.strict.length < scanTokenFloor) return;
         frags.push({
           id: `${file}#str@${startLine}`, label: `${base}:${startLine} ~${endLine - startLine + 1}-line string`,
           file, start: startLine, end: endLine, n: toks.strict.length, ...classificationFields(pathInfo), kind: "string",
@@ -224,7 +229,7 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       const end = Math.min(start + WINDOW_LINES - 1, lines.length);
       if (end - start < 2) continue;
       const toks = tokenize(stripNonCode(lines.slice(start - 1, end).join("\n"), false));
-      if (toks.strict.length < FLOOR_TOKENS) continue;
+      if (toks.strict.length < scanTokenFloor) continue;
       frags.push({
         id: `${file}#win@${start}`, label: `${file.split("/").pop()}:${start}-${end}`, file, start, end,
         n: toks.strict.length, ...classificationFields(pathInfo),
@@ -250,6 +255,6 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       },
       nameTwinsTruncated: !!nameTwins && nameTwins.length >= 200,
     },
-    floors: { tokens: FLOOR_TOKENS, sim: FLOOR_SIM * 100 },
+    floors: { tokens: scanTokenFloor, absoluteTokens: FLOOR_TOKENS, sim: FLOOR_SIM * 100 },
   };
 }

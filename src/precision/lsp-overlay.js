@@ -274,8 +274,16 @@ function sourceAt(index, file, position) {
   return index.files.has(file) ? file : null;
 }
 
-function eligibleTargets(graph, limit) {
+function eligibleTargets(graph, limit, requestedIds = null) {
   const byId = new Map((graph.nodes || []).map((node) => [String(node.id), node]));
+  if (Array.isArray(requestedIds) && requestedIds.length) {
+    const ids = [...new Set(requestedIds.map(String))];
+    const targets = ids
+      .map((id) => byId.get(id))
+      .filter((node) => node?.selection_start && JS_TS_FILE.test(String(node.source_file || "")))
+      .slice(0, limit);
+    return {targets, total: ids.length, orphanIds: new Set()};
+  }
   const ranked = new Map();
   const inbound = new Set();
   for (const link of graph.links || []) {
@@ -456,6 +464,7 @@ export async function buildLspPrecisionOverlay({
   maxReferences = Number(process.env.WEAVATRIX_PRECISION_MAX_REFERENCES) || 2_048,
   maxLinks = Number(process.env.WEAVATRIX_PRECISION_MAX_LINKS) || 2_048,
   timeoutMs = Number(process.env.WEAVATRIX_PRECISION_TIMEOUT_MS) || 45_000,
+  targetIds,
   clientFactory,
 } = {}) {
   if (!graph || !repoRoot) throw new Error("precision overlay requires repoRoot and graph");
@@ -501,7 +510,7 @@ export async function buildLspPrecisionOverlay({
       && precisionOverlayMatches(cached, graph, {request})
       && cached.semanticInputFingerprint === semanticInputs.fingerprint) return cached;
   }
-  const eligible = eligibleTargets(graph, boundedMax);
+  const eligible = eligibleTargets(graph, boundedMax, targetIds);
   const targets = eligible.targets;
   if (!targets.length) {
     const overlay = baseOverlay(graph, "COMPLETE", {
@@ -525,6 +534,8 @@ export async function buildLspPrecisionOverlay({
   let truncated = eligible.total > boundedMax;
   const noReferenceSymbols = [];
   const referenceEvidence = [];
+  const exactLocations = [];
+  const collectLocations = Array.isArray(targetIds) && targetIds.length > 0;
   const opened = new Set();
   const openedTexts = new Map();
   const classificationTexts = new Map();
@@ -708,7 +719,6 @@ export async function buildLspPrecisionOverlay({
         const start = locationStart(location);
         if (!file || !start || !Number.isInteger(start.line) || !Number.isInteger(start.character)) continue;
         const source = sourceAt(index, file, start);
-        if (!source || source === String(target.id)) continue;
         const targetId = String(target.id);
         const exactLine = start.line + 1;
         const exactCharacter = start.character;
@@ -727,6 +737,20 @@ export async function buildLspPrecisionOverlay({
           : classifyTypeScriptReferenceUsage(file, sourceText, start);
         if (usage === "unknown" && moduleDependency?.typeOnly === true) usage = "type";
         if (usage === "unknown" && moduleDependency?.compileOnly === true) usage = "compile";
+        if (collectLocations) exactLocations.push({
+          file,
+          source: source || file,
+          target: targetId,
+          line: exactLine,
+          character: exactCharacter,
+          ...(Number.isInteger(location?.range?.end?.line) ? {endLine: location.range.end.line + 1} : {}),
+          ...(Number.isInteger(location?.range?.end?.character) ? {endCharacter: location.range.end.character} : {}),
+          classification: usage,
+        });
+        if (!source || source === targetId) {
+          if (usage === "unknown") unclassifiedReferences++;
+          continue;
+        }
         if (usage === "unknown") {
           const evidenceKey = `${source}\0${targetId}\0${line}\0${exactCharacter}`;
           if (!evidenceSeen.has(evidenceKey)) {
@@ -798,6 +822,7 @@ export async function buildLspPrecisionOverlay({
       coverage: coverage(),
       links,
       referenceEvidence,
+      ...(collectLocations ? {locations: exactLocations} : {}),
       noReferenceSymbols,
       ...(errors ? {reason: `${errors} semantic request(s) failed or were refused`}
         : truncated ? {reason: "semantic precision stopped at a configured safety limit"}

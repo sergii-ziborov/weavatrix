@@ -100,7 +100,16 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   const nodes = graph.nodes || [], links = graph.links || [];
   const ep = (v) => (v && typeof v === "object" ? v.id : v);
   const inbound = new Set();
-  for (const l of links) if (!isStructuralRelation(l.relation)) inbound.add(ep(l.target));
+  const inboundSources = new Map();
+  const nodesById = new Map(nodes.map((node) => [String(node.id), node]));
+  for (const l of links) if (!isStructuralRelation(l.relation)) {
+    const target = String(ep(l.target));
+    const source = String(ep(l.source));
+    inbound.add(target);
+    const values = inboundSources.get(target) || [];
+    values.push(source);
+    inboundSources.set(target, values);
+  }
 
   // whole-repo identifier frequency: a symbol whose name appears MORE than once total (its definition + at least
   // one use, same-file OR cross-file) is referenced. Errs toward "alive" (common-named symbols never flagged).
@@ -113,6 +122,16 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
     if (!String(n.id).includes("#")) continue;
     symById.set(n.id, n);
     (symsByFile.get(n.source_file) || symsByFile.set(n.source_file, []).get(n.source_file)).push(n);
+  }
+
+  const symbolNames = new Set([...symById.values()].map((node) => bareName(node.label)).filter(Boolean));
+  const occurrenceFiles = new Map();
+  for (const [file, text] of sources) for (const match of String(text || "").matchAll(IDENT_RE)) {
+    const name = match[0];
+    if (!symbolNames.has(name)) continue;
+    const files = occurrenceFiles.get(name) || new Set();
+    files.add(file);
+    occurrenceFiles.set(name, files);
   }
 
   // decorated defs (@app.route/@app.event/@pytest.fixture…) are entered by the framework: trust the
@@ -151,6 +170,32 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   }
   const deadSet = new Set(deadSymbols.map((s) => s.id));
 
+  // A production declaration consumed only by tests is live to the raw graph but dead to production.
+  // Keep it in a separate review class: this is useful evidence, never an automatic delete verdict.
+  const testOnlySymbols = [];
+  for (const n of symById.values()) {
+    if (deadSet.has(n.id) || isTestFile(n.source_file) || isDecorated(n)) continue;
+    const sourcesForSymbol = inboundSources.get(String(n.id)) || [];
+    const sourceFiles = sourcesForSymbol.map((id) => nodesById.get(id)?.source_file || (id.includes("#") ? id.split("#")[0] : id));
+    const hasTestInbound = sourceFiles.some((file) => isTestFile(file));
+    const hasProductionInbound = sourceFiles.some((file) => file && !isTestFile(file));
+    const name = bareName(n.label);
+    const occurrenceSet = occurrenceFiles.get(name) || new Set();
+    const externalOccurrences = [...occurrenceSet].filter((file) => file !== n.source_file);
+    const lexicalTestOnly = externalOccurrences.length > 0 && externalOccurrences.every((file) => isTestFile(file));
+    if (hasProductionInbound || (!hasTestInbound && !lexicalTestOnly)) continue;
+    testOnlySymbols.push({
+      id: n.id,
+      file: n.source_file,
+      label: n.label,
+      test: false,
+      reason: "referenced only from test/e2e code; no production consumer was found",
+      testConsumerFiles: [...new Set(sourceFiles.filter((file) => file && isTestFile(file)))].sort(),
+      evidence: hasTestInbound ? "graph" : "lexical",
+      publicApi: n.exported === true || ["public", "protected"].includes(String(n.visibility || "").toLowerCase()),
+    });
+  }
+
   const deadFiles = [];
   for (const n of nodes) {
     if (String(n.id).includes("#")) continue;                   // file nodes only
@@ -161,9 +206,10 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
 
   return {
     deadSymbols,
+    testOnlySymbols,
     deadFiles,
     referencedIds: [...symById.values()].filter(isReferenced).map((n) => n.id),
-    stats: { symbols: symById.size, deadSymbols: deadSymbols.length, files: nodes.filter((n) => !String(n.id).includes("#")).length, deadFiles: deadFiles.length },
+    stats: { symbols: symById.size, deadSymbols: deadSymbols.length, testOnlySymbols: testOnlySymbols.length, files: nodes.filter((n) => !String(n.id).includes("#")).length, deadFiles: deadFiles.length },
   };
 }
 

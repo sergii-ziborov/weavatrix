@@ -95,7 +95,8 @@ const COMPLEXITY_NUMBERS = [
     'startLine', 'endLine', 'loc', 'params', 'objectFields', 'branches', 'cyclomatic',
     'loops', 'maxLoopDepth', 'returns', 'awaits', 'callCount', 'externalCalls',
     'asyncBoundaries', 'allocations', 'objectLiterals', 'spreadCopies', 'sorts',
-    'linearOps', 'timeRank', 'timeScore', 'memoryRank', 'memoryScore',
+    'linearOps', 'allocationsInLoops', 'copiesInLoops', 'linearOpsInLoops',
+    'sortsInLoops', 'recursionInLoops', 'timeRank', 'timeScore', 'memoryRank', 'memoryScore',
 ];
 
 function sanitizeComplexity(value) {

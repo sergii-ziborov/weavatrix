@@ -183,7 +183,7 @@ export async function refreshGraphIncrementally(repoDir, existingGraph, {
 
   if (!existingGraph || !existingGraph.fileHashes || !existingGraph.fileExportSignatures
     || !existingGraph.controlHashes || !existingGraph.jsExportRecords || Number(existingGraph.barrelResolutionV) < 1
-    || Number(existingGraph.extractorSchemaV) < 3 || Number(existingGraph.edgeProvenanceV) < 1) {
+    || Number(existingGraph.extractorSchemaV) < 4 || Number(existingGraph.edgeProvenanceV) < 1) {
     return full("incremental-baseline-unavailable");
   }
   if (!sameRecord(existingGraph.controlHashes, snapshot.controlHashes)) return full("ignore-or-control-config-changed");

@@ -40,12 +40,13 @@ Start from the task, not from the complete tool list:
   `get_dependents` and `read_source`.
 - **Trace an API across repositories**: `list_known_repos` -> `trace_api_contract` with an explicit
   backend and client list; inspect each `graphReconciliation.buildMode` before using the verdict.
-- **Inspect exact symbol references**: start with `graph_stats` and read semantic precision state,
-  provider and `EXACT_LSP` count. For TypeScript/JavaScript, use an exact node id with
-  `get_dependents` and inspect the edge provenance; use `find_dead_code` for bounded zero-reference
+- **Inspect exact symbol references**: start with `graph_stats`, then call `inspect_symbol` with an
+  exact node ID (or an unambiguous label). It spends a bounded point query beyond the broad overlay
+  cap and returns occurrence containers plus source context. Use `get_dependents` for transitive
+  graph impact and `find_dead_code` for bounded zero-reference
   candidates. Treat `PARTIAL`, `UNAVAILABLE`, `OFF`, or zero exact edges as incomplete evidence, not
   a compiler-exact result; `OFF` means the caller explicitly selected static-only mode. Java and Rust
-  providers are not bundled in 0.2.4, so their edges never become `EXACT_LSP` even when a mixed
+  providers are not bundled in 0.2.5, so their edges never become `EXACT_LSP` even when a mixed
   repository has a complete TypeScript/JavaScript overlay.
 - **Explore an architectural question**: use broad `query_graph` when entry points are unknown; its
   bootstrap/tool-execution ranking prefers production executables over docs, sites and fixtures.
@@ -89,7 +90,13 @@ Start from the task, not from the complete tool list:
   `seed_files` to `query_graph` when the intended entry points are already known.
 - **Coverage**: `coverage_map` reads an existing report. `unavailable` means no supported report was
   found, not 0% coverage; do not rank testing risk from that state.
-- **Audit completeness**: read `checks.osv.status` and `checks.malware.status`. For OSV, `OK` is
+- **Local hot paths**: `hot_path_review` ranks parser-derived local syntax cost and reports graph
+  fan-in/fan-out plus test evidence separately. `actualCoverage: NOT_AVAILABLE` is not zero coverage,
+  and the score is not profiler data or an interprocedural Big-O proof. Inspect its line evidence and
+  measure runtime before scheduling a performance rewrite.
+- **Audit completeness**: read `dependencyReport.status` plus its unused/missing counts, then
+  `checks.osv.status` and `checks.malware.status`. A dependency result from a partial graph is not a
+  repository-wide clean zero. For OSV, `OK` is
   complete for the recorded dependency fingerprint; `PARTIAL` is incomplete or stale,
   `NOT_CHECKED` has no repository-specific result, and `ERROR` means the local check failed. Treat
   the same non-`OK` states as incomplete for malware scanning. Refresh OSV only when the user has
@@ -118,8 +125,10 @@ Start from the task, not from the complete tool list:
 - **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`. Hub ranking
   is production-only by default; use `include_classified:true` only when tests/generated/build
   surfaces are deliberately part of the question.
-- **Refactor safety for one symbol**: `get_dependents` → `coverage_map` (low coverage × many
+- **Refactor safety for one symbol**: `inspect_symbol` → `get_dependents` → `coverage_map` (low coverage × many
   dependents ⇒ write tests first) → `read_source`.
+- **Performance review**: `hot_path_review` → inspect its local evidence with `read_source` → use
+  `get_dependents` for change risk → confirm with the repository's profiler/benchmark before editing.
 - **Pre-PR review of your current changes**: `change_impact` (auto merge-base; includes uncommitted
   and untracked work, coverage attached, untested hotspots called out) → drill with `get_dependents`.
 - **Impact of a PR that is NOT checked out**: pass its changed-file list explicitly —
@@ -131,7 +140,8 @@ Start from the task, not from the complete tool list:
   orphan drift rather than raw edge counts.
 - **Health sweep**: for a branch/PR review prefer
   `run_audit base_ref=<merge-base> debt=new changed_files=[…]`; for repository maintenance use
-  `run_audit debt=all`. Then call `find_dead_code`, `find_duplicates` and `coverage_map`. A changed-file-only audit is
+  `run_audit debt=all`. Then call `find_dead_code`, `find_duplicates`, `coverage_map` and
+  `hot_path_review`. A changed-file-only audit is
   scope, not proof of new debt. Inspect the source behind shortlisted findings before proposing edits.
 - **Dead-code and dead-method review**: call `find_dead_code` for a bounded production-code queue of
   files, functions, methods and symbols. Narrow with `path` or `kinds=["method"]`; keep the default

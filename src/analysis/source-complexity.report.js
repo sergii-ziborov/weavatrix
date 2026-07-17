@@ -68,6 +68,11 @@ export function buildEvidence(stats) {
   if (stats.maxLoopDepth > 1) out.push(`loop depth ${stats.maxLoopDepth}`);
   if (stats.sorts) out.push(plural(stats.sorts, "sort", "sorts"));
   if (stats.spreadCopies) out.push(plural(stats.spreadCopies, "shallow copy", "shallow copies"));
+  if (stats.allocationsInLoops) out.push(`${plural(stats.allocationsInLoops, "allocation", "allocations")} inside iteration`);
+  if (stats.copiesInLoops) out.push(`${plural(stats.copiesInLoops, "copy", "copies")} inside iteration`);
+  if (stats.linearOpsInLoops) out.push(`${plural(stats.linearOpsInLoops, "linear operation", "linear operations")} inside iteration`);
+  if (stats.sortsInLoops) out.push(`${plural(stats.sortsInLoops, "sort", "sorts")} inside iteration`);
+  if (stats.recursionInLoops) out.push(`${plural(stats.recursionInLoops, "recursive call", "recursive calls")} inside iteration`);
   if (stats.branches) out.push(plural(stats.branches, "branch point", "branch points"));
   if (stats.awaits) out.push(plural(stats.awaits, "await boundary", "await boundaries"));
   if (stats.callCount) out.push(plural(stats.callCount, "call", "calls"));

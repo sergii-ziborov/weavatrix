@@ -45,6 +45,7 @@ function symbolCandidate(item, node, context) {
   const source = String(context.sources.get(file) || "");
   const pathInfo = context.classify(file, source);
   const publicSurface = isPublicSurface(node);
+  const testOnly = item.testOnly === true;
   const externalEntry = context.entrySet.has(file) || isFrameworkEntryFile(file);
   const framework = context.frameworkByFile.get(file) || null;
   const dynamicFile = context.dynamicTargets.has(file) || DYNAMIC_RE.test(source);
@@ -86,7 +87,7 @@ function symbolCandidate(item, node, context) {
   return {
     id: String(item.id),
     kind,
-    classification: publicSurface ? `public-${kind}` : kind === "method" ? "internal-method" : kind === "function" ? "internal-function" : "unreferenced-symbol",
+    classification: testOnly ? `test-only-${kind}` : publicSurface ? `public-${kind}` : kind === "method" ? "internal-method" : kind === "function" ? "internal-function" : "unreferenced-symbol",
     file,
     line: lineOf(node),
     symbol: bareLabel(node?.label || item.label),
@@ -96,8 +97,8 @@ function symbolCandidate(item, node, context) {
     confidence,
     reason: item.reason,
     evidence: [
-      { kind: "graph", fact: "No inbound non-structural graph edge targets this symbol." },
-      { kind: "source-index", fact: "Its identifier has no second indexed occurrence that establishes a caller." },
+      ...(testOnly ? [{kind: item.evidence || "graph", fact: `Only test/e2e consumers were found${item.testConsumerFiles?.length ? `: ${item.testConsumerFiles.join(", ")}` : "."}`}]
+        : [{ kind: "graph", fact: "No inbound non-structural graph edge targets this symbol." }, { kind: "source-index", fact: "Its identifier has no second indexed occurrence that establishes a caller." }]),
       ...(exactNoReference ? [{kind: "exact-lsp", fact: "The active language server returned no in-workspace references for this exact declaration."}] : []),
     ],
     caveats,
@@ -105,7 +106,9 @@ function symbolCandidate(item, node, context) {
     externallyEnteredFile: externalEntry,
     pathClasses: pathInfo.classes || [],
     matchedPathRule: pathInfo.matchedRule || null,
-    reviewAction: "Confirm with read_source, get_dependents, exact search, framework/config inspection and tests; never auto-delete.",
+    reviewAction: testOnly
+      ? "Confirm that no production/config/framework consumer exists; decide whether the declaration is intentional test support or removable with its tests. Never auto-delete."
+      : "Confirm with read_source, get_dependents, exact search, framework/config inspection and tests; never auto-delete.",
   };
 }
 
@@ -182,7 +185,7 @@ export function computeDeadCodeReview(graph, sources, options = {}) {
   const context = { sources, entrySet, dynamicTargets, frameworkByFile, classify, repoSignals, exactNoReferenceIds };
   const dead = computeDead(graph, sources, { entrySet });
   const nodesById = new Map((graph.nodes || []).map((node) => [String(node.id), node]));
-  const rawSymbols = dead.deadSymbols
+  const rawSymbols = [...dead.deadSymbols, ...(dead.testOnlySymbols || []).map((item) => ({...item, testOnly: true}))]
     .map((item) => ({ item, node: nodesById.get(String(item.id)) }))
     .filter((entry) => entry.node)
     .map(({ item, node }) => symbolCandidate(item, node, context));
@@ -236,6 +239,7 @@ export function computeDeadCodeReview(graph, sources, options = {}) {
       indexedSymbols: dead.stats.symbols,
       indexedFiles: dead.stats.files,
       rawDeadSymbols: rawSymbols.length,
+      rawTestOnlySymbols: (dead.testOnlySymbols || []).length,
       rawDeadFiles: rawFiles.length,
       reviewCandidates: candidates.length,
       byConfidence: {

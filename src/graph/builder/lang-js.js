@@ -250,6 +250,28 @@ export default {
         local: typedDeclaration[2],
         typeOnly: typedDeclaration[1] !== "enum",
       });
+      const defaultValue = field(node, "value");
+      if (defaultValue?.type === "object") {
+        // Service facades commonly expose local helpers through `export default { getSchema,
+        // save: persist }`. Record the public member -> local binding instead of treating the
+        // object as an opaque default export.
+        recordJsExport({kind: "facade-root", exported: "default", local: "default", typeOnly: false});
+        for (const property of defaultValue.namedChildren || []) {
+          if (["shorthand_property_identifier", "shorthand_property_identifier_pattern"].includes(property.type)) {
+            recordJsExport({kind: "facade-member", member: property.text, local: property.text, typeOnly: false});
+            markExported(property.text);
+            continue;
+          }
+          if (property.type !== "pair") continue;
+          const key = field(property, "key");
+          const value = field(property, "value");
+          if (!key || value?.type !== "identifier") continue;
+          const member = key.text.replace(/^['"`]|['"`]$/g, "");
+          if (!/^[A-Za-z_$][\w$]*$/.test(member)) continue;
+          recordJsExport({kind: "facade-member", member, local: value.text, typeOnly: false});
+          markExported(value.text);
+        }
+      }
     }
 
     // ---- export markers beyond declarations: `export { a, b }`, `export default X`, CJS module.exports ----

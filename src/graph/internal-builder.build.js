@@ -139,7 +139,14 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         ...(extra && extra.visibility ? { visibility: extra.visibility } : {})
       });
       links.push({ source: fileRel, target: id, relation: "contains", confidence: "EXTRACTED" });
-      syms.push({ id, name, start: line, end: endLine >= line ? endLine : 0 });
+      syms.push({
+        id,
+        name,
+        start: line,
+        end: endLine >= line ? endLine : 0,
+        ...(extra?.memberOf ? {memberOf: extra.memberOf} : {}),
+        ...(extra?.symbolKind ? {symbolKind: extra.symbolKind} : {}),
+      });
       if (!nameToId.has(name)) nameToId.set(name, id);
       if (extra?.moduleDeclaration && !moduleNameToId.has(name)) moduleNameToId.set(name, id);
       return id;
@@ -243,10 +250,18 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     let code; try { code = readFileSync(abs, "utf8"); } catch { continue; }
     const parser = new Parser(); parser.setLanguage(langs[grammar]);
     let tree; try { tree = parser.parse(code); } catch { continue; }
-    for (const cap of caps(grammar, lang.calls, tree.rootNode)) {
+    if (!lang.customCalls) for (const cap of caps(grammar, lang.calls, tree.rootNode)) {
       const caller = enclosing(fileRel, cap.node.startPosition.row + 1); if (!caller) continue;
       const target = resolveCall(cap.node.text, fileRel); if (!target || target === caller.id) continue;
       links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
+    }
+    if (typeof lang.pass2 === "function") {
+      try {
+        lang.pass2({
+          grammar, tree, fileRel, code, caps, field, enclosing, links, nodeById,
+          perFileSymbols, symByFileName, importedLocals, resolveCall,
+        });
+      } catch (e) { /* one language-specific resolver never sinks the graph */ void e; }
     }
     // qualified/selector calls (Go): `pkg.Func()` → the imported package's dir; else `receiver.Method()` → the
     // SAME package (heuristic by method name — connects lifecycle methods like peer.Enable() that need type info).
@@ -277,7 +292,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         const object = field(cap.node, "object"), property = field(cap.node, "property");
         if (!object || object.type !== "identifier" || !property) continue;
         const imp = importedLocals.get(fileRel)?.get(object.text);
-        if (!imp || imp.imported !== "*" || imp.typeOnly) continue;
+        if (!imp || !["*", "default"].includes(imp.imported) || imp.typeOnly) continue;
         const origin = resolveNamespaceMember(fileRel, imp, property.text, "call");
         if (origin.status !== "resolved") continue;
         const target = symByFileName.get(origin.origin.file)?.get(origin.origin.name);
@@ -361,10 +376,10 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     extImportsV: 2,
     edgeTypesV: 2,
     edgeProvenanceV: EDGE_PROVENANCE_V,
-    complexityV: 1,
+    complexityV: 2,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
-    extractorSchemaV: 3,
+    extractorSchemaV: 4,
     jsExportRecords: Object.fromEntries([...jsExports.entries()].sort(([a], [b]) => a.localeCompare(b))),
     fileHashes: snapshot.fileHashes,
     fileExportSignatures: snapshot.fileExportSignatures,

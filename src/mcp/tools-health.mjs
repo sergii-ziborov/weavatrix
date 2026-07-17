@@ -11,6 +11,7 @@ import {summarizeCommunities, aggregateGraph} from '../analysis/graph-analysis.j
 import {detectEndpoints} from '../analysis/endpoints.js'
 import {computeStaticTestReachability} from '../analysis/static-test-reachability.js'
 import {computeDeadCodeReview} from '../analysis/dead-code-review.js'
+import {computeHotPathReview} from '../analysis/hot-path-review.js'
 import {collectNonRuntimeRoots, collectPackageScopes, collectSourceTexts, readRepoJson} from '../analysis/internal-audit.collect.js'
 import {entryFiles} from '../analysis/internal-audit.reach.js'
 import {buildInternalGraph} from '../graph/internal-builder.js'
@@ -53,7 +54,7 @@ function groupClones(data, {simMin, tokMin, mode, skipTests, includeClassified})
 export function tFindDuplicates(g, args, ctx) {
     if (!ctx.repoRoot) return 'Duplicate scan needs the repo root (not provided to this server).'
     const simMin = Math.min(100, Math.max(50, Number(args.min_similarity) || 80))
-    const tokMin = Math.min(400, Math.max(30, Number(args.min_tokens) || 50))
+    const tokMin = Math.min(400, Math.max(12, Number(args.min_tokens) || 50))
     const mode = args.mode === 'strict' ? 'strict' : 'renamed'
     const skipTests = args.include_tests ? false : true
     const includeClassified = args.include_classified === true || args.include_non_product === true
@@ -61,7 +62,7 @@ export function tFindDuplicates(g, args, ctx) {
     // semantic mode: same-name symbols across files, ranked by size — LOW similarity is the signal
     // (same name, drifted behavior). Token-clone pairing is skipped entirely.
     if (args.mode === 'semantic') {
-        const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {nameTwins: true})
+        const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {nameTwins: true, minTokens: tokMin})
         const frags = data.frags
         const candidates = []
         for (const twin of data.nameTwins || []) {
@@ -96,13 +97,14 @@ export function tFindDuplicates(g, args, ctx) {
         })
         return `Found ${candidates.length} actionable same-name pair(s) across files (semantic mode; one closest clone and/or farthest collision per name). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nThese are review candidates, not automatic refactors. Use read_source on both sites before changing code.`
     }
-    const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {includeStrings})
+    const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {includeStrings, minTokens: tokMin})
     const groups = groupClones(data, {simMin, tokMin, mode, skipTests, includeClassified})
+    const smallPolicy = tokMin < 30 ? ' Small fragments below 30 tokens require at least 95% similarity and two shared bounded fingerprints.' : ''
     const suppressed = data.frags.filter((fragment) => !fragmentEligible(fragment, {tokMin, skipTests, includeClassified})).length
     const suppressionNote = suppressed && !includeClassified
         ? ` ${suppressed} fragment(s) classified as tests/e2e/generated/mock/story/docs/benchmark/temp or matched by .weavatrix.json exclude were suppressed; pass include_classified:true (and include_tests:true for tests) to inspect them explicitly.`
         : ''
-    if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.${suppressionNote}`
+    if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.${smallPolicy}${suppressionNote}`
     const top = groups.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
     const lines = top.map((grp, k) => {
         const isStr = grp.members.some((f) => f.kind === 'string')
@@ -110,7 +112,7 @@ export function tFindDuplicates(g, args, ctx) {
         const sites = grp.members.slice(0, 8).map((f) => `     ${f.file}:${f.start}-${f.end}`)
         return [head, ...sites].join('\n')
     })
-    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.${suppressionNote}`
+    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.${smallPolicy}${suppressionNote}`
 }
 
 // Focused dead-code review queue. Unlike the broad run_audit surface, this includes functions and
@@ -227,10 +229,12 @@ const formatOrdinaryAudit = (audit, args, findings = audit.findings, heading = n
     const summary = summarizeFindings(findings)
     const sev = summary.bySeverity
     const bycat = summary.byCategory
+    const deps = audit.dependencyReport || {}
     return [
         heading,
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         ...auditConventionLines(audit),
+        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}.`,
         `Scoped severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Scoped categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
         `Repository-level ${auditChecksLine(audit)}`,
         '',
@@ -418,11 +422,13 @@ export async function tRunAudit(g, args, ctx) {
     const shown = filtered.slice(0, max)
     const sev = audit.summary.bySeverity
     const bycat = audit.summary.byCategory
+    const deps = audit.dependencyReport || {}
     const check = (name, state) => `${name} ${state?.status || 'ERROR'}${state?.detail ? ` — ${state.detail}` : ''}`
     return [
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         `Severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
         `Structure: ${audit.structureReport?.runtimeCycles ?? audit.structureReport?.cycles ?? 0} runtime cycle(s), ${audit.structureReport?.compileTimeCouplings ?? audit.structureReport?.typeCouplings ?? 0} compile-time coupling group(s), ${audit.structureReport?.orphans ?? 0} orphan(s); import edges: ${audit.structureReport?.runtimeImportEdges ?? audit.structureReport?.importEdges ?? 0} runtime + ${audit.structureReport?.typeOnlyImportEdges ?? 0} type-only + ${audit.structureReport?.compileOnlyImportEdges ?? 0} compile-only. Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
+        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}.`,
         ...auditConventionLines(audit),
         `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`,
         ``,
@@ -507,6 +513,61 @@ export function tModuleMap(g, args, ctx) {
         compiled.length ? `Compile-time module dependencies (not runtime coupling):` : null,
         ...compiled.map((e) => `  ${e.from} → ${e.to}  (${e.count}; ${e.typeOnly} type-only, ${e.compileOnly} compile-only)`),
     ].filter((line) => line != null).join('\n')
+}
+
+// Parser-backed local cost review. This keeps syntax, graph coupling and measured/static test
+// evidence as separate fields so callers cannot mistake a ranking heuristic for profiler output.
+export function tHotPathReview(g, args, ctx) {
+    const review = computeHotPathReview(rawGraph(ctx), {
+        repoRoot: ctx?.repoRoot || null,
+        path: args.path,
+        includeTests: args.include_tests === true,
+        includeClassified: args.include_classified === true,
+        topN: args.top_n,
+        cyclomaticThreshold: args.cyclomatic_threshold,
+        callThreshold: args.call_threshold,
+        loopDepthThreshold: args.loop_depth_threshold,
+        timeRankThreshold: args.time_rank_threshold,
+        minScore: args.min_score,
+    })
+    if (!review.ok) return toolResult(`Hot-path review refused: ${review.error}.`, review)
+    const pct = (value) => typeof value === 'number' ? `${Math.round(value * 100)}%` : String(value || 'NOT_AVAILABLE')
+    const coverageLine = review.coverage.actualCoverage === 'AVAILABLE'
+        ? `Measured coverage: ${review.coverage.measuredFiles} file(s) from ${review.coverage.sources.join(', ') || 'coverage report'}.`
+        : review.coverage.staticReachability
+            ? `actualCoverage: NOT_AVAILABLE; static test reachability ${review.coverage.staticReachability.reachableFiles}/${review.coverage.staticReachability.productFiles} product file(s).`
+            : 'actualCoverage: NOT_AVAILABLE; no measured or static test evidence was available.'
+    const text = [
+        `Local hot-path review: ${review.candidateSymbols} candidate(s) from ${review.analyzedSymbols} analyzed symbol(s); showing ${review.hotspots.length}.`,
+        `Thresholds: time rank >=${review.thresholds.timeRank}, cyclomatic >=${review.thresholds.cyclomatic}, calls >=${review.thresholds.calls}, loop depth >=${review.thresholds.loopDepth}, score >=${review.thresholds.minScore}.`,
+        coverageLine,
+        'Local syntax cost and graph coupling are separate. Scores are review priority, not measured runtime.',
+        '',
+        ...(review.hotspots.length ? review.hotspots.flatMap((item, index) => {
+            const tests = item.testEvidence.actualCoverage === 'NOT_AVAILABLE'
+                ? item.testEvidence.staticReachable ? `static-test d${item.testEvidence.distance}` : 'no-static-test-path'
+                : `coverage ${pct(item.testEvidence.actualCoverage)}`
+            const pointer = `${item.file}${item.startLine ? `:${item.startLine}${item.endLine > item.startLine ? `-${item.endLine}` : ''}` : ''}`
+            const evidence = item.sourceEvidence.length
+                ? `\n       evidence: ${item.sourceEvidence.map((entry) => `${entry.kind}@L${entry.line || '?'}${entry.detail ? ` (${entry.detail})` : ''}`).join('; ')}`
+                : ''
+            return [
+                `  ${String(index + 1).padStart(2)}. score ${String(item.score).padStart(5)}  syntax ${String(item.localSyntax.score).padStart(5)}  graph ${String(item.graphRisk.score).padStart(5)}  ${item.confidence}`,
+                `      ${item.label}  (${pointer}; fan-in ${item.graphRisk.fanIn}, fan-out ${item.graphRisk.fanOut}; ${tests})`,
+                `       ${item.reasons.slice(0, 5).join('; ')}${evidence}`,
+            ]
+        }) : ['  (none at the selected thresholds)']),
+        review.bounds.truncated ? `... +${review.bounds.totalCandidates - review.bounds.returned} more (raise top_n, min_score, or narrow path).` : null,
+        '',
+        'Caveat: no interprocedural Big-O, recursion-bound, CFG, dead-store or taint-flow claim is made.',
+    ].filter((line) => line != null).join('\n')
+    return toolResult(text, review, {
+        completeness: {
+            symbols: 'COMPLETE_FOR_INDEXED_GRAPH',
+            output: review.bounds.truncated ? 'BOUNDED' : 'COMPLETE',
+            coverage: review.coverage.actualCoverage,
+        },
+    })
 }
 
 // Coverage × graph: map an EXISTING coverage report (istanbul/lcov/coverage.py/Go — read offline,

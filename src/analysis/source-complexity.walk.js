@@ -32,8 +32,21 @@ function createStats(parameters, family) {
     producerCalls: 0,
     recursion: false,
     maxSortLoopDepth: 0,
-    maxVariableAllocationDepth: 0
+    maxVariableAllocationDepth: 0,
+    allocationsInLoops: 0,
+    copiesInLoops: 0,
+    linearOpsInLoops: 0,
+    sortsInLoops: 0,
+    recursionInLoops: 0,
+    hotEvidence: []
   };
+}
+
+function recordHotEvidence(stats, node, kind, detail) {
+  if (stats.hotEvidence.length >= 24) return;
+  const line = node?.startPosition ? node.startPosition.row + 1 : 0;
+  if (stats.hotEvidence.some((item) => item.kind === kind && item.line === line)) return;
+  stats.hotEvidence.push({ kind, line, detail });
 }
 
 function shouldSkipNode(root, node, state) {
@@ -70,39 +83,74 @@ function recordBasicSignals(stats, node, facts) {
   if (RETURN_NODES.has(type)) stats.returns++;
   if (AWAIT_NODES.has(type)) { stats.awaits++; stats.asyncBoundaries++; }
   if (OBJECT_NODES.has(type)) stats.objectLiterals++;
-  if (FIXED_ALLOCATION_NODES.has(type)) stats.allocations++;
+  if (FIXED_ALLOCATION_NODES.has(type)) {
+    stats.allocations++;
+    if (currentDepth > 0) {
+      stats.allocationsInLoops++;
+      recordHotEvidence(stats, node, "allocation-in-loop", type);
+    }
+  }
   if (!VARIABLE_ALLOCATION_NODES.has(type)) return;
   stats.producerCalls++;
   stats.maxVariableAllocationDepth = Math.max(stats.maxVariableAllocationDepth, currentDepth + 1);
 }
 
-function recordSpread(stats, facts, parent) {
+function recordSpread(stats, node, facts, parent) {
   if (!SPREAD_NODES.has(facts.type) || /parameters|parameter_list/.test(String(parent?.type || ""))) return;
   stats.spreadCopies++;
   stats.linearOps++;
   stats.maxVariableAllocationDepth = Math.max(stats.maxVariableAllocationDepth, facts.currentDepth + 1);
+  if (facts.currentDepth > 0) {
+    stats.copiesInLoops++;
+    stats.linearOpsInLoops++;
+    recordHotEvidence(stats, node, "copy-in-loop", facts.type);
+  }
 }
 
-function recordCall(stats, facts, state, targetName) {
+function recordCall(stats, node, facts, state, targetName) {
   if (!facts.isCall) return;
   stats.callCount++;
   if (state.awaited || looksLikeIoCall(facts.nameAtCall)) stats.externalCalls++;
-  if (targetName && facts.normalizedCall === targetName) stats.recursion = true;
+  if (targetName && facts.normalizedCall === targetName) {
+    stats.recursion = true;
+    if (facts.currentDepth > 0) {
+      stats.recursionInLoops++;
+      recordHotEvidence(stats, node, "recursion-in-loop", facts.nameAtCall || targetName);
+    }
+  }
   if (facts.sortCall) {
     stats.sorts++;
     stats.maxSortLoopDepth = Math.max(stats.maxSortLoopDepth, facts.currentDepth);
-  } else if (LINEAR_CALLS.has(facts.normalizedCall) && !facts.iteratorCall) stats.linearOps++;
+    if (facts.currentDepth > 0) {
+      stats.sortsInLoops++;
+      recordHotEvidence(stats, node, "sort-in-loop", facts.nameAtCall || "sort");
+    }
+  } else if (LINEAR_CALLS.has(facts.normalizedCall) && !facts.iteratorCall) {
+    stats.linearOps++;
+    if (facts.currentDepth > 0) {
+      stats.linearOpsInLoops++;
+      recordHotEvidence(stats, node, "linear-scan-in-loop", facts.nameAtCall || "collection operation");
+    }
+  } else if (facts.iteratorCall && facts.currentDepth > 0) {
+    stats.linearOpsInLoops++;
+    recordHotEvidence(stats, node, "linear-scan-in-loop", facts.nameAtCall || "iterator");
+  }
   if (!facts.producerCall) return;
   stats.producerCalls++;
   stats.allocations++;
   stats.maxVariableAllocationDepth = Math.max(stats.maxVariableAllocationDepth, facts.currentDepth + 1);
+  if (facts.currentDepth > 0) {
+    stats.allocationsInLoops++;
+    recordHotEvidence(stats, node, "allocation-in-loop", facts.nameAtCall || "collection producer");
+  }
 }
 
-function recordLoop(stats, facts) {
+function recordLoop(stats, node, facts) {
   if (!facts.isLoop && !facts.iteratorCall) return facts.currentDepth;
   const nextDepth = facts.currentDepth + 1;
   stats.loops++;
   stats.maxLoopDepth = Math.max(stats.maxLoopDepth, nextDepth);
+  if (nextDepth > 1) recordHotEvidence(stats, node, "nested-iteration", `depth ${nextDepth}`);
   return nextDepth;
 }
 
@@ -121,9 +169,9 @@ function walkSyntax(root, node, state, context) {
   const callbackContext = state.callbackContext || ARGUMENT_NODES.has(String(parent?.type || ""));
   const facts = nodeFacts(node, state);
   recordBasicSignals(context.stats, node, facts);
-  recordSpread(context.stats, facts, parent);
-  recordCall(context.stats, facts, state, context.targetName);
-  const nextDepth = recordLoop(context.stats, facts);
+  recordSpread(context.stats, node, facts, parent);
+  recordCall(context.stats, node, facts, state, context.targetName);
+  const nextDepth = recordLoop(context.stats, node, facts);
   for (const child of children(node)) {
     const childIsArgs = ARGUMENT_NODES.has(String(child.type || ""));
     walkSyntax(root, child, {
@@ -165,6 +213,12 @@ export function analyzeSyntaxComplexity(root, { family = "", name = "" } = {}) {
     sorts: stats.sorts,
     linearOps: stats.linearOps,
     recursion: stats.recursion,
+    allocationsInLoops: stats.allocationsInLoops,
+    copiesInLoops: stats.copiesInLoops,
+    linearOpsInLoops: stats.linearOpsInLoops,
+    sortsInLoops: stats.sortsInLoops,
+    recursionInLoops: stats.recursionInLoops,
+    hotEvidence: stats.hotEvidence,
     ...labels,
     scope: "local",
     complexityScope: "local",

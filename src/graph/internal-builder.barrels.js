@@ -31,10 +31,17 @@ function withTypeOnly(result, typeOnly) {
 export function resolveJsBarrels({ jsExports, importedLocals, links }) {
   const tables = new Map();
   for (const [file, records] of jsExports) {
-    const table = { explicit: new Map(), stars: [] };
+    const table = { explicit: new Map(), stars: [], facadeMembers: new Map() };
     for (const record of records || []) {
       if (record.kind === "star") {
         table.stars.push(record);
+        continue;
+      }
+      if (record.kind === "facade-member") {
+        if (!record.member) continue;
+        const list = table.facadeMembers.get(record.member) || [];
+        list.push(record);
+        table.facadeMembers.set(record.member, list);
         continue;
       }
       if (!record.exported) continue;
@@ -85,6 +92,23 @@ export function resolveJsBarrels({ jsExports, importedLocals, links }) {
     const result = mergeCandidates(candidates);
     if (rootResolution) cache.set(key, result);
     return result;
+  };
+
+  const resolveFacadeMember = (file, member, trail = new Set()) => {
+    const key = `${file}\0default.${member}`;
+    if (trail.has(key)) return MISSING;
+    const records = tables.get(file)?.facadeMembers.get(member) || [];
+    if (!records.length) return MISSING;
+    const nextTrail = new Set(trail);
+    nextTrail.add(key);
+    return mergeCandidates(records.map((record) => {
+      const local = record.local || member;
+      const binding = importedLocals.get(file)?.get(local);
+      if (binding?.targetFile && binding.imported && binding.imported !== "*") {
+        return withTypeOnly(resolveExport(binding.targetFile, binding.imported, nextTrail), record.typeOnly || binding.typeOnly);
+      }
+      return resolved(file, local, record.typeOnly);
+    }));
   };
 
   // Every internal re-export is a physical facade hop. It remains in the graph for runtime cycle truth,
@@ -149,8 +173,13 @@ export function resolveJsBarrels({ jsExports, importedLocals, links }) {
   // Namespace member usage is only knowable in pass 2 (`ui.Button`, `ui.run`). Expose a bounded helper
   // that uses the same cache and emits the corresponding semantic file edge exactly once.
   const resolveNamespaceMember = (source, imp, member, usage = null) => {
-    if (!imp?.targetFile || imp.imported !== "*") return MISSING;
-    const result = resolveExport(imp.targetFile, member);
+    if (!imp?.targetFile) return MISSING;
+    const defaultFacade = imp.imported === "default" || imp.originName === "default";
+    const result = imp.imported === "*"
+      ? resolveExport(imp.targetFile, member)
+      : defaultFacade
+        ? resolveFacadeMember(imp.originFile || imp.targetFile, member)
+        : MISSING;
     if (result.status !== "resolved") return result;
     if (result.origin.file !== imp.targetFile) {
       for (const link of links) {
@@ -165,5 +194,5 @@ export function resolveJsBarrels({ jsExports, importedLocals, links }) {
     return result;
   };
 
-  return { resolveExport, resolveNamespaceMember };
+  return { resolveExport, resolveNamespaceMember, resolveFacadeMember };
 }

@@ -72,7 +72,7 @@ test("source complexity: updateWidget persists exact AST range and source report
     const graph = await buildInternalGraph(dir);
     const node = graph.nodes.find((item) => String(item.id).includes("#updateWidget@"));
     assert.ok(node, "updateWidget symbol is extracted");
-    assert.equal(graph.complexityV, 1);
+    assert.equal(graph.complexityV, 2);
     assert.equal(node.source_end, `L${UPDATE_WIDGET_SOURCE.split("\n").length}`);
 
     const report = node.complexity;
@@ -91,7 +91,7 @@ test("source complexity: updateWidget persists exact AST range and source report
 
     const analysis = aggregateGraph(graph, dir);
     const persisted = analysis.modules[0].files[0].symbols.find((item) => item.id === node.id);
-    assert.equal(analysis.complexityV, 1);
+    assert.equal(analysis.complexityV, 2);
     assert.equal(persisted.loc, UPDATE_WIDGET_SOURCE.split("\n").length);
     assert.equal(persisted.endLine, UPDATE_WIDGET_SOURCE.split("\n").length);
     assert.deepEqual(persisted.complexity, report);
@@ -184,4 +184,3 @@ test("source complexity: sequential iterator chains stay linear while callback n
     rmSync(dir, { recursive: true, force: true });
   }
 });
-

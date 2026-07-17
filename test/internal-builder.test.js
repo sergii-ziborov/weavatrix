@@ -256,6 +256,64 @@ test("internal-builder: ambiguous export-star names are not guessed", async () =
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("internal-builder: default object facades resolve public members to local helper symbols", async () => {
+  const dir = repoWith({
+    "src/service.js":
+      "function getSchema(){ return {ok: true}; }\n" +
+      "function persist(){ return 1; }\n" +
+      "export default { getSchema, save: persist };\n",
+    "src/use.js":
+      "import service from './service.js';\n" +
+      "export function load(){ service.getSchema(); return service.save(); }\n",
+  });
+  try {
+    const graph = await buildInternalGraph(dir);
+    const id = (file, name) => graph.nodes.find((node) => node.source_file === file && String(node.id).includes(`#${name}@`))?.id;
+    const load = id("src/use.js", "load");
+    const getSchema = id("src/service.js", "getSchema");
+    const persist = id("src/service.js", "persist");
+    assert.ok(graph.links.some((link) => link.source === load && link.target === getSchema && link.relation === "calls"), "shorthand facade member resolves");
+    assert.ok(graph.links.some((link) => link.source === load && link.target === persist && link.relation === "calls"), "aliased facade member resolves");
+    assert.equal(graph.nodes.find((node) => node.id === getSchema)?.exported, true);
+    assert.equal(graph.nodes.find((node) => node.id === persist)?.exported, true);
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test("internal-builder: Python receiver types and wildcard imports resolve without mixing same-named methods", async () => {
+  const dir = repoWith({
+    "pkg/__init__.py": "",
+    "pkg/alpha.py": "class AlphaService:\n    def run(self):\n        return 'alpha'\n",
+    "pkg/beta.py": "class BetaService:\n    def run(self):\n        return 'beta'\n",
+    "pkg/helpers.py": "__all__ = ['wild_helper']\ndef wild_helper():\n    return 1\ndef hidden_helper():\n    return 2\n",
+    "pkg/use.py":
+      "from .alpha import AlphaService as Alpha\n" +
+      "from .beta import BetaService\n" +
+      "from .helpers import *\n" +
+      "def use(alpha: Alpha, beta: BetaService):\n" +
+      "    alpha.run()\n" +
+      "    beta.run()\n" +
+      "    local = Alpha()\n" +
+      "    local.run()\n" +
+      "    return wild_helper()\n",
+  });
+  try {
+    const graph = await buildInternalGraph(dir);
+    const symbol = (file, name, line) => graph.nodes.find((node) => node.source_file === file
+      && String(node.id).includes(`#${name}@`) && (!line || node.source_location === `L${line}`));
+    const use = symbol("pkg/use.py", "use");
+    const alphaRun = symbol("pkg/alpha.py", "run");
+    const betaRun = symbol("pkg/beta.py", "run");
+    const wildcard = symbol("pkg/helpers.py", "wild_helper");
+    assert.equal(alphaRun.member_of, "AlphaService");
+    assert.equal(betaRun.member_of, "BetaService");
+    const calls = graph.links.filter((link) => link.source === use.id && link.relation === "calls");
+    assert.equal(calls.filter((link) => link.target === alphaRun.id).length, 2, "typed alias and constructor binding resolve to AlphaService.run");
+    assert.equal(calls.filter((link) => link.target === betaRun.id).length, 1, "typed receiver resolves only to BetaService.run");
+    assert.equal(calls.filter((link) => link.target === wildcard.id).length, 1, "unique __all__ wildcard symbol resolves");
+    assert.ok(calls.filter((link) => [alphaRun.id, betaRun.id, wildcard.id].includes(link.target)).every((link) => link.provenance === "RESOLVED"));
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
 test("internal-builder: deeply-nested JS does not hang (bounded isExportedDecl, not O(depth^3))", async () => {
   // ~700 nested functions — the exact O(depth^3) .parent-walk trigger; the unbounded version took minutes.
   let body = "return 1;";

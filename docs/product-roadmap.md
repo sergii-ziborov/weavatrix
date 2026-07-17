@@ -74,6 +74,22 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
 - Retention, pin, export and delete.
 - Shared actionable lifecycle for Health, Direction and Duplicates.
 
+### Public `0.2.5` — focused precision patch
+
+- Delivered: on-demand exact TypeScript/JavaScript symbol inspection with grouped reference occurrences,
+  graph blast radius and a bounded local source-context bundle. Point queries use a separate cache and
+  never replace the broad safety-capped precision overlay.
+- Delivered: conservative Python receiver-method dispatch and wildcard-import resolution, including
+  lexical shadowing and ambiguity-negative fixtures.
+- Delivered from the extended benchmark: default-object facade resolution, symbol-precise dependents,
+  explicit unused-dependency evidence, test-only dead-symbol review, and opt-in small-clone scanning.
+- Delivered: bounded offline `hot_path_review` with parser-derived local cost, exact inside-loop
+  allocation/copy/scan/sort/recursion evidence, separate graph fan-in/fan-out risk, and measured
+  coverage or explicitly labelled static test reachability.
+- Interprocedural complexity and CFG/data-flow remain a separate next-version engine rather than an
+  unbounded claim inside the local syntax model.
+- Executable scope, tests and release gates: [`v0.2.5-development-plan.md`](v0.2.5-development-plan.md).
+
 ### Public `0.3.0` — precision expansion
 
 - Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and

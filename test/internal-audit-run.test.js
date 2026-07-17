@@ -22,6 +22,10 @@ test("internal audit reports NOT_CHECKED states and honors managed Python runtim
     assert.equal(audit.checks.osv.status, "NOT_CHECKED");
     assert.equal(audit.checks.malware.status, "NOT_CHECKED");
     assert.equal(audit.scanned.managedPythonDependencies, 1);
+    assert.equal(audit.dependencyReport.status, "COMPLETE");
+    assert.equal(audit.dependencyReport.importRecords, 1);
+    assert.equal(audit.dependencyReport.unused, 0);
+    assert.equal(audit.dependencyReport.missing, 0);
     assert.ok(!audit.findings.some((f) => f.rule === "missing-dep" && f.package === "numpy"));
   } finally {
     rmSync(repo, { recursive: true, force: true });

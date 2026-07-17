@@ -5,7 +5,7 @@
 Grep sees text. Weavatrix sees structure. It builds a dependency graph of any local repository —
 files, symbols, and the imports/calls/inheritance connecting them — and serves it to Claude Code,
 Codex, or any MCP client: change impact, transitive dependents, health audit, clone detection,
-coverage mapping. **32 tools available; 29 enabled by the default offline profile. Local-first: with
+coverage mapping. **34 tools available; 31 enabled by the default offline profile. Local-first: with
 the defaults, no repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
@@ -21,8 +21,9 @@ answers grep can't produce:
   untracked included), maps the changed files and symbols onto the graph, and lists everything that
   depends on them — with test coverage attached, so the **untested part of the blast radius** stands
   out before you ship.
-- *"Who calls this function?"* → `get_dependents` walks reverse edges transitively: every caller,
-  importer and subclass that can feel the refactor, ranked by proximity × connectivity.
+- *"Who calls this function?"* → `inspect_symbol` returns exact bounded TS/JS occurrences plus
+  source context; `get_dependents` walks the symbol-level reverse graph transitively. Opt into
+  `include_container_importers:true` only when a broader module-import radius is intended.
 - *"Did my refactor actually decouple anything?"* → `graph_diff base_ref=HEAD~1` builds an immutable
   baseline graph without checking it out, then reports the structural delta: new module
   dependencies, broken or introduced import cycles, and symbols that lost their last caller.
@@ -117,7 +118,7 @@ confirmed by its bundled `typescript-language-server` + TypeScript runtime to `E
 `CONFLICT` means evidence disagrees. `graph_stats` reports the provenance breakdown and the semantic
 provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means precision was explicitly
 disabled and only static evidence is active. Java and Rust language-server providers are not bundled
-in 0.2.4: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
+in 0.2.5: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
 TypeScript/JavaScript overlay.
 
 The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
@@ -126,18 +127,26 @@ before starting the MCP server for parser-only operation from the first build, o
 choice as **TypeScript/JavaScript semantic precision**.
 
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback), `read_source` (a
-symbol's actual code in one hop), `list_endpoints` (HTTP route inventory:
+symbol's actual code in one hop), `inspect_symbol` (one exact bounded TS/JS reference query,
+logical containers, impact and source excerpts), `list_endpoints` (HTTP route inventory:
 Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web …)
 
-**health** — `find_dead_code` (bounded review queue for statically unreferenced files, functions,
-methods, and symbols, with confidence/evidence and explicit public/framework/dynamic caveats),
-`run_audit` (unused files/exports/dependencies, missing npm/Go/Python deps, runtime
+**health** — `find_dead_code` (bounded review queue for statically unreferenced and test-only files,
+functions, methods, and symbols, with confidence/evidence and explicit public/framework/dynamic caveats),
+`run_audit` (unused files/exports/dependencies with an explicit manifest-check summary,
+missing npm/Go/Python deps, runtime
 cycles, type-only/compile-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
 lockfile drift; accepts an immutable `base_ref`, `changed_files`, and `debt: new|existing|all` for
 review-scoped results), `find_duplicates` (MOSS winnowing over method bodies — catches copy-paste even
-after renames), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
-ranked by connectivity — tests are never executed), `verify_architecture`,
+after renames and can inspect strict small clones down to 12 tokens), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
+ranked by connectivity — tests are never executed), `hot_path_review` (bounded local-cost evidence
+with separate graph/test risk), `verify_architecture`,
 `explain_architecture_violation`, `propose_architecture_exception`
+
+`hot_path_review` ranks production symbols using parser-derived local time, memory, cyclomatic and
+call-site facts plus exact inside-loop allocation, copy, scan, sort and recursion evidence. Graph
+fan-in/fan-out and measured coverage (or explicitly labelled static test reachability) remain
+separate from local syntax cost. The ranking is not profiler data or interprocedural Big-O.
 
 **build** — `rebuild_graph` (reports the structural delta, keeps the prior state as
 `graph.prev.json`)
@@ -183,6 +192,23 @@ ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
+
+### 0.2.5 exact-symbol and graph-fidelity patch
+
+- New `inspect_symbol` spends a bounded LSP query on one requested TS/JS declaration, groups exact
+  occurrences by logical container, and returns definition/caller source context. Its separate LRU
+  cache is revision/config fingerprinted and never replaces the broad precision overlay.
+- Default-object service facades resolve to their underlying helpers, while `get_dependents` no
+  longer silently expands every symbol query to all importers of its file.
+- Python receiver-aware method dispatch and unambiguous wildcard imports distinguish same-named
+  methods across classes without promoting ambiguous dynamic evidence.
+- `run_audit` makes unused-dependency checking visible even when clean; dead-code review identifies
+  production symbols referenced only by tests; small-clone scanning can be lowered to 12 tokens with
+  stricter evidence rules.
+- `hot_path_review` adds a bounded offline performance-review queue with line-addressable local cost
+  evidence, separate graph risk, and honest measured/unavailable coverage states.
+
+Full patch notes: [docs/releases/v0.2.5.md](docs/releases/v0.2.5.md).
 
 ### 0.2.4 graph-mode correctness and semantic precision patch
 

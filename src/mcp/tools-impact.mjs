@@ -59,7 +59,7 @@ const impactKind = (entry) => {
 // Transitive blast-radius: who is affected if this node changes. Walks REVERSE dependency edges
 // (calls/imports/inherits — not structural `contains`) out to `depth`. For a symbol, also seeds its
 // containing file, because importers depend on the file rather than the individual symbol.
-export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
+export function tGetDependents(g, {label, depth = 3, max_nodes = 40, include_container_importers = false} = {}) {
     const info = resolveNodeInfo(g, label)
     const n = info.node
     if (!n) return `No node found matching "${label}".`
@@ -69,7 +69,7 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
     const id = String(n.id)
     const seeds = new Set([id])
     let containingFile = null
-    if (isSymbol(id)) {
+    if (include_container_importers === true && isSymbol(id)) {
         const container = (g.inn.get(id) || []).find((e) => e.relation === 'contains')
         if (container) {
             containingFile = String(container.id)
@@ -88,7 +88,7 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
     return [
         note,
         `Dependents of ${n.label ?? id} (reverse calls/imports/inherits, depth ≤${maxDepth}): ${ranked.length} found (${runtimeCount} runtime, ${compileCount} compile-time-only), showing ${shown.length} by proximity + connectivity.`,
-        containingFile ? `Includes importers of its containing file ${labelOf(g, containingFile)}.` : null,
+        containingFile ? `Includes importers of its containing file ${labelOf(g, containingFile)} by explicit request.` : null,
         ...shown.map((r) => `  [d${r.d} ${impactKind(r.entry)}] ${r.entry.relation || 'rel'} [${r.entry.provenance || 'UNKNOWN'}]  ${labelOf(g, r.id)}  (deg ${r.deg})  [${r.id}]`),
     ].filter(Boolean).join('\n')
 }

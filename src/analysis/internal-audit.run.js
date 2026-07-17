@@ -139,6 +139,21 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
     }));
     unusedExportCount++;
   }
+  for (const symbol of dead.testOnlySymbols || []) {
+    if (isNonProductPath(symbol.file)) continue;
+    findings.push(makeFinding({
+      category: "unused",
+      rule: "test-only-symbol",
+      severity: "low",
+      confidence: symbol.publicApi ? "low" : "medium",
+      title: `Production symbol used only by tests: ${symbol.label}`,
+      detail: `${symbol.reason}. Static analysis cannot rule out external or reflective consumers, so review before removal.`,
+      file: symbol.file,
+      graphNodeId: symbol.id,
+      source: "internal",
+      fixHint: "verify production/config consumers, then keep as intentional test support or remove it together with obsolete tests",
+    }));
+  }
 
   // ---- supply-chain: installed packages × cached OSV advisories. 100% OFFLINE here — the cache is
   // refreshed only by the explicit repos:advisory-refresh action. Never blocks the rest of the audit.
@@ -247,6 +262,13 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
   }
 
   const sorted = sortFindings(findings);
+  const dependencyFindings = sorted.filter((finding) => ["unused-dep", "missing-dep", "duplicate-dep"].includes(finding.rule));
+  const dependencyStatus = (graph.graphBuildMode && graph.graphBuildMode !== "full") || graph.graphBuildScope
+    ? "PARTIAL"
+    : "COMPLETE";
+  const importedPackages = new Set(externalImports
+    .filter((entry) => entry?.pkg && !entry.builtin && !entry.unresolved)
+    .map((entry) => `${entry.ecosystem || "npm"}:${entry.pkg}`));
   return {
     ok: true,
     engine: "internal",
@@ -276,10 +298,24 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
     },
     summary: summarizeFindings(sorted),
     findings: sorted,
+    dependencyReport: {
+      status: dependencyStatus,
+      declared: dep.declared.size + goDep.declared.size + pyDep.declared.size,
+      importedPackages: importedPackages.size,
+      importRecords: externalImports.length,
+      unused: dependencyFindings.filter((finding) => finding.rule === "unused-dep").length,
+      missing: dependencyFindings.filter((finding) => finding.rule === "missing-dep").length,
+      duplicateDeclarations: dependencyFindings.filter((finding) => finding.rule === "duplicate-dep").length,
+      packageScopes: packageScopes.length,
+      reason: dependencyStatus === "COMPLETE"
+        ? "All discovered dependency manifests were compared with the complete indexed import set."
+        : "The dependency result is scoped to a partial graph and is not a repository-wide clean bill.",
+    },
     deadReport: {
       deadSymbols: dead.deadSymbols.filter((symbol) => !isNonProductPath(symbol.file)).length,
       deadFiles: actionableDeadFiles.length,
       unusedExports: unusedExportCount,
+      testOnlySymbols: (dead.testOnlySymbols || []).filter((symbol) => !isNonProductPath(symbol.file)).length,
     },
     conventionReachability: {
       count: conventionEvidence.length,
