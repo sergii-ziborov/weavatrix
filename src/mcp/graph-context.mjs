@@ -169,7 +169,7 @@ const sourceFileOf = (node) => {
     return normPath(source)
 }
 
-function requestedPathClasses(query) {
+export function requestedPathClasses(query) {
     const words = new Set(wordsOf(query))
     const requested = new Set()
     for (const [category, terms] of Object.entries(CLASS_QUERY_TERMS)) {

@@ -244,6 +244,7 @@ export function tChangeImpactV2(g, args = {}, ctx = {}) {
         },
         testEvidence: {
             actualCoverage: hasCoverage ? 'AVAILABLE' : 'NOT_AVAILABLE',
+            changedFiles: changed.slice(0, 500).map((file) => ({file, ...testEvidenceFor(file)})),
             staticTestReachability: {
                 kind: staticTests.kind,
                 testFiles: staticTests.testFiles,

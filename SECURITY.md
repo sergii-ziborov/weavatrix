@@ -28,6 +28,11 @@ dependency caches such as GOPATH. `offline` permits repository switching only th
 local `open_repo` call; select `pinned` to remove that tool, the global repository listing, and
 cross-repository API tracing, holding a hard startup-repository boundary.
 
+Installed-package malware pattern matching is static heuristic evidence. It cannot confirm execution,
+package compromise, or credential exposure and therefore cannot emit `critical`; heuristic severity
+is capped at `high` with explicit `NOT_VERIFIED` runtime/origin/lockfile/exposure fields. Independently
+confirmed malicious-package advisories remain separate vulnerability evidence and may be critical.
+
 The JS/TS precision overlay is enabled by default for new graphs and runs the package-pinned `typescript-language-server` and
 TypeScript runtime as local child processes. It never resolves a repository executable, invokes
 `npx`, runs package scripts, or installs dependencies. Automatic type acquisition is disabled, and
@@ -45,6 +50,15 @@ network sandbox. On stdio EOF, SIGTERM or SIGINT, the MCP server stops new provi
 bounded graph-work drain, and closes or tree-terminates TLS/tsserver before exiting.
 Set `WEAVATRIX_PRECISION=off` before server startup (or select `off` in the MCPB semantic-precision
 setting) to keep new graphs parser-only from their first build.
+
+`verified_change` is read-only by default. Its optional targeted-test step can execute only an
+existing `package.json` script whose name matches the bounded test/check/verify allowlist. The call
+must set `run_tests:true` and the server operator must separately set
+`WEAVATRIX_ALLOW_TEST_RUNS=1`; otherwise no repository script runs. The tool accepts no command or
+shell string, caps scripts/arguments/time, rejects shell-sensitive argument characters, and launches
+the selected package-manager script with the credential-stripped child environment. Repository test
+scripts are repository-controlled code and may have arbitrary side effects, so enable this flag only
+for repositories and scripts you trust.
 
 Network capabilities are split by purpose. `osv` adds only `refresh_advisories`, which sends pinned
 package names and versions to OSV.dev when called. `hosted` / `full` also expose `sync_graph` and

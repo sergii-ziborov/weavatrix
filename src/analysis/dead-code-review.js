@@ -84,6 +84,18 @@ function symbolCandidate(item, node, context) {
     caveats.push("Reflection is present and may invoke names without a resolvable static edge.");
   }
 
+  const evidenceTier = confidence === "high" && exactNoReference
+    ? "STRONG_STATIC_EVIDENCE"
+    : confidence === "low" ? "HIGH_UNCERTAINTY" : "BOUNDED_STATIC_EVIDENCE";
+  const remainingChecks = [
+    ...(!exactNoReference ? ["Run an exact language-server reference query for this declaration."] : []),
+    ...(publicSurface ? ["Check downstream/external consumers of the public API."] : []),
+    ...(externalEntry || framework ? ["Inspect framework registration and externally entered call paths."] : []),
+    ...(dynamicFile ? ["Resolve dynamic import/require targets and name-based dispatch."] : []),
+    ...(reflectionFile || (publicSurface && context.repoSignals.reflection) ? ["Inspect reflection/annotation/configuration consumers."] : []),
+    "Run targeted tests after any removal.",
+  ];
+
   return {
     id: String(item.id),
     kind,
@@ -95,6 +107,8 @@ function symbolCandidate(item, node, context) {
     symbolKind: node?.symbol_kind || null,
     visibility: node?.visibility || (node?.exported ? "exported" : "internal"),
     confidence,
+    evidenceTier,
+    actionability: evidenceTier === "STRONG_STATIC_EVIDENCE" ? "PRIORITY_MANUAL_REVIEW" : "MANUAL_REVIEW",
     reason: item.reason,
     evidence: [
       ...(testOnly ? [{kind: item.evidence || "graph", fact: `Only test/e2e consumers were found${item.testConsumerFiles?.length ? `: ${item.testConsumerFiles.join(", ")}` : "."}`}]
@@ -106,6 +120,18 @@ function symbolCandidate(item, node, context) {
     externallyEnteredFile: externalEntry,
     pathClasses: pathInfo.classes || [],
     matchedPathRule: pathInfo.matchedRule || null,
+    verification: {
+      graphInboundRuntimeEdge: "NOT_FOUND",
+      indexedSecondOccurrence: testOnly ? "TEST_ONLY" : "NOT_FOUND",
+      exactLanguageServerReferences: exactNoReference ? "ZERO_CONFIRMED" : "NOT_CHECKED_OR_INCOMPLETE",
+      recognizedEntryPoint: externalEntry ? "FOUND" : "NOT_FOUND",
+      dynamicLoadingRisk: dynamicFile ? "PRESENT" : "NOT_OBSERVED_IN_DECLARING_FILE",
+      reflectionRisk: reflectionFile || (publicSurface && context.repoSignals.reflection) ? "PRESENT" : "NOT_OBSERVED",
+      publicApi: publicSurface ? "YES" : "NO",
+      decision: "MANUAL_REVIEW_REQUIRED",
+    },
+    remainingChecks,
+    autoDelete: false,
     reviewAction: testOnly
       ? "Confirm that no production/config/framework consumer exists; decide whether the declaration is intentional test support or removable with its tests. Never auto-delete."
       : "Confirm with read_source, get_dependents, exact search, framework/config inspection and tests; never auto-delete.",
@@ -135,6 +161,13 @@ function fileCandidate(item, symbols, context) {
     confidence = "low";
     caveats.push("Reflection is present in this file.");
   }
+  const remainingChecks = [
+    "Inspect package scripts, manifests, framework/plugin discovery and deployment configuration.",
+    "Check external launchers and consumers outside the indexed repository.",
+    ...(dynamicFile ? ["Resolve dynamic import/require targets."] : []),
+    ...(reflectionFile ? ["Inspect reflection/name-based consumers."] : []),
+    "Run targeted tests after any removal.",
+  ];
   return {
     id: `file:${file}`,
     kind: "file",
@@ -146,6 +179,8 @@ function fileCandidate(item, symbols, context) {
     symbolKind: null,
     visibility: null,
     confidence,
+    evidenceTier: confidence === "low" ? "HIGH_UNCERTAINTY" : "BOUNDED_STATIC_EVIDENCE",
+    actionability: "MANUAL_REVIEW",
     reason: item.reason,
     evidence: [
       { kind: "graph", fact: "No indexed module imports this file." },
@@ -156,6 +191,17 @@ function fileCandidate(item, symbols, context) {
     externallyEnteredFile: false,
     pathClasses: pathInfo.classes || [],
     matchedPathRule: pathInfo.matchedRule || null,
+    verification: {
+      graphInboundModuleEdge: "NOT_FOUND",
+      indexedSymbolsReferenced: "NONE",
+      recognizedEntryPoint: "NOT_FOUND",
+      dynamicLoadingRisk: dynamicFile ? "PRESENT" : "NOT_OBSERVED",
+      reflectionRisk: reflectionFile ? "PRESENT" : "NOT_OBSERVED",
+      externalConsumerCheck: "NOT_POSSIBLE_FROM_REPOSITORY_GRAPH",
+      decision: "MANUAL_REVIEW_REQUIRED",
+    },
+    remainingChecks,
+    autoDelete: false,
     reviewAction: "Verify package scripts, manifests, framework discovery, dynamic loading and external consumers; never auto-delete.",
   };
 }
@@ -246,6 +292,11 @@ export function computeDeadCodeReview(graph, sources, options = {}) {
         high: candidates.filter((candidate) => candidate.confidence === "high").length,
         medium: candidates.filter((candidate) => candidate.confidence === "medium").length,
         low: candidates.filter((candidate) => candidate.confidence === "low").length,
+      },
+      byEvidenceTier: {
+        strongStatic: candidates.filter((candidate) => candidate.evidenceTier === "STRONG_STATIC_EVIDENCE").length,
+        boundedStatic: candidates.filter((candidate) => candidate.evidenceTier === "BOUNDED_STATIC_EVIDENCE").length,
+        highUncertainty: candidates.filter((candidate) => candidate.evidenceTier === "HIGH_UNCERTAINTY").length,
       },
     },
     policy: {

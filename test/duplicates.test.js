@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { computeDuplicates, runDuplicates } from "../src/analysis/duplicates.js";
 import { tFindDuplicates } from "../src/mcp/tools-health.mjs";
+import { compareDuplicateGroups } from "../src/analysis/duplicate-groups.js";
 
 const CLONE = `function collectRows(items) {
   const out = [];
@@ -168,6 +169,34 @@ test("duplicates: fragments carry the test-file flag so the UI can exclude them"
     assert.equal(cypressFrag?.test, true);
     assert.equal(prodFrag?.test, false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("duplicate ratchet blocks a new clone group that intersects changed files", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "weavatrix-dup-ratchet-"));
+  try {
+    mkdirSync(join(dir, "src"), {recursive: true});
+    writeFileSync(join(dir, "src", "a.js"), `${CLONE}\n`);
+    execFileSync("git", ["init", "--quiet"], {cwd: dir});
+    execFileSync("git", ["config", "user.email", "test@example.com"], {cwd: dir});
+    execFileSync("git", ["config", "user.name", "Weavatrix Test"], {cwd: dir});
+    execFileSync("git", ["add", "src/a.js"], {cwd: dir});
+    execFileSync("git", ["commit", "--quiet", "-m", "baseline"], {cwd: dir});
+    writeFileSync(join(dir, "src", "b.js"), `${CLONE}\n`);
+    const nodes = ["a", "b"].flatMap((name) => [
+      {id: `src/${name}.js`, label: `${name}.js`, source_file: `src/${name}.js`, source_location: "L1"},
+      {id: `src/${name}.js#collectRows@1`, label: "collectRows()", source_file: `src/${name}.js`, source_location: "L1"},
+    ]);
+    const graph = {nodes, links: [], graphBuildMode: "full"};
+    const graphJson = join(dir, "graph.json");
+    writeFileSync(graphJson, JSON.stringify(graph));
+    const result = await compareDuplicateGroups({
+      repoRoot: dir, graphPath: graphJson, currentGraph: graph, baseRef: "HEAD",
+      changedFiles: ["src/b.js"], args: {mode: "renamed", min_similarity: 80, min_tokens: 12},
+    });
+    assert.equal(result.state, "BLOCKED");
+    assert.equal(result.baselineGroups, 0);
+    assert.equal(result.scopedNewGroups.length, 1);
+  } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
 test("find_duplicates: include_tests=false excludes Cypress test-root clones", () => {

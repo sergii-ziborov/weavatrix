@@ -3,10 +3,11 @@
 // staleness probe in graph-context. Hot-reloadable (re-imported by catalog.mjs on change).
 import {
     isSymbol, degreeOf, labelOf, connList,
-    resolveNodeInfo, resolveNode, ambiguityNote, findSeeds, resolveSeedFiles, undirectedNeighbors,
+    resolveNodeInfo, resolveNode, ambiguityNote, findSeeds, resolveSeedFiles, undirectedNeighbors, requestedPathClasses,
     graphStaleness, fileStalenessNote,
 } from './graph-context.mjs'
 import {summarizeEdgeProvenance} from '../graph/edge-provenance.js'
+import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
 const compileKind = (edge) => edge?.typeOnly === true ? 'type-only' : edge?.compileOnly === true ? 'compile-only' : null
 
@@ -165,7 +166,15 @@ export function tGetCommunity(g, {community_id} = {}) {
 // A plain BFS/DFS flood dumps every reached node (thousands on a real graph) at near-zero signal.
 // Instead: traverse to record reach + distance-from-seed, then show only the closest, most-connected
 // slice as a coherent subgraph (edges kept only among shown nodes). Honest about what was trimmed.
-export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, seed_files, augment_seeds = false, token_budget = 2000} = {}, toolCtx = {}) {
+const QUERY_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const LOW_SIGNAL_SYMBOL_RE = /^(?:const(?:ant)?|variable|property|field|enum_member)$/i
+const querySourceFile = (node) => String(node?.source_file || String(node?.id || '').split('#', 1)[0]).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+const queryWords = (value) => new Set(String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean))
+
+export function tQueryGraph(g, {
+    question, mode = 'bfs', depth = 3, context_filter, seed_files, augment_seeds = false,
+    include_classified = false, include_low_signal = false, token_budget = 2000,
+} = {}, toolCtx = {}) {
     const pinned = resolveSeedFiles(g, seed_files)
     // Exact seed files are a control surface, not a hint: by default they disable fuzzy keyword seeds.
     // Callers can opt back into augmentation when they explicitly want both behaviors.
@@ -177,6 +186,32 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
     const maxDepth = Math.max(1, Math.min(6, Number(depth) || 3))
     const ctx = Array.isArray(context_filter) && context_filter.length ? new Set(context_filter.map((c) => String(c).toLowerCase())) : null
     const relOk = (rel) => !ctx || ctx.has(String(rel ?? '').toLowerCase())
+    const requestedClasses = requestedPathClasses(question)
+    const classifier = createPathClassifier(toolCtx.repoRoot || null)
+    const classificationCache = new Map()
+    const pinnedFiles = new Set(pinned.seeds.map(querySourceFile))
+    const classifiedSuppressed = new Set()
+    const pathPolicy = (id) => {
+        const node = g.byId.get(String(id))
+        const file = querySourceFile(node)
+        if (!file || pinnedFiles.has(file) || include_classified === true) return {ok: true}
+        if (!classificationCache.has(file)) classificationCache.set(file, classifier.explain(file, {content: ''}))
+        const info = classificationCache.get(file)
+        const classes = QUERY_NON_PRODUCT.filter((name) => hasPathClass(info, name))
+        if (!classes.length && !info?.excluded) return {ok: true}
+        if (classes.some((name) => requestedClasses.has(name))) return {ok: true}
+        classifiedSuppressed.add(String(id))
+        return {ok: false, bucket: 'classified'}
+    }
+    const questionTerms = queryWords(question)
+    const isLowSignal = (id) => {
+        if (include_low_signal === true || start.includes(String(id))) return false
+        const node = g.byId.get(String(id))
+        if (!node || !isSymbol(node.id) || !LOW_SIGNAL_SYMBOL_RE.test(String(node.symbol_kind || ''))) return false
+        const labelTerms = queryWords(node.label || String(node.id || '').split('#').pop() || '')
+        if ([...questionTerms].some((term) => labelTerms.has(term))) return false
+        return degreeOf(g, id) === 0
+    }
     const charBudget = Math.max(400, (Number(token_budget) || 2000) * 4)
     // node budget scales gently with the token budget; edges follow the surviving nodes.
     const nodeBudget = Math.max(20, Math.min(120, Math.round((Number(token_budget) || 2000) / 40)))
@@ -193,6 +228,7 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
             if (d >= maxDepth) continue
             for (const [nid, rel] of undirectedNeighbors(g, id)) {
                 if (!relOk(rel)) continue
+                if (!pathPolicy(nid).ok) continue
                 if (!seen.has(nid)) stack.push({id: nid, d: d + 1})
             }
         }
@@ -204,6 +240,7 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
             for (const id of frontier)
                 for (const [nid, rel] of undirectedNeighbors(g, id)) {
                     if (!relOk(rel)) continue
+                    if (!pathPolicy(nid).ok) continue
                     if (!depthOf.has(nid)) {
                         depthOf.set(nid, d + 1)
                         next.push(nid)
@@ -213,7 +250,10 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
         }
     }
     // rank reached nodes: seeds first, then by proximity (depth asc), then connectivity (degree desc)
+    const reachedBeforeSignalFilter = depthOf.size
+    const lowSignalSuppressed = [...depthOf.keys()].filter(isLowSignal).length
     const ranked = [...depthOf.entries()]
+        .filter(([id]) => !isLowSignal(id))
         .map(([id, d]) => ({id, d, deg: degreeOf(g, id)}))
         .sort((a, b) => a.d - b.d || b.deg - a.deg)
     const shown = ranked.slice(0, nodeBudget)
@@ -236,7 +276,10 @@ export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filte
         `Query: "${question}" (${mode}, depth ${maxDepth}${ctx ? `, context ${[...ctx].join('/')}` : ''})`,
         `Seeds: ${seeds.map((s) => s.label ?? s.id).join(', ')}`,
         pinned.missing.length ? `Unresolved pinned seed files: ${pinned.missing.join(', ')}` : null,
-        `Reached ${depthOf.size} nodes; showing ${shown.length} closest by proximity + connectivity, ${shownEdges.length} edges among them.`,
+        `Reached ${reachedBeforeSignalFilter} policy-eligible nodes; showing ${shown.length} closest by proximity + connectivity, ${shownEdges.length} edges among them.`,
+        classifiedSuppressed.size ? `Suppressed ${classifiedSuppressed.size} classified/non-product traversal node(s); ask for that class or pass include_classified:true.` : null,
+        lowSignalSuppressed ? `Suppressed ${lowSignalSuppressed} unreferenced constant/field node(s) with no query-term match; pass include_low_signal:true to inspect them.` : null,
+        include_classified === true ? 'Path policy: classified/non-product traversal explicitly enabled.' : `Path policy: production-first${requestedClasses.size ? `; explicit question classes enabled: ${[...requestedClasses].join(', ')}` : ''}.`,
         ``,
         `Nodes:`,
     ]

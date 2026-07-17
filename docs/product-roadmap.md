@@ -101,6 +101,24 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
 - CFG reachability, data flow, taint/security analysis and interprocedural complexity remain a
   separately versioned hosted engine rather than claims attached to the local syntax graph.
 
+### Public `0.2.7` — proof-carrying verified changes
+
+- Delivered: one `verified_change` workflow with natural-language task retrieval, exact changed
+  symbols, compact edit contexts, blast radius, immutable Git graph comparison, and explicit
+  `PASS` / `BLOCKED` / `UNKNOWN` semantics.
+- Delivered: architecture, new-duplicate and optional cross-repository HTTP-contract ratchets plus a
+  double-opt-in allowlisted package-script test runner.
+- Delivered: bounded JS/TS call-argument-to-parameter evidence. This is useful interprocedural data
+  flow for edits, but does not claim CFG/value/taint completeness.
+- Delivered: npm cache/release-snapshot exclusion in malware scanning and evidence-gated remediation.
+- Delivered: heuristic malware severity capped at `high` without independent execution/advisory
+  confirmation, with explicit verification state instead of compromise claims.
+- Delivered: production-only `query_graph` traversal, low-signal constant/field suppression, focused
+  hot-path defaults, dead-code evidence tiers, and per-finding dependency manifest/source proof.
+- Delivered: an agent-task benchmark harness with local routing success, false-positive, token and
+  latency metrics. External Codebase Memory and Serena results remain an independent-data release
+  requirement rather than fabricated in-repository scores.
+
 ### Public `0.3.0` — precision expansion
 
 - Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and

@@ -300,15 +300,20 @@ export async function runInternalAudit(repoPath, { graph, advisoryStorePath, ski
     findings: sorted,
     dependencyReport: {
       status: dependencyStatus,
+      evidenceModel: "MANIFEST_PLUS_INDEXED_SOURCE",
+      perFindingVerification: true,
+      verificationCoverage: { npm: "COMPLETE_FOR_GRAPH_SCOPE", go: "SUMMARY_ONLY", python: "SUMMARY_ONLY" },
       declared: dep.declared.size + goDep.declared.size + pyDep.declared.size,
       importedPackages: importedPackages.size,
       importRecords: externalImports.length,
       unused: dependencyFindings.filter((finding) => finding.rule === "unused-dep").length,
       missing: dependencyFindings.filter((finding) => finding.rule === "missing-dep").length,
       duplicateDeclarations: dependencyFindings.filter((finding) => finding.rule === "duplicate-dep").length,
+      unusedRequiringReview: dependencyFindings.filter((finding) => finding.rule === "unused-dep" && finding.verification?.decision === "REVIEW_REQUIRED").length,
+      missingWithSourceEvidence: dependencyFindings.filter((finding) => finding.rule === "missing-dep" && finding.verification?.indexedSourceImports?.status === "FOUND").length,
       packageScopes: packageScopes.length,
       reason: dependencyStatus === "COMPLETE"
-        ? "All discovered dependency manifests were compared with the complete indexed import set."
+        ? "All discovered dependency manifests were compared with the complete indexed import set; every npm unused/missing/duplicate finding carries manifest and source/config verification state."
         : "The dependency result is scoped to a partial graph and is not a repository-wide clean bill.",
     },
     deadReport: {

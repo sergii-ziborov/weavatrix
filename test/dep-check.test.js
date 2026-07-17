@@ -15,6 +15,10 @@ test("dep-check: unused prod dep flagged; used dep not", () => {
   });
   assert.deepEqual(pkgsOf(r, "unused-dep"), ["lodash"]);
   assert.equal(rules(r, "unused-dep")[0].severity, "low");
+  assert.equal(rules(r, "unused-dep")[0].verification.manifestDeclaration.section, "dependencies");
+  assert.equal(rules(r, "unused-dep")[0].verification.indexedSourceImports.status, "ZERO_FOUND");
+  assert.equal(rules(r, "unused-dep")[0].verification.dynamicOrPluginUsage, "NOT_PROVEN_ABSENT");
+  assert.equal(rules(r, "unused-dep")[0].autoRemove, false);
 });
 
 test("dep-check: script- and config-mentioned deps stay alive; config-ecosystem devDeps never flagged", () => {
@@ -65,6 +69,11 @@ test("dep-check: missing dep flagged with using files; self/workspace/builtin/de
   assert.equal(m.confidence, "high");
   assert.match(m.reason, /Direct source import/);
   assert.equal(m.evidence.length, 2);
+  assert.equal(m.verification.manifestDeclaration.status, "NOT_FOUND");
+  assert.equal(m.verification.indexedSourceImports.status, "FOUND");
+  assert.deepEqual(m.verification.indexedSourceImports.files, ["src/a.js", "src/b.js"]);
+  assert.equal(m.actionability, "STRONG_MANIFEST_MISMATCH");
+  assert.equal(m.autoInstall, false);
 });
 
 test("dep-check: stylesheet-only imports are direct usage with an explicit reason", () => {

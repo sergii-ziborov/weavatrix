@@ -109,8 +109,9 @@ export function computeHotPathReview(graph, options = {}) {
         calls: boundedInt(options.callThreshold, 12, 1, 10000),
         loopDepth: boundedInt(options.loopDepthThreshold, 2, 1, 10),
         timeRank: boundedInt(options.timeRankThreshold, 2, 0, 5),
-        minScore: boundedInt(options.minScore, 0, 0, 100),
+        minScore: boundedInt(options.minScore, 85, 0, 100),
     }
+    const defaultFocus = options.minScore == null
     const topN = boundedInt(options.topN, 20, 1, 100)
     const classifier = createPathClassifier(options.repoRoot || null)
     const knownFiles = [...new Set((graph?.nodes || []).map((node) => normalize(node?.source_file)).filter(Boolean))]
@@ -152,8 +153,19 @@ export function computeHotPathReview(graph, options = {}) {
         const nearest = staticByFile.get(file)?.nearestTests?.[0] || null
         const coverageRisk = actualCoverage == null ? 0 : (1 - actualCoverage) * 100
         const score = round(clamp(syntaxScore * 0.72 + graphScore * 0.2 + coverageRisk * 0.08))
-        if (score < thresholds.minScore) continue
         const directHotEvidence = Array.isArray(complexity.hotEvidence) ? complexity.hotEvidence.slice(0, 12) : []
+        // The default queue is intentionally narrow. A small, locally expensive function can still be
+        // important even with little graph fan-in, so retain only a bounded strong-local fallback. An
+        // explicit minScore disables this fallback and gives the caller a strict numeric gate.
+        const bodyLines = startLine > 0 && endLine >= startLine ? endLine - startLine + 1 : Number.POSITIVE_INFINITY
+        const strongLocalEvidence = defaultFocus && directHotEvidence.length > 0 && bodyLines <= 80 && (
+            Number(complexity.recursionInLoops || 0) > 0
+            || (bodyLines <= 40 && (
+                Number(complexity.sortsInLoops || 0) > 0
+                || (Number(complexity.timeRank || 0) >= 4 && Number(complexity.maxLoopDepth || 0) >= 2)
+            ))
+        )
+        if (score < thresholds.minScore && !strongLocalEvidence) continue
         const confidence = directHotEvidence.length ? 'HIGH' : complexity.recursion ? 'LOW' : 'MEDIUM'
         candidates.push({
             id: String(node.id),
@@ -164,6 +176,7 @@ export function computeHotPathReview(graph, options = {}) {
             endLine,
             classification: entry.classification,
             score,
+            selection: score >= thresholds.minScore ? 'SCORE_THRESHOLD' : 'STRONG_LOCAL_EVIDENCE',
             confidence,
             localSyntax: {
                 score: syntaxScore,
@@ -207,6 +220,11 @@ export function computeHotPathReview(graph, options = {}) {
             includeClassified: options.includeClassified === true,
         },
         thresholds,
+        selectionPolicy: {
+            mode: defaultFocus ? 'FOCUSED_DEFAULT' : 'EXPLICIT_SCORE_THRESHOLD',
+            strongLocalFallback: defaultFocus,
+            broadenWith: 'Set min_score lower (0 restores the full diagnostic candidate set).',
+        },
         analyzedSymbols: eligible.length,
         candidateSymbols: candidates.length,
         coverage: measuredCoverage.size
