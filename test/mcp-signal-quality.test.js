@@ -241,6 +241,45 @@ test("query_graph exact seed_files can pin non-product evidence despite producti
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test("query_graph keeps traversal production-only unless a class is explicitly requested", () => {
+  const product = { id: "src/service.ts", label: "service.ts", source_file: "src/service.ts" };
+  const testFile = { id: "test/service.test.ts", label: "service.test.ts", source_file: "test/service.test.ts" };
+  const fx = graphFile({ nodes: [product, testFile], links: [{ source: testFile.id, target: product.id, relation: "imports" }] });
+  try {
+    const production = tQueryGraph(fx.graph, { question: "service architecture", seed_files: [product.id], depth: 1 }, { repoRoot: fx.dir });
+    assert.doesNotMatch(production, /test\/service\.test\.ts/);
+    assert.match(production, /Suppressed 1 classified\/non-product traversal node/);
+
+    const explicitQuestion = tQueryGraph(fx.graph, { question: "service tests", seed_files: [product.id], depth: 1 }, { repoRoot: fx.dir });
+    assert.match(explicitQuestion, /test\/service\.test\.ts/);
+
+    const explicitFlag = tQueryGraph(fx.graph, { question: "service architecture", seed_files: [product.id], include_classified: true, depth: 1 }, { repoRoot: fx.dir });
+    assert.match(explicitFlag, /test\/service\.test\.ts/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph suppresses unmatched unreferenced constant leaves from exact file seeds", () => {
+  const file = { id: "src/config.ts", label: "config.ts", source_file: "src/config.ts" };
+  const handler = { id: "src/config.ts#loadConfig@1", label: "loadConfig()", source_file: "src/config.ts", symbol_kind: "function" };
+  const noise = { id: "src/config.ts#UNRELATED_DEFAULT@9", label: "UNRELATED_DEFAULT", source_file: "src/config.ts", symbol_kind: "constant" };
+  const fx = graphFile({
+    nodes: [file, handler, noise],
+    links: [
+      { source: file.id, target: handler.id, relation: "contains" },
+      { source: file.id, target: noise.id, relation: "contains" },
+    ],
+  });
+  try {
+    const focused = tQueryGraph(fx.graph, { question: "load config", seed_files: [file.id], depth: 1 }, { repoRoot: fx.dir });
+    assert.match(focused, /loadConfig/);
+    assert.doesNotMatch(focused, /UNRELATED_DEFAULT/);
+    assert.match(focused, /Suppressed 1 unreferenced constant\/field node/);
+
+    const expanded = tQueryGraph(fx.graph, { question: "load config", seed_files: [file.id], include_low_signal: true, depth: 1 }, { repoRoot: fx.dir });
+    assert.match(expanded, /UNRELATED_DEFAULT/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
 test("barrel proxy hops do not inflate semantic hubs, modules, or dependents", () => {
   const graph = {
     barrelResolutionV: 1,
@@ -305,9 +344,16 @@ test("audit finding output exposes dependency confidence reasons", () => {
   const output = formatAuditFinding({
     severity: "medium", confidence: "high", rule: "missing-dep", title: "Missing dependency: react-resizable",
     package: "react-resizable", reason: "A direct stylesheet import requires this package.",
+    verification: {
+      evidenceModel: "MANIFEST_PLUS_INDEXED_SOURCE",
+      manifestDeclaration: {status: "NOT_FOUND"},
+      indexedSourceImports: {status: "FOUND"},
+      decision: "DECLARE_AFTER_SCOPE_REVIEW",
+    },
   });
   assert.match(output, /\[medium\/high\]/);
   assert.match(output, /reason: A direct stylesheet import requires this package\./);
+  assert.match(output, /verification: MANIFEST_PLUS_INDEXED_SOURCE; manifest NOT_FOUND; indexed imports FOUND; decision DECLARE_AFTER_SCOPE_REVIEW/);
 });
 
 test("get_dependents keeps a real runtime path even when a shorter type-only path exists", () => {

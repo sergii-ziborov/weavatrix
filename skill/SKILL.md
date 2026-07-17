@@ -38,6 +38,10 @@ Start from the task, not from the complete tool list:
 - **Review a branch/diff**: `change_impact` for changed-file blast radius; add
   `graph_diff base_ref=<merge-base>` for structural drift, then drill into exact candidates with
   `get_dependents` and `read_source`.
+- **Plan or verify a serious change**: call `verified_change phase=plan` with the natural-language
+  task and current diff/files. After editing, call it again with `phase=verify` and an immutable
+  `base_ref`. Treat `UNKNOWN` as missing proof, not success; inspect its blockers and unknowns instead
+  of manually orchestrating the lower-level graph, context, impact, ratchet, and test tools.
 - **Trace an API across repositories**: `list_known_repos` -> `trace_api_contract` with an explicit
   backend and client list; inspect each `graphReconciliation.buildMode` before using the verdict.
 - **Inspect exact symbol references**: start with `graph_stats`, then call `context_bundle` with an
@@ -47,7 +51,7 @@ Start from the task, not from the complete tool list:
   graph impact and `find_dead_code` for bounded zero-reference
   candidates. Treat `PARTIAL`, `UNAVAILABLE`, `OFF`, or zero exact edges as incomplete evidence, not
   a compiler-exact result; `OFF` means the caller explicitly selected static-only mode. Java and Rust
-  providers are not bundled in 0.2.6, so their edges never become `EXACT_LSP` even when a mixed
+  providers are not bundled in 0.2.7, so their edges never become `EXACT_LSP` even when a mixed
   repository has a complete TypeScript/JavaScript overlay.
 - **Explore an architectural question**: use broad `query_graph` when entry points are unknown; its
   bootstrap/tool-execution ranking prefers production executables over docs, sites and fixtures.
@@ -87,16 +91,20 @@ Start from the task, not from the complete tool list:
   `.weavatrix.json` `classify.product`, for example `{"classify":{"product":["benchmarks/core/**"]}}`.
 - **Architectural queries**: broad bootstrap/tool-execution/routing questions rank conventional
   production and graph-declared entry points ahead of classified docs, sites, benchmarks and
-  fixtures. Inspect the returned seeds before trusting the traversal. Pass exact repository-relative
-  `seed_files` to `query_graph` when the intended entry points are already known.
+  fixtures. Production-first classification also applies during traversal. A class term in the
+  question enables only that class; `include_classified=true` enables all classified paths. Exact
+  non-product `seed_files` remain pinned. Unmatched unreferenced constant/field leaves are suppressed
+  unless `include_low_signal=true`. Inspect the returned seeds/policy before trusting the traversal.
 - **Coverage**: `coverage_map` reads an existing report. `unavailable` means no supported report was
   found, not 0% coverage; do not rank testing risk from that state.
 - **Local hot paths**: `hot_path_review` ranks parser-derived local syntax cost and reports graph
   fan-in/fan-out plus test evidence separately. `actualCoverage: NOT_AVAILABLE` is not zero coverage,
-  and the score is not profiler data or an interprocedural Big-O proof. Inspect its line evidence and
-  measure runtime before scheduling a performance rewrite.
+  and the score is not profiler data or an interprocedural Big-O proof. The default queue uses
+  `min_score=85` plus a narrow strong-local fallback; use `min_score=0` only for full diagnostics.
+  Inspect its line evidence and measure runtime before scheduling a performance rewrite.
 - **Audit completeness**: read `dependencyReport.status` plus its unused/missing counts, then
-  `checks.osv.status` and `checks.malware.status`. A dependency result from a partial graph is not a
+  each npm finding's `verification` (manifest, indexed source, scripts/config, unresolved dynamic
+  usage), then `checks.osv.status` and `checks.malware.status`. A dependency result from a partial graph is not a
   repository-wide clean zero. For OSV, `OK` is
   complete for the recorded dependency fingerprint; `PARTIAL` is incomplete or stale,
   `NOT_CHECKED` has no repository-specific result, and `ERROR` means the local check failed. Treat
@@ -121,7 +129,17 @@ Start from the task, not from the complete tool list:
   `offline`, absent from `pinned`, and available in a custom registration only when `retarget` is
   named. Concurrent non-mutating calls retain the graph/root snapshot with which they started.
 
+- **Test execution is separately authorized**: `verified_change` only executes named
+  `package.json` test/check/verify scripts when the call has `run_tests:true` and the server was
+  started with `WEAVATRIX_ALLOW_TEST_RUNS=1`. It never accepts arbitrary shell commands. Without
+  both gates it returns a plan or `UNKNOWN` evidence state.
+
 ## Recipes
+
+- **Proof-carrying refactor**: `verified_change task="..." phase=plan base_ref=<merge-base>` -> edit ->
+  `verified_change task="..." phase=verify base_ref=<same-ref> tests=[{"script":"test","args":[...]}]`.
+  Add `run_tests:true` only when test execution was authorized. `BLOCKED` means an evidenced ratchet
+  or test failure; `UNKNOWN` means at least one required proof is incomplete.
 
 - **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`. Hub ranking
   is production-only by default; use `include_classified:true` only when tests/generated/build
@@ -152,7 +170,9 @@ Start from the task, not from the complete tool list:
   `run_audit category=unused debt=all` (or `base_ref=<merge-base> debt=new`) for unused exports and
   dependencies. Before deletion, run `read_source`, `get_dependents`, exact `search_code`, inspect
   framework discovery/annotations, package scripts, CLI/Docker/manifests, generated consumers and
-  test-only use, then run the repository tests. `REVIEW_REQUIRED` and `autoDelete:false` are hard
+  test-only use, then run the repository tests. Use `evidenceTier` and `remainingChecks` to order the
+  review; even `STRONG_STATIC_EVIDENCE` is exact zero-reference evidence, not deletion permission.
+  `REVIEW_REQUIRED` and `autoDelete:false` are hard
   safety semantics, not boilerplate. Use `.weavatrix-deps.json` entrypoints/nonRuntimeRoots only for
   verified conventions.
 - **API inventory**: `list_endpoints` (including Next.js App Router, Rust axum and actix-web).

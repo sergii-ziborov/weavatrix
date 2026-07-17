@@ -42,6 +42,9 @@ for (const [name, version] of Object.entries(precisionRuntimeDependencies)) {
 
 if (!existsSync(releaseNotesPath)) throw new Error(`release notes are missing: docs/releases/v${expected}.md`);
 if (!readFileSync(releaseNotesPath, "utf8").trim()) throw new Error(`release notes are empty: docs/releases/v${expected}.md`);
+for (const requiredFile of ["scripts/run-agent-task-benchmark.mjs", "docs/agent-task-benchmark.md", `docs/releases/v${expected}.md`]) {
+  if (!pkg.files?.includes(requiredFile)) throw new Error(`published package files must include ${requiredFile}`);
+}
 
 if (pkg.mcpName !== server.name) throw new Error("package mcpName and server.json name differ");
 if (manifest.tools_generated !== true) throw new Error("MCPB manifest must declare tools_generated");
@@ -52,11 +55,23 @@ if (manifest.user_config?.precision?.default !== "lsp") throw new Error("MCPB se
 if (manifest.server?.mcp_config?.env?.WEAVATRIX_PRECISION !== "${user_config.precision}") {
   throw new Error("MCPB semantic precision setting is not wired into the server environment");
 }
+if (manifest.server?.mcp_config?.env?.WEAVATRIX_ALLOW_TEST_RUNS !== "${user_config.allow_test_runs}") {
+  throw new Error("MCPB verified_change test permission is not wired into the server environment");
+}
+if (manifest.user_config?.allow_test_runs?.default !== "0") {
+  throw new Error("MCPB verified_change test execution must default to disabled");
+}
 const registryPrecision = server.packages?.[0]?.environmentVariables?.find(
   (entry) => entry?.name === "WEAVATRIX_PRECISION",
 );
 if (!registryPrecision || registryPrecision.isRequired !== false || registryPrecision.format !== "string") {
   throw new Error("server.json must expose optional WEAVATRIX_PRECISION for Registry installs");
+}
+const registryTestRuns = server.packages?.[0]?.environmentVariables?.find(
+  (entry) => entry?.name === "WEAVATRIX_ALLOW_TEST_RUNS",
+);
+if (!registryTestRuns || registryTestRuns.isRequired !== false || registryTestRuns.format !== "string") {
+  throw new Error("server.json must expose optional WEAVATRIX_ALLOW_TEST_RUNS for Registry installs");
 }
 
 const tag = process.env.GITHUB_REF_NAME;

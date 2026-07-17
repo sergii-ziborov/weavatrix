@@ -33,6 +33,10 @@ test("dead-code review defaults to actionable internal code and suppresses publi
   assert.deepEqual(result.candidates.map((candidate) => candidate.symbol), ["hiddenMethod"]);
   assert.equal(result.candidates[0].classification, "internal-method");
   assert.equal(result.candidates[0].confidence, "medium");
+  assert.equal(result.candidates[0].evidenceTier, "BOUNDED_STATIC_EVIDENCE");
+  assert.equal(result.candidates[0].verification.exactLanguageServerReferences, "NOT_CHECKED_OR_INCOMPLETE");
+  assert.ok(result.candidates[0].remainingChecks.some((item) => /language-server reference/i.test(item)));
+  assert.equal(result.candidates[0].autoDelete, false);
   assert.match(result.candidates[0].caveats.join(" "), /exact semantic no-reference result/i);
   assert.equal(result.repoSignals.dynamicLoading, false, "ordinary RegExp.exec is not dynamic code execution");
   assert.equal(result.policy.autoDelete, false);
@@ -149,7 +153,9 @@ test("find_dead_code returns a bounded structured review queue without source bo
     assert.equal(result.__weavatrixToolResult, true);
     assert.equal(result.result.verdict, "REVIEW_REQUIRED");
     assert.equal(result.result.policy.autoDelete, false);
-    assert.equal(result.result.candidates.length, 1);
+  assert.equal(result.result.candidates.length, 1);
+    assert.equal(result.result.candidates[0].verification.decision, "MANUAL_REVIEW_REQUIRED");
+    assert.equal(result.result.candidates[0].autoDelete, false);
     assert.equal(result.page.shown, 1);
     assert.ok(!JSON.stringify(result.result).includes("function unusedHelper"), "structured evidence never includes source bodies");
   } finally {

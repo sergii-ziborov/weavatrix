@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
-  "long_description": "Weavatrix builds dependency graphs of local repositories (tree-sitter WASM, no native toolchain) and serves 35 MCP tools for impact analysis, compact symbol context, exact symbol inspection, local hot-path review, dead-code review, health, clones, architecture contracts, git-history evidence, and cross-repository API tracing. The default offline profile enables 32 local tools and no HTTP tools; pinned, osv, and hosted/full profiles tighten or explicitly expand that boundary.",
+  "long_description": "Weavatrix builds dependency graphs of local repositories (tree-sitter WASM, no native toolchain) and serves 36 MCP tools, including the proof-carrying verified_change workflow, impact analysis, compact symbol context, exact symbol inspection, health, clones, architecture contracts, git-history evidence, and cross-repository API tracing. The default offline profile enables 33 local tools and no HTTP tools; pinned, osv, and hosted/full profiles tighten or explicitly expand that boundary.",
   "author": {
     "name": "Sergii Ziborov",
     "url": "https://weavatrix.com"
@@ -29,7 +29,8 @@
       "env": {
         "WEAVATRIX_PRECISION": "${user_config.precision}",
         "WEAVATRIX_SYNC_URL": "${user_config.sync_url}",
-        "WEAVATRIX_SYNC_TOKEN": "${user_config.sync_token}"
+        "WEAVATRIX_SYNC_TOKEN": "${user_config.sync_token}",
+        "WEAVATRIX_ALLOW_TEST_RUNS": "${user_config.allow_test_runs}"
       }
     }
   },
@@ -66,6 +67,13 @@
       "description": "Bearer token sent only to the configured hosted endpoint by sync_graph or pull_architecture_contract.",
       "sensitive": true,
       "required": false
+    },
+    "allow_test_runs": {
+      "type": "string",
+      "title": "Allow verified_change test execution",
+      "description": "Set to 1 only when verified_change may execute explicitly requested test/check/verify package.json scripts. Default 0 keeps the workflow read-only.",
+      "default": "0",
+      "required": true
     }
   },
   "compatibility": {

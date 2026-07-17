@@ -3,6 +3,7 @@
 import {spawnSync} from 'node:child_process'
 import {degreeOf, rawGraph, effectiveRawGraph} from './graph-context.mjs'
 import {computeDuplicates} from '../analysis/duplicates.js'
+import {analyzeDuplicateGroups} from '../analysis/duplicate-groups.js'
 import {runInternalAudit} from '../analysis/internal-audit.js'
 import {classifyChangeImpact} from '../analysis/change-classification.js'
 import {compareAuditDebt, normalizeAuditScopeFiles, scopeAuditFindings} from '../analysis/audit-debt.js'
@@ -29,26 +30,6 @@ const fragmentEligible = (fragment, {tokMin, skipTests, includeClassified}) => {
     if (skipTests && (fragment.test || classes.has('test') || classes.has('e2e'))) return false
     if (!includeClassified && (fragment.excluded || [...classes].some((name) => NON_PRODUCT_DUPLICATE_CLASSES.has(name)))) return false
     return true
-}
-
-// Group clone pairs into union-find families.
-function groupClones(data, {simMin, tokMin, mode, skipTests, includeClassified}) {
-    const frags = data.frags || []
-    const elig = (i) => fragmentEligible(frags[i], {tokMin, skipTests, includeClassified})
-    const pairs = (data.modes?.[mode] || []).filter(([i, j, s]) => s >= simMin && elig(i) && elig(j))
-    const parent = new Map()
-    const find = (x) => { let r = x; while (parent.has(r) && parent.get(r) !== r) r = parent.get(r); return r }
-    for (const [i, j] of pairs) { if (!parent.has(i)) parent.set(i, i); if (!parent.has(j)) parent.set(j, j); parent.set(find(i), find(j)) }
-    const groups = new Map()
-    for (const [i, j, s] of pairs) {
-        const r = find(i)
-        if (!groups.has(r)) groups.set(r, {members: new Set(), maxSim: 0})
-        const g = groups.get(r); g.members.add(i); g.members.add(j); g.maxSim = Math.max(g.maxSim, s)
-    }
-    return [...groups.values()].map((g) => {
-        const members = [...g.members].sort((a, b) => frags[b].n - frags[a].n)
-        return {members: members.map((i) => frags[i]), maxSim: g.maxSim, tokens: members.reduce((n, i) => n + frags[i].n, 0)}
-    }).sort((a, b) => b.tokens - a.tokens)
 }
 
 export function tFindDuplicates(g, args, ctx) {
@@ -97,10 +78,10 @@ export function tFindDuplicates(g, args, ctx) {
         })
         return `Found ${candidates.length} actionable same-name pair(s) across files (semantic mode; one closest clone and/or farthest collision per name). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nThese are review candidates, not automatic refactors. Use read_source on both sites before changing code.`
     }
-    const data = computeDuplicates(ctx.repoRoot, ctx.graphPath, {includeStrings, minTokens: tokMin})
-    const groups = groupClones(data, {simMin, tokMin, mode, skipTests, includeClassified})
+    const analysis = analyzeDuplicateGroups(ctx.repoRoot, ctx.graphPath, args)
+    const groups = analysis.groups
     const smallPolicy = tokMin < 30 ? ' Small fragments below 30 tokens require at least 95% similarity and two shared bounded fingerprints.' : ''
-    const suppressed = data.frags.filter((fragment) => !fragmentEligible(fragment, {tokMin, skipTests, includeClassified})).length
+    const suppressed = analysis.suppressed
     const suppressionNote = suppressed && !includeClassified
         ? ` ${suppressed} fragment(s) classified as tests/e2e/generated/mock/story/docs/benchmark/temp or matched by .weavatrix.json exclude were suppressed; pass include_classified:true (and include_tests:true for tests) to inspect them explicitly.`
         : ''
@@ -162,13 +143,15 @@ export function tFindDeadCode(g, args, ctx) {
             : `${candidate.owner ? `${candidate.owner}.` : ''}${candidate.symbol || candidate.id}`
         const where = `${candidate.file}${candidate.line ? `:${candidate.line}` : ''}`
         return [
-            `${index + 1}. [${candidate.confidence}/${candidate.classification}] ${subject} (${where})`,
+            `${index + 1}. [${candidate.confidence}/${candidate.evidenceTier}/${candidate.classification}] ${subject} (${where})`,
             `     evidence: ${candidate.evidence.map((item) => item.fact).join(' ')}`,
             candidate.caveats.length ? `     caution: ${candidate.caveats.join(' ')}` : null,
+            `     remaining: ${candidate.remainingChecks.join(' ')}`,
         ].filter(Boolean).join('\n')
     })
     const text = [
         `Dead-code review: ${shown.length} of ${review.candidates.length} candidate(s) shown (high ${counts.high}, medium ${counts.medium}, low ${counts.low}).`,
+        `Evidence tiers: strong static ${review.totals.byEvidenceTier.strongStatic}, bounded static ${review.totals.byEvidenceTier.boundedStatic}, high uncertainty ${review.totals.byEvidenceTier.highUncertainty}.`,
         `Verdict: REVIEW_REQUIRED. This is static evidence, never permission to auto-delete or bulk-delete.`,
         suppression ? `Suppressed by current filters: ${suppression}.` : null,
         review.suppressed.confidence ? 'Use min_confidence=low only when public/framework/dynamic candidates need explicit review.' : null,
@@ -196,7 +179,10 @@ const SEVERITY_RANK = {critical: 0, high: 1, medium: 2, low: 3, info: 4}
 
 export function formatAuditFinding(f) {
     const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''}${f.manifest ? `; ${f.manifest}` : ''})` : ''
-    return `  [${f.severity}/${f.confidence || '?'}] ${f.rule}: ${f.title}${where}${f.reason ? `\n      reason: ${f.reason}` : ''}${f.cycleRoute ? `\n      route: ${f.cycleRoute}` : ''}${f.fixHint ? `\n      fix: ${f.fixHint}` : ''}`
+    const verification = f.verification?.evidenceModel
+        ? `\n      verification: ${f.verification.evidenceModel}; manifest ${f.verification.manifestDeclaration?.status || 'N/A'}; indexed imports ${f.verification.indexedSourceImports?.status || 'N/A'}; decision ${f.verification.decision || 'REVIEW_REQUIRED'}`
+        : ''
+    return `  [${f.severity}/${f.confidence || '?'}] ${f.rule}: ${f.title}${where}${f.reason ? `\n      reason: ${f.reason}` : ''}${verification}${f.cycleRoute ? `\n      route: ${f.cycleRoute}` : ''}${f.fixHint ? `\n      fix: ${f.fixHint}` : ''}`
 }
 
 const auditFilter = (audit, args, findings = audit.findings) => {
@@ -234,7 +220,7 @@ const formatOrdinaryAudit = (audit, args, findings = audit.findings, heading = n
         heading,
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         ...auditConventionLines(audit),
-        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}.`,
+        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}. npm per-finding manifest/source/config verification: ${deps.perFindingVerification ? 'AVAILABLE' : 'UNAVAILABLE'}.`,
         `Scoped severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Scoped categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
         `Repository-level ${auditChecksLine(audit)}`,
         '',
@@ -428,7 +414,7 @@ export async function tRunAudit(g, args, ctx) {
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         `Severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
         `Structure: ${audit.structureReport?.runtimeCycles ?? audit.structureReport?.cycles ?? 0} runtime cycle(s), ${audit.structureReport?.compileTimeCouplings ?? audit.structureReport?.typeCouplings ?? 0} compile-time coupling group(s), ${audit.structureReport?.orphans ?? 0} orphan(s); import edges: ${audit.structureReport?.runtimeImportEdges ?? audit.structureReport?.importEdges ?? 0} runtime + ${audit.structureReport?.typeOnlyImportEdges ?? 0} type-only + ${audit.structureReport?.compileOnlyImportEdges ?? 0} compile-only. Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
-        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}.`,
+        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}. npm per-finding manifest/source/config verification: ${deps.perFindingVerification ? 'AVAILABLE' : 'UNAVAILABLE'}.`,
         ...auditConventionLines(audit),
         `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`,
         ``,
@@ -540,6 +526,7 @@ export function tHotPathReview(g, args, ctx) {
     const text = [
         `Local hot-path review: ${review.candidateSymbols} candidate(s) from ${review.analyzedSymbols} analyzed symbol(s); showing ${review.hotspots.length}.`,
         `Thresholds: time rank >=${review.thresholds.timeRank}, cyclomatic >=${review.thresholds.cyclomatic}, calls >=${review.thresholds.calls}, loop depth >=${review.thresholds.loopDepth}, score >=${review.thresholds.minScore}.`,
+        `Selection: ${review.selectionPolicy.mode}${review.selectionPolicy.strongLocalFallback ? '; strong local sort/recursion/deep-loop evidence can pass below the blended score gate' : '; strict explicit score gate'}.`,
         coverageLine,
         'Local syntax cost and graph coupling are separate. Scores are review priority, not measured runtime.',
         '',
@@ -557,7 +544,7 @@ export function tHotPathReview(g, args, ctx) {
                 `       ${item.reasons.slice(0, 5).join('; ')}${evidence}`,
             ]
         }) : ['  (none at the selected thresholds)']),
-        review.bounds.truncated ? `... +${review.bounds.totalCandidates - review.bounds.returned} more (raise top_n, min_score, or narrow path).` : null,
+        review.bounds.truncated ? `... +${review.bounds.totalCandidates - review.bounds.returned} more (raise top_n to display more, raise min_score or narrow path to tighten; lower min_score to broaden).` : null,
         '',
         'Caveat: no interprocedural Big-O, recursion-bound, CFG, dead-store or taint-flow claim is made.',
     ].filter((line) => line != null).join('\n')

@@ -85,3 +85,35 @@ test('hot_path_review tool is bounded, structured and rejects traversal scope', 
         rmSync(root, {recursive: true, force: true})
     }
 })
+
+test('hot path review defaults to a focused queue while min_score=0 restores diagnostics', () => {
+    const graph = {
+        nodes: [
+            {
+                id: 'src/work.js#strongLocal@1', label: 'strongLocal()', source_file: 'src/work.js', symbol_kind: 'function',
+                complexity: {
+                    startLine: 1, endLine: 10, timeRank: 4, timeLabel: 'O(n^2)', memoryRank: 2,
+                    cyclomatic: 8, callCount: 4, maxLoopDepth: 2, sortsInLoops: 1,
+                    hotEvidence: [{kind: 'sort-in-loop', line: 5, detail: 'sort'}],
+                },
+            },
+            {
+                id: 'src/work.js#broadNoise@20', label: 'broadNoise()', source_file: 'src/work.js', symbol_kind: 'function',
+                complexity: {
+                    startLine: 20, endLine: 25, timeRank: 2, timeLabel: 'O(n)', memoryRank: 1,
+                    cyclomatic: 2, callCount: 1, maxLoopDepth: 0, hotEvidence: [],
+                },
+            },
+        ],
+        links: [],
+    }
+    const focused = computeHotPathReview(graph, {topN: 10})
+    assert.equal(focused.thresholds.minScore, 85)
+    assert.equal(focused.selectionPolicy.mode, 'FOCUSED_DEFAULT')
+    assert.deepEqual(focused.hotspots.map((item) => item.label), ['strongLocal()'])
+    assert.equal(focused.hotspots[0].selection, 'STRONG_LOCAL_EVIDENCE')
+
+    const diagnostic = computeHotPathReview(graph, {topN: 10, minScore: 0})
+    assert.equal(diagnostic.selectionPolicy.mode, 'EXPLICIT_SCORE_THRESHOLD')
+    assert.deepEqual(diagnostic.hotspots.map((item) => item.label).sort(), ['broadNoise()', 'strongLocal()'])
+})

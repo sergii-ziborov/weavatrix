@@ -5,7 +5,7 @@
 Grep sees text. Weavatrix sees structure. It builds a dependency graph of any local repository —
 files, symbols, and the imports/calls/inheritance connecting them — and serves it to Claude Code,
 Codex, or any MCP client: change impact, transitive dependents, health audit, clone detection,
-coverage mapping. **35 tools available; 32 enabled by the default offline profile. Local-first: with
+coverage mapping. **36 tools available; 33 enabled by the default offline profile. Local-first: with
 the defaults, no repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
@@ -28,6 +28,11 @@ answers grep can't produce:
 - *"Did my refactor actually decouple anything?"* → `graph_diff base_ref=HEAD~1` builds an immutable
   baseline graph without checking it out, then reports the structural delta: new module
   dependencies, broken or introduced import cycles, and symbols that lost their last caller.
+
+- *"Is this change actually safe?"* -> `verified_change` accepts the task plus current diff/files and
+  returns one proof-carrying `PASS`, `BLOCKED`, or `UNKNOWN`: compact edit contexts, exact-symbol
+  impact, bounded call-argument flow, Git graph drift, architecture/duplicate/API ratchets, and
+  affected-test evidence.
 
 ## Quick start
 
@@ -108,7 +113,7 @@ An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — instal
 
 **graph** — `graph_stats`, `get_node`, `get_neighbors`, `query_graph`, `god_nodes`,
 `shortest_path`, `get_community`, `list_communities`, `module_map`, `get_dependents`,
-`change_impact`, `git_history`, `graph_diff`, `get_architecture_contract`,
+`change_impact`, `verified_change`, `git_history`, `graph_diff`, `get_architecture_contract`,
 `prepare_change`. Runtime dependencies, TypeScript type-only coupling and language
 compile-only edges (Rust module/use, Java imports) are reported separately where that distinction
 changes the result. TypeScript type-space and value-space declarations keep distinct identities;
@@ -120,7 +125,7 @@ confirmed by its bundled `typescript-language-server` + TypeScript runtime to `E
 `CONFLICT` means evidence disagrees. `graph_stats` reports the provenance breakdown and the semantic
 provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means precision was explicitly
 disabled and only static evidence is active. Java and Rust language-server providers are not bundled
-in 0.2.6: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
+in 0.2.7: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
 TypeScript/JavaScript overlay.
 
 The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
@@ -135,8 +140,9 @@ bounded TS/JS reference query, logical containers, impact and source excerpts), 
 Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web …)
 
 **health** — `find_dead_code` (bounded review queue for statically unreferenced and test-only files,
-functions, methods, and symbols, with confidence/evidence and explicit public/framework/dynamic caveats),
-`run_audit` (unused files/exports/dependencies with an explicit manifest-check summary,
+functions, methods, and symbols, with evidence tiers, completed/remaining verification and explicit
+public/framework/dynamic caveats),
+`run_audit` (unused files/exports/dependencies with per-finding manifest/indexed-source/script/config verification,
 missing npm/Go/Python deps, runtime
 cycles, type-only/compile-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
 lockfile drift; accepts an immutable `base_ref`, `changed_files`, and `debt: new|existing|all` for
@@ -149,7 +155,9 @@ with separate graph/test risk), `verify_architecture`,
 `hot_path_review` ranks production symbols using parser-derived local time, memory, cyclomatic and
 call-site facts plus exact inside-loop allocation, copy, scan, sort and recursion evidence. Graph
 fan-in/fan-out and measured coverage (or explicitly labelled static test reachability) remain
-separate from local syntax cost. The ranking is not profiler data or interprocedural Big-O.
+separate from local syntax cost. Its focused default uses `min_score:85` plus a narrow strong-local
+fallback; pass `min_score:0` only when the full diagnostic queue is wanted. The ranking is not
+profiler data or interprocedural Big-O.
 
 **build** — `rebuild_graph` (reports the structural delta, keeps the prior state as
 `graph.prev.json`)
@@ -160,7 +168,8 @@ use `kinds:["method"]` or a `path` prefix to narrow it. `min_confidence:"low"` e
 public APIs and framework/dynamic/reflection-sensitive candidates with their warnings. For repository
 maintenance or branch debt, pair it with `run_audit category=unused debt=all` (or add an immutable
 `base_ref` with `debt=new`) to cover unused files, exports and dependencies. Neither tool authorizes
-deletion: inspect `read_source`, `get_dependents`, exact search, manifests/configuration and tests first.
+deletion: `STRONG_STATIC_EVIDENCE` means an exact zero-reference result, not permission to remove;
+follow each candidate's `remainingChecks`, then inspect source/dependents/configuration and run tests.
 
 `graph_diff` accepts `base_ref` (`HEAD~1`, `main`, `origin/main`, or another local Git ref) for a
 fresh baseline comparison. Without it, the tool compares against `graph.prev.json` saved by the last
@@ -172,6 +181,14 @@ manifest, alias, ignore/config, non-JS/TS, or unsafe merge cases deliberately fa
 rebuild. The result says whether freshness was `none`, `incremental`, or `full`. Graph artifacts stay
 in the per-user cache and never need to be committed to Git.
 
+`verified_change` is read-only by default. It may run only explicitly requested `package.json`
+scripts whose names are allowlisted as test/check/verify scripts, and only when both
+`run_tests:true` and `WEAVATRIX_ALLOW_TEST_RUNS=1` are present. It never accepts an arbitrary shell
+command. Cross-repository API proof is used only when the active profile includes `crossrepo`;
+without a configured architecture contract or complete evidence, the result is `UNKNOWN`, not a
+cosmetic pass. Its data-flow section maps bounded JS/TS call arguments to callee parameters; it is
+not CFG, value-propagation, or taint analysis.
+
 **retarget** *(included in `offline`; absent from `pinned`; every switch is an explicit local call)* —
 `open_repo`, `list_known_repos`; changes the active repository boundary
 
@@ -182,8 +199,11 @@ in the per-user cache and never need to be committed to Git.
 entry points. Resolved explicit seeds are exclusive by default; set `augment_seeds:true` only when
 question-derived seeds are also wanted. Broad bootstrap/tool-execution/routing questions now rank
 conventional executables and graph-declared production entry points ahead of site, documentation, benchmark
-and fixture matches. Broad ranking remains orientation evidence; use `seed_files` when the intended
-entry point is already known.
+and fixture matches. Production-first classification also applies during traversal, so unrelated
+tests/generated/docs/benchmarks do not leak back from a production seed; name a class in the
+question or set `include_classified:true` to include it. Unreferenced unmatched constant/field leaves
+are hidden unless `include_low_signal:true`. Broad ranking remains orientation evidence; use
+`seed_files` when the intended entry point is already known.
 
 **advisories** *(network, explicit opt-in)* — `refresh_advisories`
 
@@ -195,6 +215,33 @@ ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
+
+### 0.2.7 verified-change workflow
+
+- New `verified_change` composes task retrieval, exact symbol context, change impact, immutable Git
+  graph comparison, architecture/duplicate/API ratchets, and targeted-test evidence behind one
+  `PASS` / `BLOCKED` / `UNKNOWN` contract.
+- Intent-expanded graph retrieval is combined with exact changed-symbol seeds. A bounded JS/TS
+  interprocedural layer records call arguments and their callee parameters without claiming CFG or
+  taint completeness.
+- Test execution is a double opt-in and limited to existing test/check/verify package scripts;
+  default operation remains read-only.
+- Malware scanning now sweeps installed npm package roots instead of package-manager caches or
+  hosted release snapshots. Static heuristic findings are capped at `high`, expose unverified
+  execution/origin/lockfile/exposure state, and no longer prescribe secret rotation unless execution
+  or credential exposure has actually been confirmed.
+- `query_graph` and `verified_change` task retrieval now enforce production-first classification
+  through traversal/selection while retaining exact changed or pinned non-product symbols; query
+  output also suppresses unmatched constant/field leaves. `hot_path_review` defaults to a focused
+  85-point queue, while `min_score:0` remains the explicit full-diagnostic mode.
+- Dead-code candidates now carry evidence tiers and remaining checks; dependency findings carry
+  per-finding manifest plus indexed-source/script/config verification without authorizing removal.
+- `npm run benchmark:agent` reports routing success, false positives, token estimate and latency.
+  Codebase Memory and Serena results stay explicitly `MISSING` until independently collected data is
+  supplied under the [blind agent-change protocol](docs/agent-task-benchmark.md);
+  `benchmark:agent:release` fails closed without same-task change success, FP, token, and time results.
+
+Full patch notes: [docs/releases/v0.2.7.md](docs/releases/v0.2.7.md).
 
 ### 0.2.6 compact-context and TypeScript identity patch
 
@@ -466,7 +513,7 @@ vulnerability findings. This is where each capability comes from and how it is c
 | Capability alert | Why it exists | Activation and boundary |
 |---|---|---|
 | Network access | `refresh_advisories` sends pinned package names and versions to OSV; `pull_architecture_contract` sends an opaque repository UUID and receives an owner-approved contract; `sync_graph` sends a normalized repository label plus an allowlisted graph/evidence payload. Evidence is derived locally from source and manifests, but source bodies, snippets, absolute paths, environment values, credentials and Git remotes are excluded | `offline` and `pinned` expose no network tools. `osv` exposes only advisory refresh. `hosted`/`full` expose all three; every request still requires an explicit tool call, and hosted calls require `WEAVATRIX_SYNC_URL` |
-| Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; the bundled TLS/tsserver process supplies bounded JS/TS semantic evidence; timed-out Windows child trees may be terminated | Used only by the corresponding local operation. The semantic provider is package-pinned, disables automatic type acquisition, and never invokes a repository binary, script, installer or `npx` |
+| Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; the bundled TLS/tsserver process supplies bounded JS/TS semantic evidence; timed-out Windows child trees may be terminated; `verified_change` can optionally run an existing package test/check/verify script | The semantic provider never invokes repository code. Test execution separately requires `run_tests:true` plus `WEAVATRIX_ALLOW_TEST_RUNS=1`, rejects arbitrary commands and shell-sensitive arguments, and should be enabled only for trusted repository scripts |
 | Debug / dynamic loading | Cache-busted `import()` hot-reloads watched MCP tool entry modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
 | Environment access | Reads `WEAVATRIX_*` configuration; ordinary local helpers inherit a credential-stripped environment, while TLS/tsserver receives only allowlisted OS/temp/locale values and a constrained executable path | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment. TLS/tsserver also receives no registry/proxy/cloud credentials or `NODE_OPTIONS` |
 | Filesystem access | Reads the active repository, graph, lockfiles and coverage reports; writes derived graphs and advisory/architecture caches | Realpath containment blocks traversal and symlink/junction escapes. The `pinned` profile removes `open_repo`; the default `offline` profile permits only explicit local switching. The optional malware dependency scan may inspect installed dependency caches such as GOPATH |

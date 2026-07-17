@@ -104,6 +104,17 @@ test("change_impact overlays static test reachability without claiming measured 
       path: ["test/consumer.test.ts", "src/consumer.ts"],
     });
     assert.equal(value.result.testEvidence.actualCoverage, "NOT_AVAILABLE");
+    assert.deepEqual(value.result.testEvidence.changedFiles, [{
+      file: "src/api.ts",
+      actualCoverage: null,
+      staticTestReachability: {
+        status: "REACHABLE",
+        test: "test/consumer.test.ts",
+        distance: 2,
+        confidence: "HIGH",
+        path: ["test/consumer.test.ts", "src/consumer.ts", "src/api.ts"],
+      },
+    }]);
   });
 });
 

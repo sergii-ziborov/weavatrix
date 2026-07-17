@@ -8,7 +8,8 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
   const api = await loadHotApi(0, undefined);
   const got = names(api);
   assert.deepEqual([...api.caps], [...DEFAULT_CAPS]);
-  assert.equal(api.tools.length, 32);
+  assert.equal(api.tools.length, 33);
+  assert.ok(got.has("verified_change"));
   assert.ok(got.has("read_source"));
   assert.ok(got.has("inspect_symbol"));
   assert.ok(got.has("context_bundle"));
@@ -26,12 +27,13 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
 test("MCP profiles: offline is the named default and pinned removes retargeting", async () => {
   const offline = await loadHotApi(0, "offline");
   assert.deepEqual([...offline.caps], [...DEFAULT_CAPS]);
-  assert.equal(offline.tools.length, 32);
+  assert.equal(offline.tools.length, 33);
 
   const api = await loadHotApi(0, "pinned");
   const got = names(api);
   assert.deepEqual([...api.caps], ["graph", "search", "source", "health", "build"]);
-  assert.equal(api.tools.length, 29);
+  assert.equal(api.tools.length, 30);
+  assert.ok(got.has("verified_change"));
   assert.ok(got.has("read_source"));
   assert.ok(!got.has("open_repo"));
   assert.ok(!got.has("list_known_repos"));
@@ -44,7 +46,7 @@ test("MCP profiles: offline is the named default and pinned removes retargeting"
 test("MCP profiles: osv enables only advisory networking", async () => {
   const api = await loadHotApi(0, "osv");
   const got = names(api);
-  assert.equal(api.tools.length, 33);
+  assert.equal(api.tools.length, 34);
   assert.ok(got.has("open_repo"));
   assert.ok(got.has("refresh_advisories"));
   assert.ok(!got.has("pull_architecture_contract"));
@@ -55,7 +57,7 @@ test("MCP profiles: hosted and full expose the complete catalog", async () => {
   for (const profile of ["hosted", "full"]) {
     const api = await loadHotApi(0, profile);
     const got = names(api);
-    assert.equal(api.tools.length, 35, profile);
+    assert.equal(api.tools.length, 36, profile);
     assert.ok(got.has("refresh_advisories"), profile);
     assert.ok(got.has("pull_architecture_contract"), profile);
     assert.ok(got.has("sync_graph"), profile);
@@ -81,7 +83,7 @@ test("MCP capabilities: legacy online remains an alias for advisories plus hoste
 
 test("MCP capabilities: an explicit full capability selection exposes all tools", async () => {
   const api = await loadHotApi(0, `${DEFAULT_CAPS.join(",")},advisories,hosted`);
-  assert.equal(api.tools.length, 35);
+  assert.equal(api.tools.length, 36);
 });
 
 test("MCP capabilities: an explicit empty selection exposes no tools", async () => {
@@ -94,6 +96,8 @@ test("query_graph schema exposes exact seed-file pinning", async () => {
   const schema = api.byName.get("query_graph").inputSchema;
   assert.equal(schema.properties.seed_files.items.type, "string");
   assert.equal(schema.properties.seed_files.maxItems, 12);
+  assert.equal(schema.properties.include_classified.default, false);
+  assert.equal(schema.properties.include_low_signal.default, false);
   assert.equal(schema.properties.augment_seeds.default, false);
   assert.equal(schema.properties.output_format.enum[1], "json");
   assert.equal(api.byName.get("query_graph").outputSchema, undefined);
@@ -108,6 +112,21 @@ test("change_impact schema exposes bounded diff evidence and conservative file h
   assert.equal(schema.properties.files.maxItems, 500);
   assert.match(schema.properties.files.description, /conservatively/i);
   assert.equal(tool.outputSchema, undefined);
+});
+
+test("verified_change exposes bounded proof inputs and an opt-in package-script runner", async () => {
+  const api = await loadHotApi(0, "graph");
+  const tool = api.byName.get("verified_change");
+  assert.ok(tool);
+  assert.equal(tool.refreshGraph, true);
+  assert.deepEqual(tool.inputSchema.required, ["task"]);
+  assert.deepEqual(tool.inputSchema.properties.phase.enum, ["plan", "verify"]);
+  assert.equal(tool.inputSchema.properties.diff.maxLength, 2 * 1024 * 1024);
+  assert.equal(tool.inputSchema.properties.max_symbols.maximum, 5);
+  assert.equal(tool.inputSchema.properties.max_data_flow_edges.maximum, 60);
+  assert.equal(tool.inputSchema.properties.tests.maxItems, 5);
+  assert.equal(tool.inputSchema.properties.run_tests.default, false);
+  assert.match(tool.description, /PASS\/BLOCKED\/UNKNOWN/);
 });
 
 test("run_audit schema distinguishes immutable baseline debt from changed-file scope", async () => {
@@ -152,6 +171,7 @@ test("inspect_symbol and small-clone schemas expose bounded precision controls",
 test("hot_path_review schema exposes bounded local-cost thresholds", async () => {
   const api = await loadHotApi(0, "health");
   const tool = api.byName.get("hot_path_review");
+  assert.equal(tool.inputSchema.properties.min_score.default, 85);
   assert.ok(tool);
   assert.equal(tool.inputSchema.properties.top_n.maximum, 100);
   assert.equal(tool.inputSchema.properties.cyclomatic_threshold.default, 8);

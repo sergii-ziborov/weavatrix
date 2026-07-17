@@ -6,14 +6,14 @@
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.6",
+  "version": "0.2.7",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
@@ -50,6 +50,12 @@
           "description": "Optional bearer token for the configured hosted endpoint; required by pull_architecture_contract",
           "format": "string",
           "isSecret": true,
+          "isRequired": false
+        },
+        {
+          "name": "WEAVATRIX_ALLOW_TEST_RUNS",
+          "description": "Optional explicit permission for verified_change to run requested test/check/verify package.json scripts; must be exactly 1",
+          "format": "string",
           "isRequired": false
         }
       ]
