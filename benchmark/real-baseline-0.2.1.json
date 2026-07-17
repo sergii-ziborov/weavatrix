@@ -166,6 +166,55 @@
         "graphBytes": 10046211,
         "coldMs": 2571.06
       }
+    },
+    "ai-dev-system": {
+      "revision": "81e7e9a127cfc9362c8bc5322ec2e027b42620a8",
+      "fingerprint": "b21293fe3737fcde",
+      "metrics": {
+        "files": 503,
+        "languageFiles": 112,
+        "symbols": 1668,
+        "nodes": 2171,
+        "links": 3645,
+        "relations": {
+          "calls": 1204,
+          "contains": 1679,
+          "imports": 629,
+          "inherits": 3,
+          "re_exports": 29,
+          "references": 101
+        },
+        "symbolKinds": {
+          "class": 39,
+          "function": 492,
+          "method": 85,
+          "unknown": 826,
+          "variable": 226
+        },
+        "endpoints": 20,
+        "endpointMethods": {
+          "ANY": 1,
+          "DELETE": 1,
+          "GET": 11,
+          "PATCH": 1,
+          "POST": 6
+        },
+        "edgeProvenanceV": 1,
+        "edgeProvenance": {
+          "EXACT_LSP": 0,
+          "EXTRACTED": 1679,
+          "RESOLVED": 658,
+          "INFERRED": 1308,
+          "CONFLICT": 0,
+          "UNKNOWN": 0
+        },
+        "edgeProvenanceComplete": true,
+        "testFiles": 0,
+        "generatedFiles": 3,
+        "nonProductFiles": 127,
+        "graphBytes": 2556473,
+        "coldMs": 9587.78
+      }
     }
   }
 }

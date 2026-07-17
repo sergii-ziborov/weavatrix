@@ -74,21 +74,21 @@ Correctness and byte gates are deterministic release blockers. Latency gates use
 ceilings and should be compared on the same class of machine; a failure still requires inspection
 rather than automatically increasing a budget.
 
-## Remaining 0.2.2 coverage
+## Real-repository coverage
 
-The manifest-driven runner has source-free 0.2.1 baselines for `frontend`, `analytics`,
-`automation`, `bgp-speaker` and `warroom`. Each record contains only a Git revision, structural
+The manifest-driven runner has source-free baselines for `frontend`, `analytics`, `automation`,
+`bgp-speaker`, `warroom` and `AI-Dev-System`. Each record contains only a Git revision, structural
 fingerprint, counts and timings. The current runner rejects unexplained relation drops above 5%,
 reports a stale source revision separately from a builder regression, requires complete edge
 provenance, and caps its report at 64 KiB. Java also gates representative symbol kinds, OOP
 relations and endpoints. Rust gates module/import relations and endpoints when its source exists.
 
-`AI-Dev-System` remains explicitly `MISSING` because this machine currently has derived graph files
-but no Rust source checkout. Set `WEAVATRIX_BENCHMARK_AI_DEV_SYSTEM` to its source directory and
-regenerate the 0.2.1 baseline before calling the six-repository release gate complete. The other
-checkout variables follow the same `WEAVATRIX_BENCHMARK_<NAME>` pattern documented in the manifest.
+The `AI-Dev-System` baseline was captured from revision
+`81e7e9a127cfc9362c8bc5322ec2e027b42620a8`. Set `WEAVATRIX_BENCHMARK_AI_DEV_SYSTEM` to its source
+directory when it is not available at one of the relative paths in the manifest. The other checkout
+variables follow the same `WEAVATRIX_BENCHMARK_<NAME>` pattern.
 
 Framework peer/build-tool and convention-consumer fixtures and edge-provenance gates are part of
-the permanent quick gate. The real report exposes `gaps.java` and `gaps.rust`; on this machine Java
-is empty and Rust contains `SOURCE_CHECKOUT_MISSING`, so the six-repository release command remains
-correctly red rather than manufacturing a green result from derived graph files.
+the permanent quick gate. The real report exposes `gaps.java` and `gaps.rust`; a missing source
+checkout keeps the six-repository release command correctly red rather than manufacturing a green
+result from derived graph files.
