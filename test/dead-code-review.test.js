@@ -32,7 +32,8 @@ test("dead-code review defaults to actionable internal code and suppresses publi
 
   assert.deepEqual(result.candidates.map((candidate) => candidate.symbol), ["hiddenMethod"]);
   assert.equal(result.candidates[0].classification, "internal-method");
-  assert.equal(result.candidates[0].confidence, "high");
+  assert.equal(result.candidates[0].confidence, "medium");
+  assert.match(result.candidates[0].caveats.join(" "), /exact semantic no-reference result/i);
   assert.equal(result.repoSignals.dynamicLoading, false, "ordinary RegExp.exec is not dynamic code execution");
   assert.equal(result.policy.autoDelete, false);
   assert.equal(result.suppressed.confidence, 2, "public method and public-surface file stay out of the default queue");

@@ -7,9 +7,10 @@
 // Spawned by Claude Code / Codex as a plain Node child (node mcp-server.mjs <graph.json> <repoRoot>).
 // Speaks newline-delimited JSON-RPC 2.0 over stdio (the MCP stdio transport).
 //
-// .mjs on purpose: guarantees ESM parsing regardless of the nearest package.json. The server itself
-// resolves nothing from node_modules at runtime (ripgrep is probed, with a pure-Node fallback); only
-// the graph BUILDER pulls in web-tree-sitter + its WASM grammars when a build is requested.
+// .mjs on purpose: guarantees ESM parsing regardless of the nearest package.json. Runtime analyzers
+// resolve only dependencies bundled with Weavatrix: web-tree-sitter grammars for graph builds and the
+// pinned TypeScript language server for bounded JS/TS semantic evidence. Repository packages/scripts
+// are never executed to provide either analyzer.
 //
 // STDOUT is the protocol channel — nothing but JSON-RPC frames may be written there. All diagnostics
 // go to stderr. Two argv forms:
@@ -24,14 +25,26 @@ import {graphOutDirForRepo} from './graph/layout.js'
 import {createRequire} from 'node:module'
 import {createStalenessNoticeGate} from './mcp/staleness-notice.mjs'
 import {normalizeToolResult} from './mcp/tool-result.mjs'
-import {buildGraphForRepo} from './build-graph.js'
+import {buildGraphForRepo, defaultPrecisionMode} from './build-graph.js'
 import {persistedFreshnessMatches, repositoryFreshnessProbe} from './graph/freshness-probe.js'
+import {activeLspClientCount, beginLspClientShutdown, shutdownActiveLspClients} from './precision/lsp-client.js'
+import {PRECISION_OVERLAY_V, precisionSemanticInputsMatch, readPrecisionOverlay} from './precision/lsp-overlay.js'
 
 // version comes from package.json so serverInfo can never drift from the published package again
 const PKG_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version } catch { return '0.0.0' } })()
 const SERVER_INFO = {name: 'weavatrix', version: PKG_VERSION}
 const DEFAULT_PROTOCOL = '2024-11-05'
 const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
+
+async function settleWithin(promise, timeoutMs) {
+    let timer
+    const settled = await Promise.race([
+        Promise.resolve(promise).then(() => true, () => true),
+        new Promise((resolveSettled) => { timer = setTimeout(() => resolveSettled(false), timeoutMs) }),
+    ])
+    if (timer) clearTimeout(timer)
+    return settled
+}
 
 // argv[2] is a repo DIRECTORY in the npx form — derive the graph location from the standard layout;
 // otherwise it is the graph.json path and the repo root follows it.
@@ -77,7 +90,7 @@ async function main() {
     // ctx owns the CURRENT target: rebuild_graph reloads it, open_repo retargets graphPath/repoRoot
     // at runtime. loadInto always reads ctx.graphPath so both paths share one loader.
     const ctx = {graphPath: GRAPH_PATH, repoRoot: REPO_ROOT, reload: null}
-    const loadInto = () => { graph = loadGraph(ctx.graphPath); graphError = null; return graph }
+    const loadInto = () => { graph = loadGraph(ctx.graphPath, {repoRoot: ctx.repoRoot}); graphError = null; return graph }
     ctx.reload = () => { api.resetStalenessCache(); try { return loadInto() } catch (e) { graphError = e.message; return null } }
     try {
         if (!ctx.graphPath) throw new Error('no graph.json path given (argv[2])')
@@ -96,6 +109,8 @@ async function main() {
     // ordinary tools use a per-call graph/context snapshot, so an explicitly retargetable registration
     // cannot mix one repo's in-memory graph with another repo's source root under concurrent MCP calls.
     let targetMutation = Promise.resolve()
+    let shuttingDown = false
+    let shutdownPromise = null
     const refreshProbeCache = new Map()
     const configuredDebounce = process.env.WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS == null
         ? 2_000
@@ -103,13 +118,31 @@ async function main() {
     const refreshDebounceMs = Math.max(0, Math.min(5_000, Number.isFinite(configuredDebounce) ? configuredDebounce : 2_000))
     const autoRefresh = async (callCtx, currentGraph) => {
         if (!callCtx?.repoRoot || !callCtx?.graphPath) return {graph: null, refresh: null}
-        const probeKey = `${callCtx.graphPath}\0${currentGraph?.graphBuildMode || 'full'}`
+        const activePrecision = currentGraph?.graphPrecisionMode || defaultPrecisionMode()
+        const probeKey = `${callCtx.graphPath}\0${currentGraph?.graphBuildMode || 'full'}\0${activePrecision}`
+        // Semantic inputs include ignored configs and configured project files that Git status does
+        // not see. Check their bounded fingerprint before the ordinary source freshness debounce;
+        // exact evidence must have no stale window, even on back-to-back tool calls.
+        let semanticInputsChanged = false
+        if (activePrecision === 'lsp' && currentGraph) {
+            try {
+                const overlay = readPrecisionOverlay(callCtx.graphPath, currentGraph)
+                semanticInputsChanged = typeof overlay?.semanticInputFingerprint === 'string'
+                    && !precisionSemanticInputsMatch(overlay, callCtx.repoRoot, currentGraph)
+            } catch {
+                semanticInputsChanged = true
+            }
+        }
         const cachedProbe = refreshProbeCache.get(probeKey)
-        if (currentGraph && cachedProbe && Date.now() - cachedProbe.checkedAt < refreshDebounceMs) {
+        if (!semanticInputsChanged && currentGraph && cachedProbe && Date.now() - cachedProbe.checkedAt < refreshDebounceMs) {
             return {graph: currentGraph, refresh: {kind: 'none', revision: currentGraph.graphRevision || null, changedFiles: 0}}
         }
         const beforeProbe = repositoryFreshnessProbe(callCtx.repoRoot)
-        if (beforeProbe && currentGraph && (
+        const precisionMissing = activePrecision === 'lsp' && (
+            Number(currentGraph?.precisionOverlayV) !== PRECISION_OVERLAY_V
+            || semanticInputsChanged
+        )
+        if (!precisionMissing && beforeProbe && currentGraph && (
             cachedProbe?.probe === beforeProbe
             || persistedFreshnessMatches(currentGraph, beforeProbe, currentGraph.graphBuildMode || 'full')
         )) {
@@ -118,12 +151,13 @@ async function main() {
         }
         const result = await buildGraphForRepo(callCtx.repoRoot, {
             mode: currentGraph?.graphBuildMode || 'full',
+            precision: activePrecision,
             scope: '',
             outDir: dirname(callCtx.graphPath),
         })
         if (!result.ok) throw new Error(result.error || 'automatic graph refresh failed')
         api.resetStalenessCache()
-        const fresh = loadGraph(callCtx.graphPath)
+        const fresh = loadGraph(callCtx.graphPath, {repoRoot: callCtx.repoRoot})
         const afterProbe = repositoryFreshnessProbe(callCtx.repoRoot)
         if (afterProbe && afterProbe === beforeProbe) refreshProbeCache.set(probeKey, {probe: afterProbe, checkedAt: Date.now()})
         else refreshProbeCache.delete(probeKey)
@@ -138,9 +172,52 @@ async function main() {
             },
         }
     }
-    const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n')
+    const send = (msg) => {
+        // A request that was already running when the client disconnected may complete during the
+        // bounded drain. Do not write a late reply into a closed protocol pipe.
+        if (shuttingDown || process.stdout.destroyed || !process.stdout.writable) return false
+        try {
+            return process.stdout.write(JSON.stringify(msg) + '\n')
+        } catch (error) {
+            if (error?.code === 'EPIPE' || error?.code === 'ERR_STREAM_DESTROYED') return false
+            throw error
+        }
+    }
     const reply = (id, result) => send({jsonrpc: '2.0', id, result})
     const fail = (id, code, message) => send({jsonrpc: '2.0', id, error: {code, message}})
+
+    const requestShutdown = (reason, exitCode = 0) => {
+        if (shutdownPromise) return shutdownPromise
+        shuttingDown = true
+        // This is synchronous and deliberately precedes every await: a graph build that reaches its
+        // precision phase during the drain must not create a fresh TLS/tsserver process tree.
+        beginLspClientShutdown()
+        process.stdin.pause()
+        const activeAtStart = activeLspClientCount()
+        log(`shutdown requested (${reason}); draining graph work and ${activeAtStart} semantic provider(s)`)
+        shutdownPromise = (async () => {
+            // Give an ordinary auto-refresh a chance to commit and close its provider itself. A wedged
+            // parse/query is bounded; active semantic children are then closed or tree-killed, after
+            // which the mutation gets a final window to observe that cancellation and release locks.
+            const initiallyDrained = await settleWithin(targetMutation, 2_500)
+            const semantic = await shutdownActiveLspClients({timeoutMs: 3_000})
+            const fullyDrained = initiallyDrained || await settleWithin(targetMutation, 1_500)
+            log(`shutdown cleanup: graph=${fullyDrained ? 'drained' : 'bounded-timeout'}, semantic=${semantic.requested} requested/${semantic.remaining} remaining${semantic.timedOut ? ' (forced)' : ''}`)
+        })().catch((error) => {
+            log(`shutdown cleanup failed: ${error.stack || error.message}`)
+        }).finally(() => {
+            process.exit(exitCode)
+        })
+        return shutdownPromise
+    }
+    process.stdout.on('error', (error) => {
+        if (error?.code === 'EPIPE' || error?.code === 'ERR_STREAM_DESTROYED') {
+            void requestShutdown('stdout disconnected')
+            return
+        }
+        log(`stdout error: ${error.stack || error.message}`)
+        void requestShutdown('stdout error', 1)
+    })
 
     let loadedVersion = hotVersion(catalog.HOT_FILES)
     let lastFailedVersion = 0
@@ -164,6 +241,10 @@ async function main() {
     const handle = async (msg) => {
         const {id, method, params} = msg
         const isNotification = id === undefined || id === null
+        if (shuttingDown) {
+            if (!isNotification) fail(id, -32000, 'MCP server is shutting down')
+            return
+        }
         if (method === 'initialize') {
             if (params?.protocolVersion) protocolVersion = String(params.protocolVersion)
             return reply(id, {protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo: SERVER_INFO})
@@ -172,10 +253,14 @@ async function main() {
         if (method === 'ping') return reply(id, {})
         if (method === 'tools/list') {
             await maybeHotReload()
+            if (shuttingDown) return
             return reply(id, {tools: api.tools.map(({name, description, inputSchema, outputSchema}) => ({name, description, inputSchema, outputSchema}))})
         }
         if (method === 'tools/call') {
             await maybeHotReload()
+            // EOF can arrive while the hot-reload import is pending. Do not enqueue a graph mutation
+            // after requestShutdown captured the mutation chain it is responsible for draining.
+            if (shuttingDown) return
             const tool = api.byName.get(params?.name)
             if (!tool) return reply(id, {content: [{type: 'text', text: `Unknown tool: ${params?.name}`}], isError: true})
             const refreshesGraph = tool.cap === 'graph' || tool.cap === 'health' || tool.refreshGraph === true
@@ -236,6 +321,7 @@ async function main() {
     let buf = ''
     process.stdin.setEncoding('utf8')
     process.stdin.on('data', (chunk) => {
+        if (shuttingDown) return
         buf += chunk
         let nl
         while ((nl = buf.indexOf('\n')) >= 0) {
@@ -256,7 +342,9 @@ async function main() {
             })
         }
     })
-    process.stdin.on('end', () => process.exit(0))
+    process.stdin.on('end', () => { void requestShutdown('stdin EOF') })
+    process.on('SIGTERM', () => { void requestShutdown('SIGTERM') })
+    process.on('SIGINT', () => { void requestShutdown('SIGINT') })
     log('ready')
 }
 

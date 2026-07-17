@@ -31,9 +31,11 @@ function reverseReach(g, seeds, maxDepth) {
             }
             const depthKey = compileOnly ? 'compileDepth' : 'runtimeDepth'
             const relationKey = compileOnly ? 'compileRelation' : 'runtimeRelation'
+            const provenanceKey = compileOnly ? 'compileProvenance' : 'runtimeProvenance'
             if (entry[depthKey] != null && entry[depthKey] <= depth) continue
             entry[depthKey] = depth
             entry[relationKey] = e.relation || 'rel'
+            entry[provenanceKey] = e.provenance || 'UNKNOWN'
             states.set(id, entry)
             frontier.push({id, depth, compileOnly})
         }
@@ -43,6 +45,7 @@ function reverseReach(g, seeds, maxDepth) {
         depth: entry.runtimeDepth ?? entry.compileDepth ?? 0,
         compileOnly: entry.runtimeDepth == null,
         relation: entry.runtimeDepth != null ? entry.runtimeRelation : entry.compileRelation,
+        provenance: entry.runtimeDepth != null ? entry.runtimeProvenance : entry.compileProvenance,
     }]))
 }
 
@@ -86,17 +89,21 @@ export function tGetDependents(g, {label, depth = 3, max_nodes = 40} = {}) {
         note,
         `Dependents of ${n.label ?? id} (reverse calls/imports/inherits, depth ≤${maxDepth}): ${ranked.length} found (${runtimeCount} runtime, ${compileCount} compile-time-only), showing ${shown.length} by proximity + connectivity.`,
         containingFile ? `Includes importers of its containing file ${labelOf(g, containingFile)}.` : null,
-        ...shown.map((r) => `  [d${r.d} ${impactKind(r.entry)}] ${r.entry.relation || 'rel'}  ${labelOf(g, r.id)}  (deg ${r.deg})  [${r.id}]`),
+        ...shown.map((r) => `  [d${r.d} ${impactKind(r.entry)}] ${r.entry.relation || 'rel'} [${r.entry.provenance || 'UNKNOWN'}]  ${labelOf(g, r.id)}  (deg ${r.deg})  [${r.id}]`),
     ].filter(Boolean).join('\n')
 }
 
 // Re-query the last rebuild's before/after pair (graph.prev.json vs graph.json), optionally scoped.
 export async function tGraphDiff(g, args, ctx) {
+    const current = rawGraph(ctx)
+    const currentMode = ['full', 'no-tests', 'tests-only'].includes(current?.graphBuildMode)
+        ? current.graphBuildMode
+        : 'full'
     let prev
     let baselineLabel = 'previous rebuild state'
     if (args.base_ref) {
         if (!ctx.repoRoot) return 'A Git-ref graph diff needs the active repository root.'
-        const built = await buildGraphAtGitRef(ctx.repoRoot, args.base_ref)
+        const built = await buildGraphAtGitRef(ctx.repoRoot, args.base_ref, {mode: currentMode})
         if (!built.ok) return `Could not build the baseline graph: ${built.error}`
         prev = built.graph
         baselineLabel = `${built.ref} (${built.commit.slice(0, 12)})`
@@ -106,7 +113,17 @@ export async function tGraphDiff(g, args, ctx) {
             return `No previous graph state at ${prevPath} — pass base_ref (for example HEAD~1 or main), or run rebuild_graph to save one automatically.`
         }
     }
-    const current = rawGraph(ctx)
+    if (!args.base_ref) {
+        const previousMode = ['full', 'no-tests', 'tests-only'].includes(prev?.graphBuildMode)
+            ? prev.graphBuildMode
+            : 'full'
+        if (previousMode !== currentMode) {
+            return [
+                `Graph diff unavailable: previous graph mode is ${previousMode}, current graph mode is ${currentMode}.`,
+                'Those node/edge universes are not comparable. Run rebuild_graph once more in the same mode, or pass base_ref to build a mode-matched immutable baseline.',
+            ].join('\n')
+        }
+    }
     const filter = args.path ? String(args.path).replace(/\\/g, '/') : null
     const scope = (graph) => filter ? {
         nodes: (graph.nodes || []).filter((n) => String(n.id).startsWith(filter)),
@@ -118,6 +135,7 @@ export async function tGraphDiff(g, args, ctx) {
     } : graph
     return [
         `Graph diff (${baselineLabel} → current)${filter ? `, scoped to ${filter}` : ''}:`,
+        `Build mode: ${currentMode}`,
         formatGraphDiff(diffGraphs(scope(prev), scope(current)))
     ].join('\n')
 }

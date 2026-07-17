@@ -16,6 +16,44 @@ function repoWith(files) {
   return dir;
 }
 
+test("internal-builder: symbol selections use zero-based UTF-16 LSP positions", async () => {
+  const source = 'const marker = "😀漢"; export function target() { return marker; }\n';
+  const dir = repoWith({ "src/unicode.ts": source });
+  try {
+    const graph = await buildInternalGraph(dir);
+    const target = graph.nodes.find((node) => String(node.id).includes("#target@"));
+    assert.ok(target, "the TypeScript declaration is indexed");
+    assert.deepEqual(target.selection_start, {
+      line: 0,
+      character: source.indexOf("target"),
+    });
+    assert.equal(target.selection_end.character - target.selection_start.character, "target".length);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("internal-builder: source ranges and call lines remain UTF-16 with Unicode before declarations", async () => {
+  const targetLine = 'const marker = "\u{1F600}\u6F22"; export function target() { return marker; }';
+  const callerLine = 'const prefix = "\u{1F680}\u5B57"; export function caller() { return target(); }';
+  const dir = repoWith({ "src/unicode-ranges.ts": `${targetLine}\n${callerLine}\n` });
+  try {
+    const graph = await buildInternalGraph(dir);
+    const target = graph.nodes.find((node) => String(node.id).includes("#target@"));
+    const caller = graph.nodes.find((node) => String(node.id).includes("#caller@"));
+    assert.deepEqual(target.selection_start, {line: 0, character: targetLine.indexOf("target")});
+    assert.deepEqual(target.source_range.start, {line: 0, character: targetLine.indexOf("function")});
+    assert.deepEqual(target.source_range.end, {line: 0, character: targetLine.length});
+    assert.deepEqual(caller.selection_start, {line: 1, character: callerLine.indexOf("caller")});
+    assert.deepEqual(caller.source_range.start, {line: 1, character: callerLine.indexOf("function")});
+    assert.deepEqual(caller.source_range.end, {line: 1, character: callerLine.length});
+    assert.ok(graph.links.some((link) => link.source === caller.id
+      && link.target === target.id && link.relation === "calls" && link.line === 2));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("internal-builder: only module declarations, not members of exported classes, are exports", async () => {
   const dir = repoWith({
     "src/a.js":

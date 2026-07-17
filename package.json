@@ -1,6 +1,6 @@
 {
   "name": "weavatrix",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "description": "Weavatrix — code graph & blast-radius MCP server for AI coding agents: change impact, transitive dependents, health audit, duplicate detection, and coverage mapping over any local repository.",
   "author": "Sergii Ziborov <sergii.ziborov@gmail.com>",
@@ -55,6 +55,8 @@
   ],
   "dependencies": {
     "tree-sitter-wasms": "0.1.13",
+    "typescript": "5.9.3",
+    "typescript-language-server": "4.4.1",
     "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {

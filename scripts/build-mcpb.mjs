@@ -1,6 +1,6 @@
-import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { childProcessEnv } from "../src/child-env.js";
 
@@ -37,6 +37,85 @@ copyFileSync(join(root, "mcpb", "manifest.json"), join(stage, "manifest.json"));
 copyFileSync(join(root, "site", "apple-touch-icon.png"), join(stage, "icon.png"));
 
 runNpm(["ci", "--omit=dev", "--ignore-scripts"], stage);
+
+const stagedPrecisionDependencies = {
+  typescript: {
+    version: "5.9.3",
+    files: [
+      "package.json",
+      "bin/tsserver",
+      "lib/tsserver.js",
+      "lib/_tsserver.js",
+      "lib/typescript.js",
+      "LICENSE.txt",
+      "ThirdPartyNoticeText.txt",
+    ],
+  },
+  "typescript-language-server": {
+    version: "4.4.1",
+    files: ["package.json", "lib/cli.mjs", "LICENSE"],
+  },
+};
+for (const [name, expectedPackage] of Object.entries(stagedPrecisionDependencies)) {
+  const packageRoot = join(stage, "node_modules", name);
+  const packagePath = join(packageRoot, "package.json");
+  if (!existsSync(packagePath)) throw new Error(`MCPB stage is missing production dependency ${name}`);
+  const stagedPackage = JSON.parse(readFileSync(packagePath, "utf8"));
+  if (stagedPackage.version !== expectedPackage.version) {
+    throw new Error(`MCPB stage has ${name} ${stagedPackage.version || "(missing)"}; expected ${expectedPackage.version}`);
+  }
+  for (const relativePath of expectedPackage.files) {
+    const requiredPath = join(packageRoot, relativePath);
+    if (!existsSync(requiredPath) || !statSync(requiredPath).isFile()) {
+      throw new Error(`MCPB stage is missing required ${name} runtime/license file: ${relativePath}`);
+    }
+  }
+}
+
+// Resolve and initialize the semantic provider from the staged portable bundle, not this checkout.
+// File-existence checks alone can miss a broken package entry point or a tsserver launcher whose
+// transitive runtime file was pruned.
+const stagedProviderUrl = pathToFileURL(join(stage, "src", "precision", "typescript-lsp-provider.js")).href;
+run(process.execPath, [
+  "--input-type=module",
+  "--eval",
+  `const {createTypeScriptLspClient}=await import(${JSON.stringify(stagedProviderUrl)});let client;try{client=await createTypeScriptLspClient({repoRoot:${JSON.stringify(stage)},timeoutMs:10000});if(client.version!==${JSON.stringify(stagedPrecisionDependencies["typescript-language-server"].version)}||client.typescriptVersion!==${JSON.stringify(stagedPrecisionDependencies.typescript.version)})throw new Error("staged precision provider version mismatch");}finally{await client?.close();}`,
+], stage);
+
+// Reproduce the dangerous npm-hoisted layout: Weavatrix/TLS/TypeScript and a repository-controlled
+// tsserver plugin are siblings under one node_modules. Precision must reject the configured plugin
+// before spawning TLS; otherwise TypeScript would execute arbitrary repository JavaScript.
+const securityFixture = join(stage, ".precision-security-fixture");
+const maliciousPlugin = join(stage, "node_modules", "evil-plugin");
+const pluginSentinel = join(stage, ".precision-plugin-loaded");
+try {
+  mkdirSync(join(securityFixture, "src"), { recursive: true });
+  mkdirSync(maliciousPlugin, { recursive: true });
+  const securitySource = "function answer() { return 42 }\nexport const value = answer()\n";
+  writeFileSync(join(securityFixture, "src", "main.ts"), securitySource);
+  writeFileSync(join(securityFixture, "tsconfig.json"), JSON.stringify({
+    compilerOptions: { plugins: [{ name: "evil-plugin" }] },
+    include: ["src/**/*.ts"],
+  }));
+  writeFileSync(join(maliciousPlugin, "package.json"), JSON.stringify({
+    name: "evil-plugin", version: "1.0.0", main: "index.js",
+  }));
+  writeFileSync(join(maliciousPlugin, "index.js"), [
+    `require("node:fs").writeFileSync(${JSON.stringify(pluginSentinel)}, "loaded")`,
+    "module.exports = () => ({create: info => info.languageService})",
+    "",
+  ].join("\n"));
+  const stagedOverlayUrl = pathToFileURL(join(stage, "src", "precision", "lsp-overlay.js")).href;
+  run(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    `const {createHash}=await import("node:crypto");const {existsSync}=await import("node:fs");const {buildLspPrecisionOverlay}=await import(${JSON.stringify(stagedOverlayUrl)});const source=${JSON.stringify(securitySource)};const file="src/main.ts";const target=file+"#answer@1";const graph={extractorSchemaV:3,graphBuildMode:"full",graphBuildScope:"",graphPrecisionMode:"lsp",graphRevision:createHash("sha256").update(source).digest("hex"),fileHashes:{[file]:createHash("sha256").update(source).digest("hex")},nodes:[{id:file,source_file:file,file_type:"code"},{id:target,label:"answer()",source_file:file,file_type:"code",symbol_kind:"function",selection_start:{line:0,character:9},source_range:{start:{line:0,character:0},end:{line:0,character:31}}}],links:[{source:file,target,relation:"contains",provenance:"EXTRACTED"}]};const overlay=await buildLspPrecisionOverlay({repoRoot:${JSON.stringify(securityFixture)},graph,timeoutMs:10000});if(overlay.state!=="UNAVAILABLE"||!/plugins are not allowed/i.test(String(overlay.reason||"")))throw new Error("configured tsserver plugin was not rejected before provider startup");if(existsSync(${JSON.stringify(pluginSentinel)}))throw new Error("repository-local tsserver plugin executed in staged hoisted layout");`,
+  ], stage);
+} finally {
+  rmSync(securityFixture, { recursive: true, force: true });
+  rmSync(maliciousPlugin, { recursive: true, force: true });
+  rmSync(pluginSentinel, { force: true });
+}
 
 // tree-sitter-wasms ships many grammars Weavatrix does not support. Keep the bundle's runtime
 // surface and size limited to the languages declared by the builder.

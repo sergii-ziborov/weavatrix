@@ -36,13 +36,17 @@ export function tGraphStats(g, ctx) {
             .join(', ')
     const freshness = ctx ? graphStaleness(ctx) : null
     const provenance = summarizeEdgeProvenance(g.links)
+    const precision = g.precision || {state: 'UNAVAILABLE', verifiedEdges: 0, candidates: 0, queried: 0, reason: 'no revision-matched precision overlay'}
     return [
         `Graph summary`,
         ctx?.repoRoot ? `- Repo: ${ctx.repoRoot}` : null,
+        ctx?.graphPath ? `- Graph: ${ctx.graphPath}` : null,
+        `- Build mode: ${g.graphBuildMode || 'full'}`,
         `- Nodes: ${g.nodes.length} (${files} files, ${symbols} symbols)`,
         `- Edges: ${g.links.length}`,
         g.edgeTypesV ? `- Typed-edge metadata: v${g.edgeTypesV} (${typeOnlyEdges} type-only, ${compileOnlyEdges} compile-only edges)` : `- Typed-edge metadata: unavailable (rebuild_graph required)`,
         g.edgeProvenanceV ? `- Edge provenance: v${g.edgeProvenanceV} (${fmt(provenance.counts)}; ${provenance.complete ? 'complete' : `${provenance.counts.UNKNOWN} unclassified`})` : `- Edge provenance: unavailable (rebuild_graph required)`,
+        `- Semantic precision: ${precision.state}${precision.provider ? ` via ${precision.provider}${precision.providerVersion ? ` ${precision.providerVersion}` : ''}${precision.typescriptVersion ? ` (TypeScript ${precision.typescriptVersion})` : ''}` : ''}; ${precision.verifiedEdges || 0} EXACT_LSP edge(s), ${precision.queried || 0}/${precision.candidates || 0} bounded target(s) queried${precision.truncated ? ' (partial/truncated)' : ''}${precision.reason ? `; ${precision.reason}` : ''}`,
         g.barrelResolutionV ? `- Barrel resolution: v${g.barrelResolutionV} (semantic tools look through JS/TS re-export facades)` : `- Barrel resolution: unavailable (rebuild_graph required for JS/TS barrel transparency)`,
         `- Relations: ${fmt(relCount)}`,
         Object.keys(confCount).length ? `- Legacy confidence: ${fmt(confCount)}` : null,
@@ -67,7 +71,7 @@ export function tGetNode(g, {label} = {}, ctx) {
     const sample = (list, dir) =>
         list
             .slice(0, 12)
-            .map((e) => `  ${dir === 'out' ? '→' : '←'} ${compileKind(e) ? `${compileKind(e)} ` : ''}${e.relation || 'rel'}  ${labelOf(g, e.id)}  [${e.id}]`)
+            .map((e) => `  ${dir === 'out' ? '→' : '←'} ${compileKind(e) ? `${compileKind(e)} ` : ''}${e.relation || 'rel'} [${e.provenance || 'UNKNOWN'}]  ${labelOf(g, e.id)}  [${e.id}]`)
             .join('\n') || '  (none)'
     return [
         note,
@@ -92,8 +96,10 @@ function dedupeEdges(list) {
     for (const e of list) {
         const key = `${e.relation || 'rel'}|${compileKind(e) || 'runtime'}|${e.id}`
         const cur = grouped.get(key)
-        if (cur) cur.count += 1
-        else grouped.set(key, {id: e.id, relation: e.relation, typeOnly: e.typeOnly === true, compileOnly: e.compileOnly === true, count: 1})
+        if (cur) {
+            cur.count += 1
+            cur.provenance.add(e.provenance || 'UNKNOWN')
+        } else grouped.set(key, {id: e.id, relation: e.relation, typeOnly: e.typeOnly === true, compileOnly: e.compileOnly === true, provenance: new Set([e.provenance || 'UNKNOWN']), count: 1})
     }
     return [...grouped.values()]
 }
@@ -112,7 +118,7 @@ export function tGetNeighbors(g, {label, relation_filter} = {}, ctx) {
     const outs = dedupeEdges(outsRaw)
     const ins = dedupeEdges(insRaw)
     const line = (e, dir) =>
-        `  ${dir === 'out' ? '→' : '←'} ${compileKind(e) ? `${compileKind(e)} ` : ''}${e.relation || 'rel'}  ${labelOf(g, e.id)}  [${e.id}]${e.count > 1 ? `  (${e.count} sites)` : ''}`
+        `  ${dir === 'out' ? '→' : '←'} ${compileKind(e) ? `${compileKind(e)} ` : ''}${e.relation || 'rel'} [${[...e.provenance].sort().join('+')}]  ${labelOf(g, e.id)}  [${e.id}]${e.count > 1 ? `  (${e.count} sites)` : ''}`
     return [
         note,
         `Neighbors of ${n.label ?? id}${rf ? ` (relation=${rf})` : ''}: ${outs.length + ins.length} unique (${outsRaw.length + insRaw.length} edges)`,
@@ -157,13 +163,13 @@ export function tGetCommunity(g, {community_id} = {}) {
 // A plain BFS/DFS flood dumps every reached node (thousands on a real graph) at near-zero signal.
 // Instead: traverse to record reach + distance-from-seed, then show only the closest, most-connected
 // slice as a coherent subgraph (edges kept only among shown nodes). Honest about what was trimmed.
-export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, seed_files, augment_seeds = false, token_budget = 2000} = {}) {
+export function tQueryGraph(g, {question, mode = 'bfs', depth = 3, context_filter, seed_files, augment_seeds = false, token_budget = 2000} = {}, toolCtx = {}) {
     const pinned = resolveSeedFiles(g, seed_files)
     // Exact seed files are a control surface, not a hint: by default they disable fuzzy keyword seeds.
     // Callers can opt back into augmentation when they explicitly want both behaviors.
     const automatic = pinned.seeds.length && augment_seeds !== true
         ? []
-        : findSeeds(g, question, Math.max(0, 8 - pinned.seeds.length))
+        : findSeeds(g, question, Math.max(0, 8 - pinned.seeds.length), {repoRoot: toolCtx.repoRoot || null})
     const seeds = [...pinned.seeds, ...automatic.filter((node) => !pinned.seeds.some((seed) => String(seed.id) === String(node.id)))]
     if (!seeds.length) return `No nodes matched "${question}".`
     const maxDepth = Math.max(1, Math.min(6, Number(depth) || 3))

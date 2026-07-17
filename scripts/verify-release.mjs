@@ -8,6 +8,10 @@ const manifest = readJson("mcpb/manifest.json");
 const server = readJson("server.json");
 const expected = pkg.version;
 const releaseNotesPath = resolve("docs", "releases", `v${expected}.md`);
+const precisionRuntimeDependencies = {
+  typescript: "5.9.3",
+  "typescript-language-server": "4.4.1",
+};
 
 const versions = {
   "package-lock root": lock.version,
@@ -20,6 +24,22 @@ for (const [label, version] of Object.entries(versions)) {
   if (version !== expected) throw new Error(`${label} version ${version || "(missing)"} does not match package ${expected}`);
 }
 
+for (const [name, version] of Object.entries(precisionRuntimeDependencies)) {
+  if (pkg.dependencies?.[name] !== version) {
+    throw new Error(`${name} must be an exact production dependency pinned to ${version}`);
+  }
+  if (pkg.devDependencies?.[name] != null) {
+    throw new Error(`${name} must not be declared as a development-only dependency`);
+  }
+  if (lock.packages?.[""]?.dependencies?.[name] !== version) {
+    throw new Error(`package-lock root must pin production dependency ${name} to ${version}`);
+  }
+  const locked = lock.packages?.[`node_modules/${name}`];
+  if (locked?.version !== version || locked?.dev === true) {
+    throw new Error(`package-lock package ${name} must resolve production version ${version}`);
+  }
+}
+
 if (!existsSync(releaseNotesPath)) throw new Error(`release notes are missing: docs/releases/v${expected}.md`);
 if (!readFileSync(releaseNotesPath, "utf8").trim()) throw new Error(`release notes are empty: docs/releases/v${expected}.md`);
 
@@ -28,6 +48,16 @@ if (manifest.tools_generated !== true) throw new Error("MCPB manifest must decla
 const defaultCaps = "offline";
 if (manifest.user_config?.capabilities?.default !== defaultCaps) throw new Error("MCPB default capabilities drifted");
 if (server.packages?.[0]?.packageArguments?.[1]?.default !== defaultCaps) throw new Error("Registry default capabilities drifted");
+if (manifest.user_config?.precision?.default !== "lsp") throw new Error("MCPB semantic precision must default to lsp");
+if (manifest.server?.mcp_config?.env?.WEAVATRIX_PRECISION !== "${user_config.precision}") {
+  throw new Error("MCPB semantic precision setting is not wired into the server environment");
+}
+const registryPrecision = server.packages?.[0]?.environmentVariables?.find(
+  (entry) => entry?.name === "WEAVATRIX_PRECISION",
+);
+if (!registryPrecision || registryPrecision.isRequired !== false || registryPrecision.format !== "string") {
+  throw new Error("server.json must expose optional WEAVATRIX_PRECISION for Registry installs");
+}
 
 const tag = process.env.GITHUB_REF_NAME;
 if (process.env.GITHUB_REF_TYPE === "tag" && tag !== `v${expected}`) {

@@ -93,6 +93,7 @@ export default {
       const exportStatement = !isMethod && exportStatementOf(cap.node);
       addSym(cap.node.text, cap.node.startPosition.row + 1, cap.name !== "class", {
         sourceNode: cap.node.parent,
+        selectionNode: cap.node,
         ...(exportStatement ? { exported: true } : {}),
         ...(isMethod ? methodMetadata(cap.node) : { symbolKind: cap.name === "class" ? "class" : "function", moduleDeclaration: isModuleDeclaration(cap.node) })
       });
@@ -111,6 +112,7 @@ export default {
       const exported = isExportedDecl(cap.node);
       addSym(nameNode.text, nameNode.startPosition.row + 1, !!(val && CALLABLE.test(val.type)), {
         sourceNode: val || cap.node,
+        selectionNode: nameNode,
         ...(exported ? { exported: true } : {}),
         symbolKind: "variable",
         moduleDeclaration: true

@@ -32,11 +32,11 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
     write(clientRoot, 'src/api/users.ts', 'export const getUser = (id) => axios.get(`/api/users/${id}`);')
     write(clientRoot, 'src/pages/UsersPage.tsx', "import { getUser } from '../api/users'; export const UsersPage = () => getUser(1);")
     const backend = registerFixture(graphHome, backendRoot, {
-        repoBoundaryV: 1, edgeTypesV: 2,
+        repoBoundaryV: 1, edgeTypesV: 2, graphBuildMode: 'no-tests',
         nodes: [{id: 'routes', source_file: 'src/routes.js'}], links: [],
     })
     const client = registerFixture(graphHome, clientRoot, {
-        repoBoundaryV: 1, edgeTypesV: 2,
+        repoBoundaryV: 1, edgeTypesV: 2, graphBuildMode: 'no-tests',
         nodes: [
             {id: 'api', source_file: 'src/api/users.ts'},
             {id: 'page', source_file: 'src/pages/UsersPage.tsx'},
@@ -66,6 +66,7 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         assert.equal(result.result.status, 'COMPLETE')
         assert.equal(result.result.graphReconciliation.length, 2)
         assert.equal(result.result.graphReconciliation.every((item) => ['CURRENT', 'REFRESHED'].includes(item.status)), true)
+        assert.equal(result.result.graphReconciliation.every((item) => item.buildMode === 'no-tests'), true)
         assert.deepEqual(result.result.endpoints[0].affected.files.map((item) => [item.file, item.distance]), [
             ['src/api/users.ts', 0],
             ['src/pages/UsersPage.tsx', 1],
@@ -87,7 +88,8 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         assert.equal(refreshed.result.endpoints[0].affected.screens.some((item) => item.file === 'src/pages/AdminPage.tsx'), true)
         const clientRefresh = refreshed.result.graphReconciliation.find((item) => item.repository.repositoryId === client.repositoryId)
         assert.equal(clientRefresh.status, 'REFRESHED')
-        assert.equal(clientRefresh.refresh.changedFileCount > 0, true)
+        assert.equal(clientRefresh.buildMode, 'no-tests')
+        assert.equal(clientRefresh.refresh.kind, 'full', 'filtered graphs refresh safely without switching universes')
 
         const unknown = await tTraceApiContract(null, {backend: 'missing', clients: ['frontend-web']}, {graphHome})
         assert.match(unknown.text, /^VERDICT INVALID_REPOSITORY/)
