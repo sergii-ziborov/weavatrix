@@ -12,6 +12,7 @@ import { addJavaReferences } from "./internal-builder.java.js";
 import { assignDeterministicCommunities } from "./community.js";
 import { resolveJsBarrels } from "./internal-builder.barrels.js";
 import { snapshotRepository } from "./incremental-refresh.js";
+import { EDGE_PROVENANCE_V, stampEdgeProvenance } from "./edge-provenance.js";
 
 // Parse a repo directory into a graph-builder-compatible { nodes, links } graph.
 export async function buildInternalGraph(repoDir, opts = {}) {
@@ -128,6 +129,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         target: tgt,
         relation: meta.relation || "imports",
         confidence: "EXTRACTED",
+        provenance: meta.provenance || "RESOLVED",
         ...(typeof meta.typeOnly === "boolean" ? { typeOnly: meta.typeOnly } : {}),
         ...(meta.compileOnly === true ? { compileOnly: true } : {}),
         ...(meta.line ? { line: meta.line } : {}),
@@ -317,6 +319,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   // community = folder bucket (top 2 path parts) — deterministic, mirrors the folder-based module grouping the
   // app already uses (graph-builder-analysis.js). Populates Modules/community cards without a heavy clustering pass.
   assignDeterministicCommunities(nodes);
+  stampEdgeProvenance(links);
 
   // extImportsV: bump when the externalImports schema/coverage changes (v2 = go/python ecosystems) —
   // deps-engine rebuilds in memory when a saved graph is older than this.
@@ -328,6 +331,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     externalImports,
     extImportsV: 2,
     edgeTypesV: 2,
+    edgeProvenanceV: EDGE_PROVENANCE_V,
     complexityV: 1,
     repoBoundaryV: 1,
     barrelResolutionV: 1,

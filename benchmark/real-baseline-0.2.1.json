@@ -1,0 +1,171 @@
+{
+  "schemaVersion": "weavatrix.real-baseline.v1",
+  "builderVersion": "0.2.1",
+  "repositories": {
+    "frontend": {
+      "revision": "21935f51208262d2f77aedd9a2691edc6c550b57",
+      "fingerprint": "bfb492f5ce9c1841",
+      "metrics": {
+        "files": 1703,
+        "languageFiles": 1569,
+        "symbols": 5649,
+        "nodes": 7352,
+        "links": 18952,
+        "relations": {
+          "calls": 3405,
+          "contains": 5649,
+          "imports": 6924,
+          "inherits": 1,
+          "re_exports": 325,
+          "references": 2648
+        },
+        "symbolKinds": {
+          "class": 4,
+          "function": 179,
+          "method": 10,
+          "unknown": 22,
+          "variable": 5434
+        },
+        "endpoints": 3,
+        "endpointMethods": {
+          "ANY": 3
+        },
+        "testFiles": 277,
+        "generatedFiles": 0,
+        "nonProductFiles": 355,
+        "graphBytes": 8832248,
+        "coldMs": 8833.09
+      }
+    },
+    "analytics": {
+      "revision": "28002495199d4b152bd7990a2f3ac1f2b41894a2",
+      "fingerprint": "437ad7cb852b7496",
+      "metrics": {
+        "files": 360,
+        "languageFiles": 328,
+        "symbols": 2536,
+        "nodes": 2896,
+        "links": 8490,
+        "relations": {
+          "calls": 4317,
+          "contains": 2536,
+          "imports": 1612,
+          "inherits": 6,
+          "re_exports": 19
+        },
+        "symbolKinds": {
+          "class": 7,
+          "function": 1,
+          "method": 8,
+          "unknown": 151,
+          "variable": 2369
+        },
+        "endpoints": 67,
+        "endpointMethods": {
+          "ANY": 3,
+          "DELETE": 6,
+          "GET": 35,
+          "POST": 16,
+          "PUT": 7
+        },
+        "testFiles": 108,
+        "generatedFiles": 0,
+        "nonProductFiles": 127,
+        "graphBytes": 3550668,
+        "coldMs": 2405.69
+      }
+    },
+    "automation": {
+      "revision": "8ab859acb1401dd708abc046604e1cea14988379",
+      "fingerprint": "18c879844bf084a3",
+      "metrics": {
+        "files": 1670,
+        "languageFiles": 1008,
+        "symbols": 5711,
+        "nodes": 7381,
+        "links": 19213,
+        "relations": {
+          "calls": 1497,
+          "contains": 5711,
+          "imports": 11575,
+          "inherits": 430
+        },
+        "symbolKinds": {
+          "unknown": 5711
+        },
+        "endpoints": 0,
+        "endpointMethods": {},
+        "testFiles": 492,
+        "generatedFiles": 449,
+        "nonProductFiles": 1405,
+        "graphBytes": 8605605,
+        "coldMs": 3357.86
+      }
+    },
+    "bgp-speaker": {
+      "revision": "07375f9606e4e78355db7050fe52b0d6d5ab70dc",
+      "fingerprint": "d61904ab46a14e17",
+      "metrics": {
+        "files": 30,
+        "languageFiles": 20,
+        "symbols": 443,
+        "nodes": 473,
+        "links": 1165,
+        "relations": {
+          "calls": 326,
+          "contains": 443,
+          "imports": 115,
+          "references": 281
+        },
+        "symbolKinds": {
+          "unknown": 443
+        },
+        "endpoints": 0,
+        "endpointMethods": {},
+        "testFiles": 5,
+        "generatedFiles": 0,
+        "nonProductFiles": 6,
+        "graphBytes": 365967,
+        "coldMs": 207.14
+      }
+    },
+    "warroom": {
+      "revision": "48153e1aab854df33f16b973fdbf3aefc4387064",
+      "fingerprint": "3bbcc6efa85b7257",
+      "metrics": {
+        "files": 789,
+        "languageFiles": 372,
+        "symbols": 6354,
+        "nodes": 7143,
+        "links": 17529,
+        "relations": {
+          "calls": 1769,
+          "contains": 6354,
+          "implements": 25,
+          "imports": 1701,
+          "inherits": 54,
+          "method": 3818,
+          "references": 3808
+        },
+        "symbolKinds": {
+          "class": 355,
+          "constructor": 223,
+          "enum": 29,
+          "field": 2133,
+          "interface": 19,
+          "method": 3595
+        },
+        "endpoints": 8,
+        "endpointMethods": {
+          "GET": 6,
+          "POST": 2
+        },
+        "testFiles": 470,
+        "generatedFiles": 11,
+        "nonProductFiles": 471,
+        "graphBytes": 10046211,
+        "coldMs": 2571.06
+      }
+    }
+  }
+}

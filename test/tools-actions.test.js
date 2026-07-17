@@ -50,6 +50,7 @@ test("open_repo: switches to another Git repository with an existing graph in on
     links: [],
     repoBoundaryV: 1,
     edgeTypesV: 2,
+    edgeProvenanceV: 1,
   }));
   const ctx = {
     repoRoot: parent,
@@ -178,13 +179,13 @@ test("sync_graph: payload v3 derives and uploads a bounded evidence snapshot", a
   writeFileSync(join(dir, "src", "a.js"), "export function run() { return 1 }\n");
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0" }));
   writeFileSync(graphPath, JSON.stringify({
-    repoBoundaryV: 1, edgeTypesV: 2, extImportsV: 2, complexityV: 1,
+    repoBoundaryV: 1, edgeTypesV: 2, edgeProvenanceV: 1, extImportsV: 2, complexityV: 1,
     nodes: [
       { id: "src/a.js", file_type: "code", source_file: "src/a.js" },
       { id: "src/a.js#run@1", label: "run()", file_type: "code", source_file: "src/a.js", source_text: secret,
         complexity: { startLine: 1, endLine: 350, loc: 350, cyclomatic: 2, params: 0, evidence: [secret] } },
     ],
-    links: [{ source: "src/a.js", target: "src/a.js#run@1", relation: "contains" }],
+    links: [{ source: "src/a.js", target: "src/a.js#run@1", relation: "contains", provenance: "EXTRACTED" }],
     externalImports: [],
   }));
   const previousUrl = process.env.WEAVATRIX_SYNC_URL;
@@ -235,7 +236,7 @@ test("open_repo: build:false refuses a legacy edge-schema graph without changing
   const ctx = { repoRoot: parent, graphPath: join(parent, "current.json"), reload() { throw new Error("must not reload"); } };
   try {
     const out = await tOpenRepo(null, { path: repo, build: false }, ctx);
-    assert.match(out, /predates compile-only edge metadata/);
+    assert.match(out, /predates current typed-edge\/provenance metadata/);
     assert.equal(ctx.repoRoot, parent);
     assert.equal(ctx.graphPath, join(parent, "current.json"));
   } finally { rmSync(parent, { recursive: true, force: true }); }

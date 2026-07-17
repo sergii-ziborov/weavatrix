@@ -6,6 +6,7 @@ import {
     resolveNodeInfo, resolveNode, ambiguityNote, findSeeds, resolveSeedFiles, undirectedNeighbors,
     graphStaleness, fileStalenessNote,
 } from './graph-context.mjs'
+import {summarizeEdgeProvenance} from '../graph/edge-provenance.js'
 
 const compileKind = (edge) => edge?.typeOnly === true ? 'type-only' : edge?.compileOnly === true ? 'compile-only' : null
 
@@ -34,15 +35,17 @@ export function tGraphStats(g, ctx) {
             .map(([k, v]) => `${k}: ${v}`)
             .join(', ')
     const freshness = ctx ? graphStaleness(ctx) : null
+    const provenance = summarizeEdgeProvenance(g.links)
     return [
         `Graph summary`,
         ctx?.repoRoot ? `- Repo: ${ctx.repoRoot}` : null,
         `- Nodes: ${g.nodes.length} (${files} files, ${symbols} symbols)`,
         `- Edges: ${g.links.length}`,
         g.edgeTypesV ? `- Typed-edge metadata: v${g.edgeTypesV} (${typeOnlyEdges} type-only, ${compileOnlyEdges} compile-only edges)` : `- Typed-edge metadata: unavailable (rebuild_graph required)`,
+        g.edgeProvenanceV ? `- Edge provenance: v${g.edgeProvenanceV} (${fmt(provenance.counts)}; ${provenance.complete ? 'complete' : `${provenance.counts.UNKNOWN} unclassified`})` : `- Edge provenance: unavailable (rebuild_graph required)`,
         g.barrelResolutionV ? `- Barrel resolution: v${g.barrelResolutionV} (semantic tools look through JS/TS re-export facades)` : `- Barrel resolution: unavailable (rebuild_graph required for JS/TS barrel transparency)`,
         `- Relations: ${fmt(relCount)}`,
-        Object.keys(confCount).length ? `- Confidence: ${fmt(confCount)}` : null,
+        Object.keys(confCount).length ? `- Legacy confidence: ${fmt(confCount)}` : null,
         `- Communities: ${comm.size} (top by size: ${topComm.map(([c, n]) => `#${c}=${n}`).join(', ')})`,
         freshness?.builtAt ? `- Built: ${freshness.builtAt.toISOString()}${freshness.headAt ? ` (repo HEAD committed ${freshness.headAt.toISOString()})` : ''}` : null,
     ]

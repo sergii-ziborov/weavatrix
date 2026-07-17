@@ -8,6 +8,7 @@ import {spawnSync} from 'node:child_process'
 import {childProcessEnv} from '../child-env.js'
 import {resolveRepoPath} from '../repo-path.js'
 import {isStructuralRelation} from '../graph/relations.js'
+import {edgeProvenance} from '../graph/edge-provenance.js'
 
 // ---- graph load + indexes -----------------------------------------------------------------------
 export function loadGraph(path) {
@@ -36,6 +37,7 @@ export function loadGraph(path) {
         const metadata = {
             relation: e.relation,
             confidence: e.confidence,
+            provenance: edgeProvenance(e),
             ...(e.typeOnly === true ? {typeOnly: true} : {}),
             ...(e.compileOnly === true ? {compileOnly: true} : {}),
             ...(Number.isInteger(e.line) ? {line: e.line} : {}),
@@ -51,6 +53,7 @@ export function loadGraph(path) {
         nodes, links, byId, byLabel, out, inn,
         repoBoundaryV: Number(raw.repoBoundaryV) || 0,
         edgeTypesV: Number(raw.edgeTypesV) || 0,
+        edgeProvenanceV: Number(raw.edgeProvenanceV) || 0,
         barrelResolutionV: Number(raw.barrelResolutionV) || 0,
         extractorSchemaV: Number(raw.extractorSchemaV) || 0,
         extImportsV: Number(raw.extImportsV) || 0,

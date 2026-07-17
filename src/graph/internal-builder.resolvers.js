@@ -248,6 +248,21 @@ export function buildResolvers(repoDir, fileSet) {
   };
 
   const JS_EXTS = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".json", "/index.js", "/index.ts", "/index.jsx", "/index.tsx"];
+  const resolveJsBase = (base) => {
+    for (const extension of JS_EXTS) {
+      const candidate = (base + extension).replace(/\/+/g, "/");
+      if (fileSet.has(candidate)) return candidate;
+    }
+    // TypeScript NodeNext source commonly imports the emitted extension (`./http.js`) while the
+    // repository contains `http.ts`/`http.tsx`. Exact runtime files win above; a source counterpart
+    // is accepted only when unique so same-basename ambiguity is never guessed.
+    const sourceCandidates = [];
+    if (/\.js$/i.test(base)) sourceCandidates.push(base.replace(/\.js$/i, ".ts"), base.replace(/\.js$/i, ".tsx"));
+    else if (/\.jsx$/i.test(base)) sourceCandidates.push(base.replace(/\.jsx$/i, ".tsx"));
+    const existing = [...new Set(sourceCandidates.map((candidate) => candidate.replace(/\/+/g, "/")))]
+      .filter((candidate) => fileSet.has(candidate));
+    return existing.length === 1 ? existing[0] : null;
+  };
   const resolveJsImport = (fromRel, spec) => {
     if (!spec) return null;
     let base;
@@ -258,13 +273,13 @@ export function buildResolvers(repoDir, fileSet) {
         // baseUrl-rooted internal import ("components/Button" with baseUrl:"src") — try before calling it an npm package
         for (const ctx of contextsForFile(fromRel)) for (const b of ctx.baseUrls) {
           const root = (b ? b + "/" : "") + spec;
-          for (const e of JS_EXTS) { const cand = (root + e).replace(/\/+/g, "/"); if (fileSet.has(cand)) return cand; }
+          const resolved = resolveJsBase(root);
+          if (resolved) return resolved;
         }
         return null;   // genuinely bare → npm package (stays unresolved here)
       }
     }
-    for (const e of JS_EXTS) { const cand = (base + e).replace(/\/+/g, "/"); if (fileSet.has(cand)) return cand; }
-    return null;
+    return resolveJsBase(base);
   };
 
   const resolvePyPath = (baseDir, parts) => {

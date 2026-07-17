@@ -1,6 +1,7 @@
 // Versioned, explicit wire schema for sync_graph. Never forward graph.json wholesale: it is a local
 // cache file and may contain future fields or attacker-injected data that are not safe to upload.
 import {sanitizeEvidenceSnapshot} from './sync-evidence.mjs';
+import {edgeProvenance} from '../graph/edge-provenance.js';
 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 const ABSOLUTE_PATH_FRAGMENT = /(?:^|[\/\s"'`(=])[a-z]:[\\/]|(?:^|[\s"'`(=])(?:\\\\[^\\/\s]+(?:[\\/]|$)|file:(?:\/\/)?[\\/]|\/(?!\/)[^\s])/i;
@@ -202,6 +203,8 @@ function sanitizeLinkV3(value) {
         if (safe) out[key] = safe;
         else delete out[key];
     }
+    const provenance = edgeProvenance(value);
+    if (provenance !== 'UNKNOWN') out.provenance = provenance;
     const specifier = privacySafeText(value.specifier, 1024);
     if (specifier) out.specifier = specifier;
     else delete out.specifier;
@@ -265,6 +268,9 @@ export function createSyncPayloadV3(raw, evidence) {
     // Reuse the v2 schema gates, but construct v3 arrays independently so the stricter path/identity
     // rules cannot change graph-only compatibility for existing endpoints.
     const base = createSyncPayload(raw);
+    if (!Number.isInteger(raw.edgeProvenanceV) || raw.edgeProvenanceV < 1) {
+        throw new Error('graph predates edge provenance metadata');
+    }
     assertArrayLimit(raw, 'nodes', MAX_SYNC_NODES);
     assertArrayLimit(raw, 'links', MAX_SYNC_LINKS);
     assertArrayLimit(raw, 'externalImports', MAX_SYNC_EXTERNAL_IMPORTS);
@@ -285,6 +291,7 @@ export function createSyncPayloadV3(raw, evidence) {
         syncPayloadV: 3,
         repoBoundaryV: base.repoBoundaryV,
         edgeTypesV: base.edgeTypesV,
+        edgeProvenanceV: Number.isInteger(raw.edgeProvenanceV) ? raw.edgeProvenanceV : 0,
         extImportsV: base.extImportsV,
         complexityV: base.complexityV,
         evidenceV: 1,

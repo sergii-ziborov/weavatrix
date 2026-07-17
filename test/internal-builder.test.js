@@ -134,6 +134,21 @@ test("internal-builder: JSX component use references the imported declaration", 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("internal-builder: TypeScript NodeNext .js specifiers resolve to one source counterpart", async () => {
+  const dir = repoWith({
+    "src/http.ts": "export const get = (url: string) => url;\n",
+    "src/use.ts": "import { get } from './http.js'; export const load = () => get('/api/users');\n",
+  });
+  try {
+    const graph = await buildInternalGraph(dir);
+    const load = graph.nodes.find((node) => String(node.id).includes("src/use.ts#load@"));
+    const get = graph.nodes.find((node) => String(node.id).includes("src/http.ts#get@"));
+    assert.ok(graph.links.some((link) => link.source === "src/use.ts" && link.target === "src/http.ts" && link.relation === "imports"));
+    assert.ok(graph.links.some((link) => link.source === load.id && link.target === get.id && link.relation === "calls"));
+    assert.ok(!graph.externalImports.some((item) => item.spec === "./http.js" && item.unresolved));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("internal-builder: JS/TS barrels resolve star, aliases, default, type-only, and cyclic chains to declaration origins", async () => {
   const dir = repoWith({
     "src/origin/component.tsx":

@@ -47,6 +47,11 @@ named profiles for new registrations.
   `change_impact` and `graph_diff` label the distinction; `god_nodes` ranks unique connectivity and
   reports repeated references separately. Do not schedule a runtime-cycle refactor from
   compile-time-only edges.
+- **Edge provenance**: distinguish how an edge was established from legacy confidence. Current
+  graphs use `EXTRACTED`, `RESOLVED`, and `INFERRED`; `EXACT_LSP` is reserved for a bounded local
+  precision overlay and `CONFLICT` means evidence disagrees. Treat `INFERRED` and `CONFLICT` as
+  review signals rather than compiler-exact facts; an `UNKNOWN` count in `graph_stats` requires a
+  rebuild before precision-sensitive work.
 - **Repository universe**: in Git repositories, graph and duplicate scans include tracked plus
   non-ignored untracked files. If an old graph still contains packaged/generated output, rebuild it
   before interpreting the result. Repository-root `.weavatrixignore` applies the same tracked-file
@@ -117,8 +122,21 @@ named profiles for new registrations.
 - **Cross-repository API impact**: ensure both repositories are in `list_known_repos`, then call
   `trace_api_contract backend=<uuid-or-label> clients=[<uuid-or-label>]`; narrow with `method`, `path`,
   or backend `changed_files`. `path` may be a segment-aligned fragment (`/query` can select
-  `/edgeAnalytics/query/...`), and bounded constant prefixes in template URLs are resolved. Treat
-  remaining unresolved/dynamic URLs as incomplete evidence, not a clean result.
+  `/edgeAnalytics/query/...`), and bounded constant prefixes in template URLs are resolved. The tool
+  recognizes configured and conservatively auto-discovered HTTP wrappers; use per-repository
+  `.weavatrix.json` `httpContracts` configuration for durable custom client names/wrappers, or
+  `client_names` / `client_wrappers` for one trace. `NOT_DEAD_EXTERNAL_USE` requires medium/high
+  confidence; only an unambiguously resolved handler node can suppress a dead-method candidate.
+  `POSSIBLE_EXTERNAL_USE`, `UNKNOWN`, and remaining unresolved/dynamic URLs are incomplete evidence,
+  never proof that a method is dead.
+- **Release regression gate**: for a Weavatrix source checkout, use `npm test` for the quick
+  six-language golden corpus and `npm run benchmark` before release for the real MCP
+  `full -> incremental -> none -> reconnect/none` lifecycle, bounded output and active-target checks.
+  Use `npm run benchmark:real` for available manifest repositories and
+  `npm run benchmark:real:release` only when all six source checkouts are present; `MISSING`,
+  `UNBASELINED` and `STALE` are explicit incomplete states, not green results.
+  A green Java/Rust fixture proves only its declared representative signals, not compiler-exact
+  coverage of arbitrary repositories.
 - **Target architecture before editing**: `get_architecture_contract` → `prepare_change` with the
   intended files → edit and rebuild → `verify_architecture`. A missing contract returns a starter
   proposal from `get_architecture_contract output_format:"json"`, not an automatically approved
@@ -170,7 +188,7 @@ runtime/type-only/compile-only module dependencies. Package evidence contains a 
 graph with direct/transitive runtime, dev, optional and peer edges plus explicit resolution counts.
 Duplicate evidence contains stable, source-free clone/divergence candidates; it never sends method
 bodies or snippets. Use `payload_version: 2` only when the user explicitly wants graph-only
-compatibility—Weavatrix never silently downgrades. A graph built before `0.1.4`, or one stale against
+compatibility—Weavatrix never silently downgrades. A graph predating current provenance metadata, or one stale against
 the working tree, must be rebuilt first. Sync remains unavailable until the user selects `hosted`
 (or the exact `hosted` capability) and configures `WEAVATRIX_SYNC_URL`.
 

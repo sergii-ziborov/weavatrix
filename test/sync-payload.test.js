@@ -13,6 +13,7 @@ function graph(overrides = {}) {
   return {
     repoBoundaryV: 1,
     edgeTypesV: 2,
+    edgeProvenanceV: 1,
     extImportsV: 2,
     complexityV: 1,
     nodes: [],
@@ -216,6 +217,7 @@ test('sync payload v3: exposes only the versioned graph and evidence envelope', 
 
   assert.deepEqual(Object.keys(payload).sort(), [
     'complexityV',
+    'edgeProvenanceV',
     'edgeTypesV',
     'evidence',
     'evidenceV',
@@ -238,6 +240,30 @@ test('sync payload v3: exposes only the versioned graph and evidence envelope', 
     'packages',
     'technologies',
   ])
+})
+
+test('sync payload v3: allowlists edge provenance while v2 stays unchanged', () => {
+  const source = graph({
+    nodes: [{id: 'src/a.js', source_file: 'src/a.js'}, {id: 'src/b.js', source_file: 'src/b.js'}],
+    links: [
+      {source: 'src/a.js', target: 'src/b.js', relation: 'imports', provenance: 'RESOLVED', confidence: 'EXTRACTED'},
+      {source: 'src/b.js', target: 'src/a.js', relation: 'calls', provenance: 'host-secret', confidence: 'INFERRED'},
+    ],
+  })
+  assert.deepEqual(createSyncPayload(source).links, [
+    {source: 'src/a.js', target: 'src/b.js', relation: 'imports', confidence: 'EXTRACTED'},
+    {source: 'src/b.js', target: 'src/a.js', relation: 'calls', confidence: 'INFERRED'},
+  ])
+  assert.deepEqual(createSyncPayloadV3(source, minimalEvidence()).links, [
+    {source: 'src/a.js', target: 'src/b.js', relation: 'imports', confidence: 'EXTRACTED', provenance: 'RESOLVED'},
+    {source: 'src/b.js', target: 'src/a.js', relation: 'calls', confidence: 'INFERRED', provenance: 'INFERRED'},
+  ])
+})
+
+test('sync payload v3: requires provenance metadata without changing v2 compatibility', () => {
+  const legacy = graph({edgeProvenanceV: 0})
+  assert.equal(createSyncPayload(legacy).syncPayloadV, 2)
+  assert.throws(() => createSyncPayloadV3(legacy, minimalEvidence()), /predates edge provenance metadata/)
 })
 
 test('sync payload v3: duplicate evidence is source-free and strictly bounded', () => {

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "weavatrix.real-repositories.v1",
+  "baselineVersion": "0.2.1",
+  "repositories": [
+    {
+      "id": "frontend",
+      "language": "TypeScript",
+      "environment": "WEAVATRIX_BENCHMARK_FRONTEND",
+      "candidates": ["../../frontend"],
+      "extensions": [".ts", ".tsx"]
+    },
+    {
+      "id": "analytics",
+      "language": "JavaScript",
+      "environment": "WEAVATRIX_BENCHMARK_ANALYTICS",
+      "candidates": ["../../analytics"],
+      "extensions": [".js", ".mjs", ".cjs"]
+    },
+    {
+      "id": "automation",
+      "language": "Python",
+      "environment": "WEAVATRIX_BENCHMARK_AUTOMATION",
+      "candidates": ["../../automation"],
+      "extensions": [".py"]
+    },
+    {
+      "id": "bgp-speaker",
+      "language": "Go",
+      "environment": "WEAVATRIX_BENCHMARK_BGP_SPEAKER",
+      "candidates": ["../../bgp-speaker"],
+      "extensions": [".go"]
+    },
+    {
+      "id": "warroom",
+      "language": "Java",
+      "environment": "WEAVATRIX_BENCHMARK_WARROOM",
+      "candidates": ["../../warroom"],
+      "extensions": [".java"],
+      "expectations": {
+        "minSymbolKinds": {"class": 1, "constructor": 1, "field": 1, "interface": 1, "method": 1},
+        "minRelations": {"implements": 1, "inherits": 1, "method": 1, "references": 1},
+        "minEndpoints": 1
+      }
+    },
+    {
+      "id": "ai-dev-system",
+      "language": "Rust",
+      "environment": "WEAVATRIX_BENCHMARK_AI_DEV_SYSTEM",
+      "candidates": ["../AI-Dev-System", "../../AI-Dev-System"],
+      "extensions": [".rs"],
+      "expectations": {
+        "minRelations": {"imports": 1},
+        "minEndpoints": 1
+      }
+    }
+  ]
+}

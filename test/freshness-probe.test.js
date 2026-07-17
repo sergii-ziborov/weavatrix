@@ -55,6 +55,7 @@ test('persisted freshness stamp fails closed for mode, scope, schema, version, l
   const graph = {
     extImportsV: 2,
     edgeTypesV: 2,
+    edgeProvenanceV: 1,
     complexityV: 1,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
@@ -70,6 +71,7 @@ test('persisted freshness stamp fails closed for mode, scope, schema, version, l
     (copy) => { copy.repositoryFreshnessMode = 'no-tests' },
     (copy) => { copy.graphBuildScope = 'src' },
     (copy) => { copy.extractorSchemaV = 0 },
+    (copy) => { copy.edgeProvenanceV = 0 },
     (copy) => { copy.repositoryFreshnessBuilderVersion = '0.0.0-legacy' },
     (copy) => { delete copy.repositoryFreshnessProbe },
   ]) {

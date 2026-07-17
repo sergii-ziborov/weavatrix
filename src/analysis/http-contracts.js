@@ -8,11 +8,17 @@ import { createPathClassifier, hasPathClass } from "../path-classification.js";
 import { isWeavatrixIgnored, loadWeavatrixIgnore } from "../path-ignore.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { safeRead } from "../util.js";
+import {
+  DEFAULT_HTTP_CLIENT_NAMES,
+  discoverHttpWrappers,
+  loadHttpContractConfig,
+  normalizeHttpClientNames,
+  normalizeHttpWrapperDescriptors,
+} from "./http-contract-wrappers.js";
 
-export const HTTP_CONTRACTS_V = 1;
+export const HTTP_CONTRACTS_V = 2;
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
-const DEFAULT_CLIENT_NAMES = Object.freeze(["axios", "http", "https", "$http", "httpClient", "apiClient", "restClient"]);
 const DEFAULTS = Object.freeze({
   maxBackendFiles: 3_000,
   maxClientFiles: 3_000,
@@ -235,8 +241,37 @@ function extractStaticStringConstants(text) {
   return constants;
 }
 
-function parseUrlArgument(text, openParen, constants) {
-  let start = openParen + 1;
+function argumentStart(text, openParen, target) {
+  let current = 0, round = 0, square = 0, curly = 0;
+  for (let index = openParen + 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (current === target && !/\s|,/.test(char)) return index;
+    if (char === "'" || char === '"' || char === "`") {
+      const quote = char;
+      index += 1;
+      while (index < text.length) {
+        if (text[index] === "\\") index += 2;
+        else if (text[index] === quote) break;
+        else index += 1;
+      }
+      continue;
+    }
+    if (char === "(" ) round += 1;
+    else if (char === "[" ) square += 1;
+    else if (char === "{" ) curly += 1;
+    else if (char === ")") {
+      if (round === 0 && square === 0 && curly === 0) return null;
+      round -= 1;
+    } else if (char === "]") square -= 1;
+    else if (char === "}") curly -= 1;
+    else if (char === "," && round === 0 && square === 0 && curly === 0) current += 1;
+  }
+  return null;
+}
+
+function parseUrlArgument(text, openParen, constants, argument = 0) {
+  let start = argumentStart(text, openParen, argument);
+  if (start == null) return { path: null, endIndex: openParen, kind: "dynamic", dynamic: true, unknownPrefix: false, partialDynamic: true, reason: `URL argument ${argument} is missing` };
   while (/\s/.test(text[start] || "")) start += 1;
   const quote = text[start];
   if (quote === "'" || quote === '"') {
@@ -272,22 +307,30 @@ function fetchMethod(text, argumentEnd) {
 }
 
 function normalizedClientNames(values) {
-  return new Set([...DEFAULT_CLIENT_NAMES, ...(Array.isArray(values) ? values : [])]
+  return new Set([...DEFAULT_HTTP_CLIENT_NAMES, ...normalizeHttpClientNames(values)]
     .map((value) => String(value || "").trim().toLowerCase())
     .filter((value) => /^[a-z_$][\w$]*$/i.test(value)));
 }
+
+const escapeRegex = (value) => String(value).replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&");
 
 export function extractHttpClientCallsFromText(text, file, options = {}) {
   const source = String(text || "");
   const mask = maskNonCode(source);
   const constants = extractStaticStringConstants(source);
   const allowed = normalizedClientNames(options.clientNames);
+  const wrappers = normalizeHttpWrapperDescriptors(options.wrappers, "input")
+    .concat((Array.isArray(options.normalizedWrappers) ? options.normalizedWrappers : []));
   const maxCalls = boundedInteger(options.maxCalls, DEFAULTS.maxCallsPerClient, 1, HARD.maxCallsPerClient);
   const calls = [];
+  const seen = new Set();
   let truncated = false;
-  const add = (clientName, method, openParen, fetch = false) => {
+  const add = (clientName, method, openParen, fetch = false, urlArgument = 0, detector = "builtin", wrapper = null) => {
+    const key = `${openParen}\0${method}\0${urlArgument}`;
+    if (seen.has(key)) return;
+    seen.add(key);
     if (calls.length >= maxCalls) { truncated = true; return; }
-    const parsed = parseUrlArgument(source, openParen, constants);
+    const parsed = parseUrlArgument(source, openParen, constants, urlArgument);
     const fetchInfo = fetch ? fetchMethod(source, parsed.endIndex) : { method: method.toUpperCase(), uncertain: false };
     calls.push({
       file: normalizeFile(file),
@@ -300,10 +343,12 @@ export function extractHttpClientCallsFromText(text, file, options = {}) {
       unknownPrefix: Boolean(parsed.unknownPrefix),
       partialDynamic: Boolean(parsed.partialDynamic || fetchInfo.uncertain),
       reason: fetchInfo.uncertain ? "HTTP method is dynamic" : parsed.reason,
+      detector,
+      wrapper,
     });
   };
 
-  const member = /(^|[^\w$])([A-Za-z_$][\w$]*)\s*(?:\?\.|\.)\s*(get|post|put|patch|delete|head|options)\s*\(/gim;
+  const member = /(^|[^\w$])([A-Za-z_$][\w$]*)\s*(?:\?\.|\.)\s*(get|post|put|patch|delete|head|options)\s*(?:<[^>\n]{1,200}>)?\s*\(/gim;
   let match;
   while ((match = member.exec(mask))) {
     if (!allowed.has(match[2].toLowerCase())) continue;
@@ -311,6 +356,24 @@ export function extractHttpClientCallsFromText(text, file, options = {}) {
   }
   const fetchCall = /(^|[^\w$])fetch\s*\(/gim;
   while ((match = fetchCall.exec(mask))) add("fetch", "GET", fetchCall.lastIndex - 1, true);
+  for (const wrapper of wrappers) {
+    if (wrapper.allowedFiles instanceof Set && !wrapper.allowedFiles.has(normalizeFile(file))) continue;
+    if (wrapper.kind === "function") {
+      const bare = new RegExp(`(^|[^\\w$.?])${escapeRegex(wrapper.call)}\\s*(?:<[^>\\n]{1,200}>)?\\s*\\(`, "gim");
+      while ((match = bare.exec(mask))) {
+        const nameAt = bare.lastIndex - match[0].length + match[1].length;
+        if (/\bfunction\s*$/i.test(mask.slice(Math.max(0, nameAt - 30), nameAt))) continue;
+        add(wrapper.call, wrapper.method, bare.lastIndex - 1, false, wrapper.urlArgument, `${wrapper.source}-wrapper`, {
+          kind: wrapper.kind, call: wrapper.call, definitionFile: wrapper.definitionFile || null,
+        });
+      }
+    } else if (wrapper.kind === "member") {
+      const memberCall = new RegExp(`(^|[^\\w$])${escapeRegex(wrapper.object)}\\s*(?:\\?\\.|\\.)\\s*${escapeRegex(wrapper.member)}\\s*(?:<[^>\\n]{1,200}>)?\\s*\\(`, "gim");
+      while ((match = memberCall.exec(mask))) add(`${wrapper.object}.${wrapper.member}`, wrapper.method, memberCall.lastIndex - 1, false, wrapper.urlArgument, `${wrapper.source}-wrapper`, {
+        kind: wrapper.kind, object: wrapper.object, member: wrapper.member, definitionFile: wrapper.definitionFile || null,
+      });
+    }
+  }
   calls.sort((left, right) => left.file.localeCompare(right.file) || left.line - right.line || left.method.localeCompare(right.method) || String(left.path).localeCompare(String(right.path)));
   return { calls, truncated };
 }
@@ -321,7 +384,7 @@ function filesFromGraph(graph) {
 
 export function detectHttpClientCalls(repoRoot, codeFiles, options = {}) {
   const boundary = createRepoBoundary(repoRoot);
-  if (!boundary.root) return { calls: [], truncated: false, filesScanned: 0 };
+  if (!boundary.root) return { calls: [], truncated: false, filesScanned: 0, discovery: { enabled: false, configured: 0, discovered: 0, ambiguous: [] }, reasons: [] };
   const maxFiles = boundedInteger(options.maxFiles, DEFAULTS.maxClientFiles, 1, HARD.maxClientFiles);
   const maxCalls = boundedInteger(options.maxCalls, DEFAULTS.maxCallsPerClient, 1, HARD.maxCallsPerClient);
   const ignoreRules = loadWeavatrixIgnore(boundary.root);
@@ -329,6 +392,7 @@ export function detectHttpClientCalls(repoRoot, codeFiles, options = {}) {
   const candidates = [...new Set((codeFiles || []).map((entry) => normalizeFile(entry?.path || entry)).filter(Boolean))].sort();
   let truncated = candidates.length > maxFiles;
   let filesScanned = 0;
+  const sources = [];
   const calls = [];
   for (const file of candidates.slice(0, maxFiles)) {
     if (!/\.(?:[cm]?[jt]sx?|vue|svelte)$/i.test(file) || isWeavatrixIgnored(file, ignoreRules)) continue;
@@ -339,14 +403,53 @@ export function detectHttpClientCalls(repoRoot, codeFiles, options = {}) {
     const text = safeRead(resolved.path);
     if (!text) continue;
     filesScanned += 1;
+    sources.push({ file, text });
+  }
+  const config = loadHttpContractConfig(boundary.root);
+  const clientNames = [...new Set([
+    ...normalizeHttpClientNames(options.clientNames),
+    ...config.clientNames,
+  ])];
+  const configured = [
+    ...normalizeHttpWrapperDescriptors(options.wrappers, "input"),
+    ...config.wrappers,
+  ];
+  const discoveryEnabled = options.autoDiscoverWrappers !== false && config.autoDiscoverWrappers !== false;
+  const discovered = discoveryEnabled ? discoverHttpWrappers(sources, clientNames) : { wrappers: [], ambiguous: [], truncated: false };
+  const scopedDiscovered = discovered.wrappers.map((wrapper) => ({
+    ...wrapper,
+    allowedFiles: wrapperScopeFiles(wrapper.definitionFile, options.graph),
+  }));
+  for (const { file, text } of sources) {
     const remaining = maxCalls - calls.length;
     if (remaining <= 0) { truncated = true; break; }
-    const extracted = extractHttpClientCallsFromText(text, file, { clientNames: options.clientNames, maxCalls: remaining });
+    const extracted = extractHttpClientCallsFromText(text, file, {
+      clientNames,
+      normalizedWrappers: [...configured, ...scopedDiscovered],
+      maxCalls: remaining,
+    });
     calls.push(...extracted.calls);
     if (extracted.truncated) truncated = true;
   }
   calls.sort((left, right) => left.file.localeCompare(right.file) || left.line - right.line || left.method.localeCompare(right.method) || String(left.path).localeCompare(String(right.path)));
-  return { calls, truncated, filesScanned };
+  const reasons = [];
+  if (config.error) reasons.push(`HTTP contract config ${config.error}`);
+  reasons.push(...(config.warnings || []));
+  if (discovered.truncated) reasons.push("auto-discovered wrapper cap reached");
+  if (discovered.ambiguous.length) reasons.push(`${discovered.ambiguous.length} ambiguous auto-discovered wrapper name(s) skipped`);
+  return {
+    calls,
+    truncated,
+    filesScanned,
+    discovery: {
+      enabled: discoveryEnabled,
+      configured: configured.length,
+      discovered: scopedDiscovered.length,
+      ambiguous: discovered.ambiguous,
+      truncated: discovered.truncated,
+    },
+    reasons,
+  };
 }
 
 function pathSegments(path) {
@@ -434,6 +537,24 @@ function reverseImports(graph = {}) {
   return reverse;
 }
 
+function wrapperScopeFiles(sourceFile, graph) {
+  const source = normalizeFile(sourceFile);
+  if (!source || !Array.isArray(graph?.nodes)) return null;
+  const reverse = reverseImports(graph);
+  const allowed = new Set([source]);
+  const queue = [{ file: source, depth: 0 }];
+  while (queue.length && allowed.size < 2_000) {
+    const current = queue.shift();
+    if (current.depth >= 4) continue;
+    for (const importer of [...(reverse.get(current.file) || [])].sort()) {
+      if (allowed.has(importer)) continue;
+      allowed.add(importer);
+      queue.push({ file: importer, depth: current.depth + 1 });
+    }
+  }
+  return allowed;
+}
+
 function isScreen(file) {
   const path = normalizeFile(file);
   const base = path.split("/").at(-1) || "";
@@ -511,6 +632,43 @@ function endpointFilter(endpoint, backendId, options) {
   return true;
 }
 
+function bareGraphLabel(value) {
+  return String(value || "").replace(/\s*\(.*$/, "").replace(/[()]/g, "").trim();
+}
+
+function handlerNodeEvidence(endpoint, graph) {
+  const handler = /^[A-Za-z_$][\w$]{0,127}$/.test(String(endpoint?.handler || "")) ? String(endpoint.handler) : null;
+  if (!handler) return { handler: null, handlerNodeId: null, handlerResolution: "inline-or-unresolved" };
+  const matches = (graph?.nodes || []).filter((node) =>
+    normalizeFile(node?.source_file) && bareGraphLabel(node?.label) === handler && String(node?.id || "") !== normalizeFile(node?.source_file));
+  const sameFile = matches.filter((node) => normalizeFile(node?.source_file) === normalizeFile(endpoint.file));
+  const resolved = sameFile.length === 1 ? sameFile[0] : matches.length === 1 ? matches[0] : null;
+  return {
+    handler,
+    handlerNodeId: resolved ? String(resolved.id) : null,
+    handlerResolution: resolved ? "resolved" : matches.length > 1 ? "ambiguous" : "unresolved",
+  };
+}
+
+function externalUseLiveness(callsites, handlerEvidence) {
+  const proven = callsites.filter((call) => call.match?.confidence === "high" || call.match?.confidence === "medium");
+  const possible = callsites.filter((call) => call.match?.confidence === "low");
+  const status = proven.length ? "NOT_DEAD_EXTERNAL_USE" : possible.length ? "POSSIBLE_EXTERNAL_USE" : "UNKNOWN";
+  const evidence = proven.length ? proven : possible;
+  return {
+    status,
+    subject: handlerEvidence.handlerNodeId ? "handler-node" : handlerEvidence.handler ? "endpoint-handler" : "endpoint",
+    canSuppressDeadCandidate: proven.length > 0 && Boolean(handlerEvidence.handlerNodeId),
+    staticEvidence: evidence.length,
+    consumerRepositories: [...new Set(evidence.map((call) => call.clientRepo))].sort(),
+    reason: proven.length
+      ? "At least one selected external repository has a medium/high-confidence static HTTP contract match."
+      : possible.length
+        ? "Only low-confidence external HTTP contract matches were found; review before suppressing a dead-code candidate."
+        : "No selected external repository proved a static caller; absence of evidence is not a dead-code verdict.",
+  };
+}
+
 // `backends` and `clients` are arrays of {id, repoRoot, codeFiles?, graph?}. Backends may optionally
 // supply a precomputed `endpoints` array; otherwise the shared multi-language endpoint detector is used.
 export function analyzeHttpContracts(input = {}) {
@@ -535,7 +693,7 @@ export function analyzeHttpContracts(input = {}) {
     if (filtered.length > endpointBudget) completeness.push(`${id}: endpoint cap reached`);
     const accepted = filtered.slice(0, endpointBudget);
     endpointBudget -= accepted.length;
-    backends.push({ id, endpoints: accepted });
+    backends.push({ id, endpoints: accepted, graph: descriptor.graph });
   }
 
   const clients = [];
@@ -546,10 +704,20 @@ export function analyzeHttpContracts(input = {}) {
       maxFiles: limits.maxClientFiles,
       maxCalls: limits.maxCallsPerClient,
       clientNames: descriptor.clientNames || input.clientNames,
+      wrappers: descriptor.wrappers || input.wrappers,
+      autoDiscoverWrappers: descriptor.autoDiscoverWrappers ?? input.autoDiscoverWrappers,
+      graph: descriptor.graph,
       includeTests: descriptor.includeTests ?? input.includeTests,
     });
     if (detected.truncated) completeness.push(`${id}: client scan cap reached`);
-    clients.push({ id, calls: detected.calls, reverse: reverseImports(descriptor.graph), filesScanned: detected.filesScanned });
+    for (const reason of detected.reasons || []) completeness.push(`${id}: ${reason}`);
+    clients.push({
+      id,
+      calls: detected.calls,
+      reverse: reverseImports(descriptor.graph),
+      filesScanned: detected.filesScanned,
+      wrapperDiscovery: detected.discovery,
+    });
   }
 
   const results = [];
@@ -581,20 +749,24 @@ export function analyzeHttpContracts(input = {}) {
             method: call.method,
             path: call.path,
             dynamic: call.dynamic,
+            detector: call.detector,
+            wrapper: call.wrapper,
             match,
           });
         }
       }
       callsites.sort((left, right) => right.match.score - left.match.score || left.clientRepo.localeCompare(right.clientRepo) || left.file.localeCompare(right.file) || left.line - right.line);
+      const handlerEvidence = handlerNodeEvidence(endpoint, backend.graph);
       results.push({
         backend: backend.id,
         method: endpoint.method,
         path: endpoint.path,
         normalizedPath: normalizeHttpContractPath(endpoint.path),
-        handler: /^[A-Za-z_$][\w$]{0,127}$/.test(String(endpoint.handler || "")) ? String(endpoint.handler) : null,
+        ...handlerEvidence,
         file: normalizeFile(endpoint.file) || null,
         line: Number(endpoint.line) || null,
         callsites,
+        liveness: externalUseLiveness(callsites, handlerEvidence),
         affected: affectedForEndpoint(callsites, clients, limits),
       });
     }
@@ -626,7 +798,12 @@ export function analyzeHttpContracts(input = {}) {
       matches,
       methodMismatches,
       uncertainCalls: uncertainAll.length,
+      notDeadExternalUse: results.filter((endpoint) => endpoint.liveness.status === "NOT_DEAD_EXTERNAL_USE").length,
+      notDeadExternalHandlers: results.filter((endpoint) => endpoint.liveness.canSuppressDeadCandidate).length,
+      possibleExternalUse: results.filter((endpoint) => endpoint.liveness.status === "POSSIBLE_EXTERNAL_USE").length,
+      unknownLiveness: results.filter((endpoint) => endpoint.liveness.status === "UNKNOWN").length,
     },
+    wrapperDiscovery: clients.map((client) => ({ clientRepo: client.id, ...client.wrapperDiscovery })),
     endpoints: results,
     uncertain: uncertainAll.slice(0, limits.maxUncertain),
   };

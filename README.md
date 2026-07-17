@@ -95,7 +95,7 @@ No graph yet? Ask the agent to call `rebuild_graph`; it builds the missing graph
 With the default `offline` profile (or an explicit capability set containing `retarget`),
 `open_repo` can change the active repository
 and builds a missing graph automatically. A normal
-`open_repo` call also upgrades graphs created before `0.1.4` to edge metadata v2; `build:false`
+`open_repo` also upgrades graphs that predate current typed-edge/provenance metadata; `build:false`
 probes without building and refuses a legacy graph. Retargeting is offline but intentionally changes
 the filesystem boundary for subsequent tools; select `pinned` when that boundary must not move.
 
@@ -110,6 +110,11 @@ An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — instal
 `prepare_change`. Runtime dependencies, TypeScript type-only coupling and language
 compile-only edges (Rust module/use, Java imports) are reported separately where that distinction
 changes the result.
+
+Every current edge also carries versioned provenance: `EXTRACTED`, `RESOLVED`, or `INFERRED` today,
+with `EXACT_LSP` and `CONFLICT` reserved for the optional precision overlay. `graph_stats` reports
+the complete breakdown; provenance describes how the relationship was established, while the older
+`confidence` field remains for compatibility.
 
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback), `read_source` (a
 symbol's actual code in one hop), `list_endpoints` (HTTP route inventory:
@@ -167,6 +172,21 @@ ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
+
+### 0.2.2 regression and cross-repository evidence
+
+- Permanent TS/JS/Python/Go/Java/Rust regression fixtures now gate graph correctness, output size,
+  latency, freshness, reconnect behavior and repository-target stability.
+- Every current graph edge carries versioned `EXTRACTED`, `RESOLVED`, or `INFERRED` provenance;
+  `EXACT_LSP` and `CONFLICT` are reserved for the optional precision overlay.
+- `trace_api_contract` recognizes configured and conservatively auto-discovered HTTP wrappers,
+  resolves bounded dynamic URL prefixes and can mark an unambiguous backend handler
+  `NOT_DEAD_EXTERNAL_USE` when another registered repository supplies medium/high-confidence use.
+- Real-repository verification records explicit `MISSING`, `UNBASELINED`, and `STALE` gaps instead
+  of converting absent Java/Rust or source-checkout evidence into a green result.
+- No mandatory runtime dependency was added.
+
+Full release notes: [docs/releases/v0.2.2.md](docs/releases/v0.2.2.md).
 
 ### 0.2.1 bounded-output patch
 
@@ -234,6 +254,34 @@ Java graphs:
   agent review queue. Public/exported methods, framework entries, decorators, dynamic loading and
   reflection lower confidence; the result always says `REVIEW_REQUIRED` and `autoDelete:false`.
 
+### HTTP clients and wrappers
+
+`trace_api_contract` recognizes built-in object clients such as `axios.get(...)`, explicit bare or
+object/member wrappers, and simple auto-discovered functions that forward a URL parameter directly
+to a known HTTP client. Auto-discovered wrappers are restricted to their bounded reverse-import
+scope; ambiguous same-name definitions are skipped and reported as incomplete evidence.
+
+Persistent per-client-repository configuration lives in `.weavatrix.json`:
+
+```json
+{
+  "httpContracts": {
+    "clientNames": ["internalHttp"],
+    "wrappers": [
+      { "call": "get", "method": "GET", "urlArgument": 0 },
+      { "object": "transport", "member": "send", "method": "POST", "urlArgument": 1 }
+    ],
+    "autoDiscoverWrappers": true
+  }
+}
+```
+
+The MCP call exposes the same ad-hoc controls as `client_names`, `client_wrappers` and
+`auto_discover_wrappers`. A medium/high-confidence client match marks the backend endpoint/handler
+`NOT_DEAD_EXTERNAL_USE`; a low-confidence match is `POSSIBLE_EXTERNAL_USE`; no match is `UNKNOWN`.
+Only an unambiguously resolved handler node can suppress a method-level dead-code candidate. The tool
+never turns missing static evidence into a `DEAD` verdict.
+
 `run_audit` makes incomplete security coverage explicit. OSV state is `OK` only after every
 supported pinned package/version for this repository was queried successfully. `PARTIAL` means
 some queries failed, the response was incomplete, the dependency fingerprint changed, or the cache
@@ -290,7 +338,8 @@ Weavatrix itself initiates outbound HTTP only from three tools; all are absent f
   hosted list. The endpoint is **yours**, configured through `WEAVATRIX_SYNC_URL` and the optional
   `WEAVATRIX_SYNC_TOKEN`; the feature is off by default. Pass `payload_version: 2` only for an
   intentional graph-only compatibility sync—there is no silent downgrade that discards evidence.
-  Graphs built before `0.1.4` must be rebuilt once before syncing; V3 also refuses a stale graph so
+  Graphs that predate current typed-edge/provenance metadata must be rebuilt once before V3 sync;
+  V3 also refuses a stale graph so
   source-derived evidence cannot be mixed with old topology.
 
 Evidence sections carry independent `state` (`COMPLETE`, `PARTIAL`, `NOT_CHECKED`,
@@ -344,16 +393,32 @@ Graphs are derived data and never live inside your repo: the global per-user reg
 
 ```sh
 npm install
-npm test          # node --test
+npm test                 # unit/integration tests plus the quick golden benchmark
+npm run benchmark        # full TS/JS/Python/Go/Java/Rust + MCP lifecycle gate
+npm run benchmark:real   # locally available real repos vs source-free 0.2.1 baselines
 ```
 
-Design rule: **no source file exceeds 300 lines.** Larger concerns split into dotted-suffix modules
-behind a slim facade (`foo.js` re-exports `foo.parse.js`, `foo.report.js`, …); the MCP layer lives
+The benchmark checks representative graph correctness, complete edge provenance, cross-repository
+HTTP tracing, output bytes, latency, freshness, reconnect and active-target stability. Its budgets, semantics and intentionally
+limited claims are documented in [docs/benchmarking.md](docs/benchmarking.md).
+
+Refactoring target: keep focused implementation modules near 300 lines and split larger concerns
+into dotted-suffix modules behind a slim facade (`foo.js` re-exports `foo.parse.js`,
+`foo.report.js`, …). A few older orchestration modules remain above that target; new work should
+reduce them instead of growing new monoliths. The MCP layer lives
 in `src/mcp/` (graph context, tool entry modules, focused helpers, and the catalog/hot-reload
 loader) behind the thin stdio entry `src/mcp-server.mjs`.
 
 ## Roadmap
 
+- **Public 0.2.2 regression foundation** now has the permanent six-language golden corpus,
+  cross-repository wrapper/liveness fixture, framework/convention fixture, full MCP lifecycle gate
+  and a portable real-repository runner. Five source-free 0.2.1 real-repository baselines are
+  recorded; edge provenance is gated end-to-end. The unavailable Rust source checkout is the only
+  explicit local gap preventing the strict six-repository release command from passing here.
+- **Wrapper-aware API contracts** shipped in 0.2.2: persistent/ad-hoc configuration,
+  conservative discovery, cross-repository handler liveness and explicit unknown states. The next
+  hosted increment joins privacy-safe contract identities across separately synced services.
 - **Hosted architecture workbench** is live at
   [app.weavatrix.com](https://app.weavatrix.com): explicit source-free sync,
   immutable history, Flow/DSM/Map, target architecture and bounded review
@@ -367,6 +432,9 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
   packages joined to affected consumers and ownership without uploading source.
 - **CI blast radius** — bounded `change_impact` and architecture-ratchet evidence
   as a PR check/comment.
+
+The public alignment note for the fixed cross-product release sequence is in
+[docs/product-roadmap.md](docs/product-roadmap.md).
 
 ## License
 

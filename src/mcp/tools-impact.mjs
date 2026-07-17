@@ -112,6 +112,7 @@ export async function tGraphDiff(g, args, ctx) {
         nodes: (graph.nodes || []).filter((n) => String(n.id).startsWith(filter)),
         links: (graph.links || []).filter((l) => String(edgeEndpoint(l.source)).startsWith(filter) || String(edgeEndpoint(l.target)).startsWith(filter)),
         edgeTypesV: graph.edgeTypesV || 0,
+        edgeProvenanceV: graph.edgeProvenanceV || 0,
         barrelResolutionV: graph.barrelResolutionV || 0,
         extractorSchemaV: graph.extractorSchemaV || 0,
     } : graph

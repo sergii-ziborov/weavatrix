@@ -147,5 +147,9 @@ test("trace_api_contract schema is registry-scoped and exposes bounded backend-c
   assert.equal(tool.inputSchema.properties.changed_files.maxItems, 500);
   assert.equal(tool.inputSchema.properties.max_impact_depth.maximum, 5);
   assert.equal(tool.inputSchema.properties.path.maxLength, 2048);
+  assert.equal(tool.inputSchema.properties.client_names.maxItems, 40);
+  assert.equal(tool.inputSchema.properties.client_wrappers.maxItems, 100);
+  assert.equal(tool.inputSchema.properties.client_wrappers.items.properties.url_argument.maximum, 5);
+  assert.equal(tool.inputSchema.properties.auto_discover_wrappers.default, true);
   assert.equal(tool.inputSchema.properties.output_format.enum[1], "json");
 });

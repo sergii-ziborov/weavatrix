@@ -1,0 +1,25 @@
+{
+  "name": "benchmark-framework-conventions",
+  "private": true,
+  "scripts": {
+    "build": "vinext build",
+    "start": "tsx src/launcher.ts"
+  },
+  "dependencies": {
+    "next": "15.0.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "vinext": "0.0.50",
+    "unused-control": "1.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "react-server-dom-webpack": "19.2.6",
+    "sass": "1.77.0",
+    "tsx": "4.0.0",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  }
+}

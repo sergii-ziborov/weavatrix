@@ -66,6 +66,7 @@ test("incremental refresh reparses one edited file plus bounded reverse importer
     assert.equal(result.graph.nodes.filter((node) => !String(node.id).includes("#")).length, 3, "scoped result was merged into the full file universe");
     assert.equal(result.graph.barrelResolutionV, baseline.barrelResolutionV);
     assert.equal(result.graph.edgeTypesV, baseline.edgeTypesV);
+    assert.equal(result.graph.edgeProvenanceV, baseline.edgeProvenanceV);
     const ids = new Set(result.graph.nodes.map((node) => String(node.id)));
     assert.ok(result.graph.links.every((link) => ids.has(String(link.source)) && ids.has(String(link.target))), "merged graph has no dangling endpoints");
     const value = result.graph.nodes.find((node) => node.source_file === "src/value.ts" && String(node.id).includes("#value@"));

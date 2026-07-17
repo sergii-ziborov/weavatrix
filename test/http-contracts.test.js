@@ -54,6 +54,23 @@ test("HTTP client extraction resolves bounded local string constants in template
   ]);
 });
 
+test("configured bare and object/member wrappers use bounded URL argument positions", () => {
+  const text = `
+    get<User>('/api/users/42');
+    transport.send<Result>({ cache: false }, '/api/items/7');
+  `;
+  const result = extractHttpClientCallsFromText(text, "src/custom-client.ts", {
+    wrappers: [
+      { call: "get", method: "GET", url_argument: 0 },
+      { object: "transport", member: "send", method: "DELETE", url_argument: 1 },
+    ],
+  });
+  assert.deepEqual(result.calls.map((call) => [call.client, call.method, call.path, call.detector]), [
+    ["get", "GET", "/api/users/42", "input-wrapper"],
+    ["transport.send", "DELETE", "/api/items/7", "input-wrapper"],
+  ]);
+});
+
 test("contract matching requires the method and labels exact, concrete-parameter and suffix evidence", () => {
   const endpoint = { method: "GET", path: "/api/users/:id" };
   assert.equal(matchHttpContract(endpoint, { method: "POST", path: "/api/users/42" }), null, "method mismatch is never promoted");
@@ -103,6 +120,8 @@ test("cross-repo analysis joins real backend endpoints and follows bounded rever
     assert.equal(users.callsites.length, 2, "both client repositories join while the POST call with the same path shape is rejected");
     assert.deepEqual(users.callsites.map((call) => call.clientRepo), ["web", "mobile"], "exact normalized templates rank just ahead of concrete parameter instances");
     assert.equal(users.callsites[0].match.confidence, "high");
+    assert.equal(users.liveness.status, "NOT_DEAD_EXTERNAL_USE");
+    assert.deepEqual(users.liveness.consumerRepositories, ["mobile", "web"]);
     assert.deepEqual(users.affected.files.map((entry) => [entry.file, entry.distance]), [
       ["src/client.ts", 0], ["src/api/users.ts", 0], ["src/features/UserView.tsx", 1], ["src/pages/UsersPage.tsx", 2],
     ]);
@@ -110,6 +129,7 @@ test("cross-repo analysis joins real backend endpoints and follows bounded rever
     const items = result.endpoints.find((endpoint) => endpoint.method === "DELETE");
     assert.equal(items.callsites[0].match.kind, "exact-dynamic");
     assert.equal(items.callsites[0].match.confidence, "medium");
+    assert.equal(items.liveness.status, "NOT_DEAD_EXTERNAL_USE");
     assert.ok(result.uncertain.some((call) => call.file === "src/api/items.ts" && /dynamic component/.test(call.reason)));
     assert.equal(result.totals.methodMismatches, 1);
     assert.doesNotMatch(JSON.stringify(result), /export const|getUser\(1\)/, "structured evidence never contains source text");
@@ -117,6 +137,98 @@ test("cross-repo analysis joins real backend endpoints and follows bounded rever
     rmSync(backend, { recursive: true, force: true });
     rmSync(frontend, { recursive: true, force: true });
     rmSync(mobile, { recursive: true, force: true });
+  }
+});
+
+test("auto-discovery traces an imported bare wrapper only through its graph import scope", () => {
+  const backend = repo({
+    "src/routes.js": `router.get('/api/users/:id', getUser);`,
+  });
+  const frontend = repo({
+    "src/http.ts": `export const get = <T>(url: string): Promise<T> => axios.get<T>(url);`,
+    "src/users.ts": `import {get} from './http'; export const load = () => get<unknown>('/api/users/42');`,
+    "src/unrelated.ts": `export const local = () => get('/api/users/99');`,
+  });
+  const backendGraph = {
+    nodes: [
+      { id: "src/routes.js", label: "routes.js", source_file: "src/routes.js" },
+      { id: "src/routes.js#getUser@10", label: "getUser()", source_file: "src/routes.js", source_location: "L10" },
+    ],
+    links: [],
+  };
+  const clientGraph = {
+    nodes: [
+      { id: "http", source_file: "src/http.ts" },
+      { id: "users", source_file: "src/users.ts" },
+      { id: "unrelated", source_file: "src/unrelated.ts" },
+    ],
+    links: [{ source: "users", target: "http", relation: "imports" }],
+  };
+  try {
+    const result = analyzeHttpContracts({
+      backend: { id: "api", repoRoot: backend, codeFiles: ["src/routes.js"], graph: backendGraph },
+      clients: [{ id: "web", repoRoot: frontend, codeFiles: ["src/http.ts", "src/users.ts", "src/unrelated.ts"], graph: clientGraph }],
+    });
+    const endpoint = result.endpoints[0];
+    assert.equal(endpoint.callsites.length, 1, "the unrelated same-name function is outside the wrapper import scope");
+    assert.equal(endpoint.callsites[0].file, "src/users.ts");
+    assert.equal(endpoint.callsites[0].wrapper.definitionFile, "src/http.ts");
+    assert.equal(endpoint.handlerNodeId, "src/routes.js#getUser@10");
+    assert.equal(endpoint.liveness.status, "NOT_DEAD_EXTERNAL_USE");
+    assert.equal(endpoint.liveness.canSuppressDeadCandidate, true);
+    assert.equal(result.wrapperDiscovery[0].discovered, 1);
+    assert.equal(result.totals.notDeadExternalUse, 1);
+    assert.equal(result.totals.notDeadExternalHandlers, 1);
+  } finally {
+    rmSync(backend, { recursive: true, force: true });
+    rmSync(frontend, { recursive: true, force: true });
+  }
+});
+
+test("repository config enables wrappers and missing external evidence remains UNKNOWN", () => {
+  const frontend = repo({
+    ".weavatrix.json": JSON.stringify({
+      httpContracts: { wrappers: [{ call: "read", method: "GET", urlArgument: 0 }] },
+    }),
+    "src/client.ts": `read('/api/configured');`,
+  });
+  try {
+    const matched = analyzeHttpContracts({
+      backend: { id: "api", endpoints: [{ method: "GET", path: "/api/configured", handler: "configured", file: "src/routes.js", line: 1 }] },
+      client: { id: "web", repoRoot: frontend, codeFiles: ["src/client.ts"] },
+    });
+    assert.equal(matched.endpoints[0].liveness.status, "NOT_DEAD_EXTERNAL_USE");
+    assert.equal(matched.wrapperDiscovery[0].configured, 1);
+
+    const unknown = analyzeHttpContracts({
+      backend: { id: "api", endpoints: [{ method: "DELETE", path: "/api/unused", handler: "unused", file: "src/routes.js", line: 2 }] },
+      client: { id: "web", repoRoot: frontend, codeFiles: ["src/client.ts"] },
+    });
+    assert.equal(unknown.endpoints[0].liveness.status, "UNKNOWN");
+    assert.match(unknown.endpoints[0].liveness.reason, /not a dead-code verdict/i);
+  } finally {
+    rmSync(frontend, { recursive: true, force: true });
+  }
+});
+
+test("a low-confidence suffix match remains POSSIBLE_EXTERNAL_USE and cannot suppress dead code", () => {
+  const frontend = repo({
+    "src/client.ts": "export const load = (id) => fetch(`${API_ROOT}/api/users/${id}`);",
+  });
+  try {
+    const result = analyzeHttpContracts({
+      backend: {
+        id: "api",
+        endpoints: [{ method: "GET", path: "/v1/api/users/:id", handler: "getUser", file: "src/routes.js", line: 1 }],
+        graph: { nodes: [{ id: "handler", label: "getUser()", source_file: "src/routes.js" }], links: [] },
+      },
+      client: { id: "web", repoRoot: frontend, codeFiles: ["src/client.ts"] },
+    });
+    assert.equal(result.endpoints[0].callsites[0].match.confidence, "low");
+    assert.equal(result.endpoints[0].liveness.status, "POSSIBLE_EXTERNAL_USE");
+    assert.equal(result.endpoints[0].liveness.canSuppressDeadCandidate, false);
+  } finally {
+    rmSync(frontend, { recursive: true, force: true });
   }
 });
 
@@ -169,4 +281,5 @@ test("endpoint path filter accepts a segment-aligned fragment without losing the
   });
   assert.equal(result.totals.endpoints, 1);
   assert.equal(result.endpoints[0].normalizedPath, "/edgeAnalytics/query/:param");
+  assert.equal(result.endpoints[0].liveness.status, "UNKNOWN");
 });

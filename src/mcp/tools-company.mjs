@@ -9,6 +9,7 @@ import {liveRepositoryRecords} from '../graph/repo-registry.js'
 import {loadGraph} from './graph-context.mjs'
 import {toolResult} from './tool-result.mjs'
 
+const CROSS_REPO_HTTP_CONTRACT_V = 2
 const selectorText = (value) => String(value ?? '').trim()
 
 function selectRecord(records, selector) {
@@ -120,6 +121,10 @@ function verdictFor(analysis) {
         affectedScreens: affectedScreens.size,
         methodMismatches: analysis.totals.methodMismatches,
         uncertainCalls: analysis.totals.uncertainCalls,
+        notDeadExternalUse: analysis.totals.notDeadExternalUse,
+        notDeadExternalHandlers: analysis.totals.notDeadExternalHandlers,
+        possibleExternalUse: analysis.totals.possibleExternalUse,
+        unknownLiveness: analysis.totals.unknownLiveness,
     }
 }
 
@@ -188,7 +193,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
         return toolResult(
             `VERDICT PARTIAL — selected repository graphs could not all be refreshed and loaded.\nCompleteness: partial — ${reasons.join('; ')}.`,
             {
-                crossRepoHttpContractV: 1,
+                crossRepoHttpContractV: CROSS_REPO_HTTP_CONTRACT_V,
                 status: 'PARTIAL',
                 repositories: {
                     backend: publicRecord(backend, backendAlias),
@@ -209,6 +214,9 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
             path: args.path,
             changedFiles: args.changed_files,
             includeTests: args.include_tests === true,
+            clientNames: args.client_names,
+            wrappers: args.client_wrappers,
+            autoDiscoverWrappers: args.auto_discover_wrappers !== false,
             maxImpactDepth: args.max_impact_depth,
             maxEndpoints: args.max_endpoints,
             maxMatches: args.max_matches,
@@ -236,7 +244,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                 const screens = endpoint.affected.screens.slice(0, 3)
                     .map((screen) => `    screen ${screen.client}:${screen.file} (distance ${screen.distance})`)
                 return [
-                    `  ${endpoint.method} ${endpoint.path}${location} → ${endpoint.callsites.length} callsite(s), ${endpoint.affected.screens.length} screen(s), ${endpoint.affected.files.length} affected file(s)`,
+                    `  ${endpoint.method} ${endpoint.path}${location} [${endpoint.liveness.status}${endpoint.handler ? `; handler ${endpoint.handler}` : ''}] → ${endpoint.callsites.length} callsite(s), ${endpoint.affected.screens.length} screen(s), ${endpoint.affected.files.length} affected file(s)`,
                     ...callsites,
                     ...screens,
                 ]
@@ -246,7 +254,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                 : `Completeness: partial — ${completeness.reasons.join('; ')}.`,
         ]
         const result = {
-            crossRepoHttpContractV: 1,
+            crossRepoHttpContractV: CROSS_REPO_HTTP_CONTRACT_V,
             verdict,
             repositories: {
                 backend: publicRecord(backend, backendAlias),

@@ -41,6 +41,7 @@ export async function tRebuildGraph(g, args, ctx) {
     const before = g?.nodes ? {
         nodes: g.nodes, links: g.links,
         edgeTypesV: g.edgeTypesV || 0,
+        edgeProvenanceV: g.edgeProvenanceV || 0,
         barrelResolutionV: g.barrelResolutionV || 0,
         extractorSchemaV: g.extractorSchemaV || 0,
     } : null
@@ -73,6 +74,7 @@ export async function tOpenRepo(g, args, ctx) {
         try {
             const saved = JSON.parse(readFileSync(graphPath, 'utf8'))
             upgrade = !Number.isInteger(saved.edgeTypesV) || saved.edgeTypesV < 2
+                || !Number.isInteger(saved.edgeProvenanceV) || saved.edgeProvenanceV < 1
         } catch {
             upgrade = true
         }
@@ -80,7 +82,7 @@ export async function tOpenRepo(g, args, ctx) {
     if (!existsSync(graphPath) || upgrade) {
         if (args.build === false) {
             return upgrade
-                ? `The existing graph for ${repoPath} predates compile-only edge metadata (edge schema v2). Re-call without build:false to upgrade it before switching.`
+                ? `The existing graph for ${repoPath} predates current typed-edge/provenance metadata. Re-call without build:false to upgrade it before switching.`
                 : `No graph yet for ${repoPath} (expected at ${graphPath}). Re-call without build:false to build one — large repos can take minutes.`
         }
         const mode = ['no-tests', 'tests-only', 'full'].includes(args.mode) ? args.mode : 'full'
@@ -99,7 +101,7 @@ export async function tOpenRepo(g, args, ctx) {
         return `Failed to load ${graphPath} — still targeting the previous repo (${prev.repoRoot || 'none'}).`
     }
     registerRepository({repoPath, graphDir: graphOutDirForRepo(repoPath), graphHome: graphHomeDir()})
-    const buildNote = built ? (upgrade ? ' (graph upgraded to edge metadata v2)' : ' (graph built fresh)') : ''
+    const buildNote = built ? (upgrade ? ' (graph upgraded to current edge metadata)' : ' (graph built fresh)') : ''
     return `Opened ${repoPath}${buildNote}: ${loaded.nodes.length} nodes / ${loaded.links.length} edges. All tools now target this repo.`
 }
 
