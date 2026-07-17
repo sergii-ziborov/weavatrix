@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildInternalGraph } from "../src/graph/internal-builder.js";
+import { filterGraphForMode } from "../src/graph/graph-filter.js";
 import { loadGraph } from "../src/mcp/graph-context.mjs";
 import { tRunAudit } from "../src/mcp/tools-health.mjs";
 
@@ -112,5 +113,39 @@ test("derived Git scope keeps new manifest debt caused by removing its only impo
     assert.ok(compared.result.comparison.new.some((finding) =>
       finding.rule === "unused-dep" && finding.package === "left-pad" && finding.manifest === "package.json"));
     assert.ok(compared.result.findings.some((finding) => finding.package === "left-pad"), "default new-debt output must not hide causal manifest debt");
+  } finally { rmSync(fixtureRoot, { recursive: true, force: true }); }
+});
+
+test("no-tests audit compares against a no-tests Git baseline", async () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "weavatrix-audit-no-tests-"));
+  const repo = join(fixtureRoot, "repo");
+  try {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    mkdirSync(join(repo, "test"), { recursive: true });
+    writeFileSync(join(repo, "package.json"), JSON.stringify({
+      name: "audit-no-tests-fixture",
+      type: "module",
+    }, null, 2));
+    writeFileSync(join(repo, "src", "index.js"), "export const live = 1;\n");
+    writeFileSync(join(repo, "test", "orphan.test.js"), "export function testOnlyOrphan() { return 1; }\n");
+    git(repo, "init", "-q");
+    git(repo, "config", "user.email", "fixture@example.test");
+    git(repo, "config", "user.name", "Fixture");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "baseline");
+
+    const full = await buildInternalGraph(repo);
+    const graph = filterGraphForMode(full, "no-tests", { repoRoot: repo });
+    graph.graphBuildMode = "no-tests";
+    graph.graphBuildScope = "";
+    const graphPath = join(fixtureRoot, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(graph));
+
+    const compared = await tRunAudit(loadGraph(graphPath), { base_ref: "HEAD", debt: "all", max_findings: 100 }, { repoRoot: repo, graphPath });
+    assert.equal(compared.result.status, "COMPLETE");
+    assert.equal(compared.result.comparison.totals.repository.new, 0);
+    assert.equal(compared.result.comparison.totals.repository.fixed, 0,
+      "test-only findings must not appear as fixed when both sides use no-tests");
+    assert.ok(compared.result.findings.every((finding) => !String(finding.file || finding.source_file || "").startsWith("test/")));
   } finally { rmSync(fixtureRoot, { recursive: true, force: true }); }
 });

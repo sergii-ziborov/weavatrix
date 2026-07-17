@@ -138,6 +138,25 @@ test("graph_diff schema exposes an immutable Git-ref baseline", async () => {
   assert.equal(schema.properties.path.type, "string");
 });
 
+test("module_map schema defaults to production-only output", async () => {
+  const api = await loadHotApi(0, "graph");
+  const schema = api.byName.get("module_map").inputSchema;
+  assert.equal(schema.properties.include_non_product.default, false);
+  assert.match(schema.properties.include_non_product.description, /tests.*fixtures.*benchmarks/i);
+});
+
+test("build and retarget schemas preserve graph mode when optional overrides are omitted", async () => {
+  const api = await loadHotApi(0, "build,retarget");
+  const rebuild = api.byName.get("rebuild_graph").inputSchema.properties;
+  const open = api.byName.get("open_repo").inputSchema.properties;
+  assert.equal(Object.hasOwn(rebuild.mode, "default"), false);
+  assert.equal(Object.hasOwn(rebuild.precision, "default"), false);
+  assert.equal(Object.hasOwn(open.mode, "default"), false);
+  assert.equal(Object.hasOwn(open.precision, "default"), false);
+  assert.match(rebuild.mode.description, /preserve/i);
+  assert.match(open.mode.description, /preserve/i);
+});
+
 test("trace_api_contract schema is registry-scoped and exposes bounded backend-change filters", async () => {
   const api = await loadHotApi(0, "crossrepo");
   const tool = api.byName.get("trace_api_contract");

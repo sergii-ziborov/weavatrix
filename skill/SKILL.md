@@ -29,6 +29,28 @@ Profiles use the same npm package and binary:
 The legacy `online` capability remains a compatibility alias for `advisories,hosted`; prefer the
 named profiles for new registrations.
 
+## Intent router
+
+Start from the task, not from the complete tool list:
+
+- **Orient in a repository**: `graph_stats` -> verify `Repo`, `Graph`, and `Build mode`; if the target
+  is wrong, call `open_repo`, then `graph_stats` again -> `module_map` (production-only by default).
+- **Review a branch/diff**: `change_impact` for changed-file blast radius; add
+  `graph_diff base_ref=<merge-base>` for structural drift, then drill into exact candidates with
+  `get_dependents` and `read_source`.
+- **Trace an API across repositories**: `list_known_repos` -> `trace_api_contract` with an explicit
+  backend and client list; inspect each `graphReconciliation.buildMode` before using the verdict.
+- **Inspect exact symbol references**: start with `graph_stats` and read semantic precision state,
+  provider and `EXACT_LSP` count. For TypeScript/JavaScript, use an exact node id with
+  `get_dependents` and inspect the edge provenance; use `find_dead_code` for bounded zero-reference
+  candidates. Treat `PARTIAL`, `UNAVAILABLE`, `OFF`, or zero exact edges as incomplete evidence, not
+  a compiler-exact result; `OFF` means the caller explicitly selected static-only mode. Java and Rust
+  providers are not bundled in 0.2.4, so their edges never become `EXACT_LSP` even when a mixed
+  repository has a complete TypeScript/JavaScript overlay.
+- **Explore an architectural question**: use broad `query_graph` when entry points are unknown; its
+  bootstrap/tool-execution ranking prefers production executables over docs, sites and fixtures.
+  Pass exact `seed_files` when the intended entry points are already known.
+
 ## Ground rules
 
 - **Evidence, not verdicts**: treat audit, hub, orphan and duplicate output as hypotheses. Confirm a
@@ -47,11 +69,12 @@ named profiles for new registrations.
   `change_impact` and `graph_diff` label the distinction; `god_nodes` ranks unique connectivity and
   reports repeated references separately. Do not schedule a runtime-cycle refactor from
   compile-time-only edges.
-- **Edge provenance**: distinguish how an edge was established from legacy confidence. Current
-  graphs use `EXTRACTED`, `RESOLVED`, and `INFERRED`; `EXACT_LSP` is reserved for a bounded local
-  precision overlay and `CONFLICT` means evidence disagrees. Treat `INFERRED` and `CONFLICT` as
-  review signals rather than compiler-exact facts; an `UNKNOWN` count in `graph_stats` requires a
-  rebuild before precision-sensitive work.
+- **Edge provenance**: distinguish how an edge was established from legacy confidence. The parser
+  emits `EXTRACTED`, `RESOLVED`, and `INFERRED`; the bundled bounded TypeScript/JavaScript language
+  server emits `EXACT_LSP` only for references it confirms. `CONFLICT` means evidence disagrees.
+  Treat `INFERRED`, `CONFLICT`, `PARTIAL`, `UNAVAILABLE`, and `OFF` as review signals rather than
+  compiler-exact facts; an `UNKNOWN` count or revision-mismatched overlay in `graph_stats` requires
+  a rebuild before precision-sensitive work.
 - **Repository universe**: in Git repositories, graph and duplicate scans include tracked plus
   non-ignored untracked files. If an old graph still contains packaged/generated output, rebuild it
   before interpreting the result. Repository-root `.weavatrixignore` applies the same tracked-file
@@ -60,9 +83,10 @@ named profiles for new registrations.
   roots. Dead-code/clone/audit review also suppresses `benchmarks/**` and `**/__temp/**` as classified
   non-production surfaces. A verified production benchmark can opt back in narrowly through
   `.weavatrix.json` `classify.product`, for example `{"classify":{"product":["benchmarks/core/**"]}}`.
-- **Architectural queries**: for bootstrap/routing/authentication questions, inspect the returned
-  seeds before trusting the traversal. Pass exact repository-relative `seed_files` to `query_graph`
-  when the intended entry points are already known.
+- **Architectural queries**: broad bootstrap/tool-execution/routing questions rank conventional
+  production and graph-declared entry points ahead of classified docs, sites, benchmarks and
+  fixtures. Inspect the returned seeds before trusting the traversal. Pass exact repository-relative
+  `seed_files` to `query_graph` when the intended entry points are already known.
 - **Coverage**: `coverage_map` reads an existing report. `unavailable` means no supported report was
   found, not 0% coverage; do not rank testing risk from that state.
 - **Audit completeness**: read `checks.osv.status` and `checks.malware.status`. For OSV, `OK` is
@@ -71,8 +95,10 @@ named profiles for new registrations.
   the same non-`OK` states as incomplete for malware scanning. Refresh OSV only when the user has
   authorized selecting the optional `osv` profile (or `advisories` capability) and then
   invoking `refresh_advisories`; enabling the group alone sends nothing.
-- **Offline by design**: scans and graph queries run in-process against local files; coverage tools
-  read existing reports and never run tests. The ONLY network-touching tools live in the optional
+- **Offline by design**: scans and graph queries use local files; the semantic overlay may launch
+  Weavatrix's bundled read-only TypeScript language-server child process, but it never runs repository
+  scripts or downloads a provider. Coverage tools read existing reports and never run tests. The
+  ONLY network-touching tools live in the optional
   `advisories` / `hosted` capabilities and run solely when explicitly called:
   `refresh_advisories` (queries OSV.dev with
   package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (derives a

@@ -60,7 +60,9 @@ That remains Hosted `0.4.0`, after the operational and evidence foundations.
 - Delivered: framework peer/build-tool and convention-consumer fixtures with negative controls.
 - Delivered: versioned `EXACT_LSP` / `EXTRACTED` / `RESOLVED` / `INFERRED` / `CONFLICT`
   edge-provenance contract, complete golden/real gates, V3 sync allowlisting and current docs/skill.
-- No large mandatory runtime dependency.
+- The 0.2.2 benchmark foundation added no large mandatory runtime dependency. Public 0.2.4 later
+  added exact pinned TypeScript + `typescript-language-server` production dependencies for the
+  bundled semantic provider, with npm/MCPB runtime and license gates.
 
 The wrapper work above is covered by another cross-repository golden fixture and measured
 endpoint-recall gate; it does not displace these deliverables. The executable contract is documented in
@@ -72,11 +74,13 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
 - Retention, pin, export and delete.
 - Shared actionable lifecycle for Health, Direction and Duplicates.
 
-### Public `0.3.0` — optional precision bridge
+### Public `0.3.0` — precision expansion
 
-- Lazy local LSP verifier for bounded ambiguous evidence, not a Serena tool-surface clone.
-- TS/JS and Java pilots; exact-reference enrichment for impact, dependents, dead code and
-  architecture evidence.
+- Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and
+  conservatively complete dead-code candidates, with explicit `COMPLETE`/`PARTIAL`/`UNAVAILABLE`/`OFF`
+  states. This is not a clone of another tool surface.
+- Next: Java pilot and broader exact-reference enrichment for architecture evidence; keep unsupported
+  languages explicit instead of relabeling parser evidence as exact.
 - Provenance/completeness contract and bounded Git-ref timeline/report API.
 
 ### Hosted `0.3.0` — EvidenceSnapshot V2
@@ -94,8 +98,9 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
 
 - Hierarchical symbol identity feeds the delivered provenance contract and `0.3.0` precision; ambiguous
   same-name symbols must return candidates, never a silent guess.
-- Focused dead-candidate verification belongs in the `0.3.0` precision overlay and must include
-  framework/config/search/test and cross-repository evidence.
+- Focused TS/JS semantic no-reference verification shipped in 0.2.4. Broader framework/config/search,
+  test and cross-repository liveness must remain part of the review before any deletion and is a
+  precision-expansion target, not something an empty LSP result may silently replace.
 - API contract diff belongs with bounded Git-ref history and later company evidence.
 - Duplicate actionability belongs in Hosted `0.2.1` shared lifecycle; similarity detection already
   exists and should not be rebuilt.
@@ -104,5 +109,6 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
 - Architecture baseline proposal, contract preparation and ratchet are already delivered; improve
   their measured evidence instead of introducing a duplicate feature name.
 
-Serena remains the semantic microscope used as a benchmark. Weavatrix keeps repo-wide analytics,
-Git impact/history, architecture contracts and cross-repository/company evidence as its own axis.
+External semantic microscopes can remain comparison benchmarks, but are never a required runtime or
+fallback. Weavatrix owns its TS/JS precision evidence alongside repo-wide analytics, Git
+impact/history, architecture contracts and cross-repository/company evidence.

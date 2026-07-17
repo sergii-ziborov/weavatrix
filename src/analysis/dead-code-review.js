@@ -50,9 +50,17 @@ function symbolCandidate(item, node, context) {
   const dynamicFile = context.dynamicTargets.has(file) || DYNAMIC_RE.test(source);
   const reflectionFile = REFLECTION_RE.test(source);
   const kind = kindOf(node);
-  let confidence = (String(node?.visibility || "").toLowerCase() === "private" || (!publicSurface && ["method", "function"].includes(kind)))
-    ? "high" : "medium";
+  const exactNoReference = context.exactNoReferenceIds.has(String(item.id));
+  const internallyScoped = String(node?.visibility || "").toLowerCase() === "private"
+    || (!publicSurface && ["method", "function"].includes(kind));
+  // Static absence alone is never high-confidence dead code. High is reserved for a successfully
+  // queried semantic declaration whose language server also returned no in-workspace references.
+  let confidence = internallyScoped && exactNoReference ? "high" : "medium";
   const caveats = [];
+
+  if (internallyScoped && !exactNoReference) {
+    caveats.push("No complete exact semantic no-reference result is available for this declaration; static absence remains medium confidence.");
+  }
 
   if (publicSurface) {
     confidence = "low";
@@ -90,6 +98,7 @@ function symbolCandidate(item, node, context) {
     evidence: [
       { kind: "graph", fact: "No inbound non-structural graph edge targets this symbol." },
       { kind: "source-index", fact: "Its identifier has no second indexed occurrence that establishes a caller." },
+      ...(exactNoReference ? [{kind: "exact-lsp", fact: "The active language server returned no in-workspace references for this exact declaration."}] : []),
     ],
     caveats,
     publicApi: publicSurface,
@@ -169,7 +178,8 @@ export function computeDeadCodeReview(graph, sources, options = {}) {
   const minConfidence = Object.hasOwn(CONFIDENCE_RANK, options.minConfidence) ? options.minConfidence : "medium";
   const pathPrefix = normalizedPath(options.path || "").replace(/\/+$/, "");
   const requestedKinds = new Set(Array.isArray(options.kinds) && options.kinds.length ? options.kinds : ["file", "function", "method", "symbol"]);
-  const context = { sources, entrySet, dynamicTargets, frameworkByFile, classify, repoSignals };
+  const exactNoReferenceIds = new Set(graph.precisionNoReferenceSymbols || options.exactNoReferenceIds || []);
+  const context = { sources, entrySet, dynamicTargets, frameworkByFile, classify, repoSignals, exactNoReferenceIds };
   const dead = computeDead(graph, sources, { entrySet });
   const nodesById = new Map((graph.nodes || []).map((node) => [String(node.id), node]));
   const rawSymbols = dead.deadSymbols

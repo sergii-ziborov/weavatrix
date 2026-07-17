@@ -32,6 +32,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run verify:release
       - run: npm test
+      - run: npm run benchmark
       - run: npm audit
       - run: npm run build:mcpb
       - name: Generate portable bundle checksum

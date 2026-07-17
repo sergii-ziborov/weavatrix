@@ -80,8 +80,8 @@ const DEFAULT_RULES = [
   },
   {
     category: "temp",
-    pattern: "__temp working/generated root",
-    regex: /(^|\/)__temp(\/|$)/i,
+    pattern: "__temp or .tmp-* working/generated root",
+    regex: /(^|\/)(?:__temp|\.tmp(?:[-_][^/]*)?)(\/|$)/i,
   },
 ];
 

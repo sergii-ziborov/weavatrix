@@ -1,7 +1,7 @@
 // Health tools: clone detection, the internal audit, community/module overviews, coverage mapping
 // and the HTTP endpoint inventory. Hot-reloadable (re-imported by catalog.mjs on change).
 import {spawnSync} from 'node:child_process'
-import {degreeOf, rawGraph} from './graph-context.mjs'
+import {degreeOf, rawGraph, effectiveRawGraph} from './graph-context.mjs'
 import {computeDuplicates} from '../analysis/duplicates.js'
 import {runInternalAudit} from '../analysis/internal-audit.js'
 import {classifyChangeImpact} from '../analysis/change-classification.js'
@@ -17,8 +17,9 @@ import {buildInternalGraph} from '../graph/internal-builder.js'
 import {resolveGitCommit, withGitRefCheckout} from '../analysis/git-ref-graph.js'
 import {childProcessEnv} from '../child-env.js'
 import {toolResult} from './tool-result.mjs'
-import {createPathClassifier} from '../path-classification.js'
+import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {createRepoBoundary} from '../repo-path.js'
+import {filterGraphForMode} from '../graph/graph-filter.js'
 
 const NON_PRODUCT_DUPLICATE_CLASSES = new Set(['generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const fragmentEligible = (fragment, {tokMin, skipTests, includeClassified}) => {
@@ -117,7 +118,7 @@ export function tFindDuplicates(g, args, ctx) {
 // candidates. It never returns an automatic-delete verdict.
 export function tFindDeadCode(g, args, ctx) {
     if (!ctx.repoRoot) return 'Dead-code review needs the repo root (not provided to this server).'
-    const graph = rawGraph(ctx)
+    const graph = effectiveRawGraph(ctx)
     const boundary = createRepoBoundary(ctx.repoRoot)
     const pkg = readRepoJson(boundary, 'package.json') || {}
     const rules = readRepoJson(boundary, '.weavatrix-deps.json') || {}
@@ -323,7 +324,12 @@ async function runAuditWithBaseline(args, ctx, currentGraph) {
     }
 
     const baseline = await withGitRefCheckout(ctx.repoRoot, resolved.commit, async (checkout) => {
-        const graph = await buildInternalGraph(checkout)
+        let graph = await buildInternalGraph(checkout)
+        const currentMode = ['full', 'no-tests', 'tests-only'].includes(currentGraph?.graphBuildMode)
+            ? currentGraph.graphBuildMode : 'full'
+        if (currentMode !== 'full') graph = filterGraphForMode(graph, currentMode, {repoRoot: checkout})
+        graph.graphBuildMode = currentMode
+        graph.graphBuildScope = ''
         return runInternalAudit(checkout, {graph, skipMalwareScan: true})
     })
     if (!baseline.ok || !baseline.value?.ok) {
@@ -385,7 +391,7 @@ export async function tRunAudit(g, args, ctx) {
     if (!ctx.repoRoot) return 'Audit needs the repo root (not provided to this server).'
     if (args.base_ref) return runAuditWithBaseline(args, ctx, rawGraph(ctx))
     const audit = await runInternalAudit(ctx.repoRoot, {
-        graph: rawGraph(ctx),
+        graph: effectiveRawGraph(ctx),
         skipMalwareScan: !args.include_malware_scan, // greps installed packages — slow, so opt-in
     })
     if (!audit.ok) return `Audit failed: ${audit.error}`
@@ -440,7 +446,36 @@ export function tListCommunities(g, args, ctx) {
 // Folder-level architecture map: modules (top-two path segments) with file/symbol counts and the
 // strongest module→module dependencies. Pure graph aggregation — no filesystem reads.
 export function tModuleMap(g, args, ctx) {
-    const agg = aggregateGraph(rawGraph(ctx), null)
+    const graph = rawGraph(ctx)
+    const testsOnly = graph.graphBuildMode === 'tests-only'
+    const includeNonProduct = args.include_non_product === true || testsOnly
+    const classifier = createPathClassifier(ctx?.repoRoot || null)
+    const nonProductFiles = new Set()
+    const classifiedFiles = new Set()
+    if (!includeNonProduct) {
+        for (const node of graph.nodes || []) {
+            if (!node?.source_file) continue
+            const sourceFile = String(node.source_file)
+            if (classifiedFiles.has(sourceFile)) continue
+            classifiedFiles.add(sourceFile)
+            const explanation = classifier.explain(sourceFile)
+            if (explanation.excluded || hasPathClass(explanation, 'test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp')) {
+                nonProductFiles.add(sourceFile)
+            }
+        }
+    }
+    const visibleGraph = includeNonProduct || nonProductFiles.size === 0 ? graph : (() => {
+        const keep = new Set((graph.nodes || [])
+            .filter((node) => !node?.source_file || !nonProductFiles.has(String(node.source_file)))
+            .map((node) => String(node.id)))
+        const endpoint = (value) => String(value && typeof value === 'object' ? value.id : value)
+        return {
+            ...graph,
+            nodes: (graph.nodes || []).filter((node) => keep.has(String(node.id))),
+            links: (graph.links || []).filter((link) => keep.has(endpoint(link.source)) && keep.has(endpoint(link.target))),
+        }
+    })()
+    const agg = aggregateGraph(visibleGraph, null)
     const topN = Math.max(1, Math.min(60, Number(args.top_n) || 25))
     const mods = agg.modules.slice(0, topN)
     const edges = agg.moduleEdges.slice(0, Math.min(50, topN * 2))
@@ -458,6 +493,11 @@ export function tModuleMap(g, args, ctx) {
     collectCompileEdges(agg.compileOnlyModuleEdges, 'compileOnly')
     const compiled = [...compileEdges.values()].sort((a, b) => b.count - a.count).slice(0, Math.min(50, topN * 2))
     return [
+        testsOnly
+            ? 'Scope: tests-only graph; classified test/e2e/fixture surfaces are retained automatically.'
+            : includeNonProduct
+            ? 'Scope: all indexed files, including classified non-product surfaces.'
+            : `Scope: production-only (default); excluded ${nonProductFiles.size} classified test/fixture/benchmark/generated/docs file(s). Pass include_non_product:true for the complete graph.`,
         `Module map: ${agg.totals.files} files in ${agg.modules.length} folder-modules, ${agg.totals.moduleEdges} runtime module dependencies and ${agg.totals.compileTimeModuleEdges || 0} compile-time dependencies (${agg.totals.typeOnlyModuleEdges || 0} type-only, ${agg.totals.compileOnlyModuleEdges || 0} compile-only). Top ${mods.length}:`,
         ...mods.map((m) => `  ${m.name} — ${m.fileCount} files, ${m.symbolCount} symbols`),
         ``,

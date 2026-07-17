@@ -48,10 +48,17 @@ function safeRefreshReason(record, error) {
 }
 
 async function reconcileGraph(record, alias, role, graphHome) {
+    let registeredGraph = null
+    try { registeredGraph = loadGraph(join(record.graphDir, 'graph.json'), {repoRoot: record.repoPath}) } catch { /* refresh may repair it */ }
+    const buildMode = ['full', 'no-tests', 'tests-only'].includes(registeredGraph?.graphBuildMode)
+        ? registeredGraph.graphBuildMode
+        : 'full'
+    const precision = registeredGraph?.graphPrecisionMode === 'off' ? 'off' : 'lsp'
     let build
     try {
         build = await buildGraphForRepo(record.repoPath, {
-            mode: 'full',
+            mode: buildMode,
+            precision,
             scope: '',
             outDir: record.graphDir,
             graphHome,
@@ -64,6 +71,7 @@ async function reconcileGraph(record, alias, role, graphHome) {
     const publicStatus = {
         role,
         repository: publicRecord(record, alias),
+        buildMode,
         status: build?.ok ? (refreshKind === 'none' ? 'CURRENT' : 'REFRESHED') : 'STALE_FALLBACK',
         refresh: build?.ok ? {
             kind: refreshKind || 'full',
@@ -73,7 +81,7 @@ async function reconcileGraph(record, alias, role, graphHome) {
     }
     if (build?.ok) {
         try {
-            return {record, alias, graph: loadGraph(join(record.graphDir, 'graph.json')), publicStatus}
+            return {record, alias, graph: loadGraph(join(record.graphDir, 'graph.json'), {repoRoot: record.repoPath}), publicStatus}
         } catch (error) {
             const reason = `refreshed graph could not be loaded: ${safeRefreshReason(record, error)}`
             return {record, alias, graph: null, reason, publicStatus: {...publicStatus, status: 'FAILED', reason}}
@@ -85,7 +93,7 @@ async function reconcileGraph(record, alias, role, graphHome) {
         return {
             record,
             alias,
-            graph: loadGraph(join(record.graphDir, 'graph.json')),
+            graph: loadGraph(join(record.graphDir, 'graph.json'), {repoRoot: record.repoPath}),
             reason: `${reason}; stale registered graph used`,
             publicStatus: {...publicStatus, reason: `${reason}; stale registered graph used`},
         }

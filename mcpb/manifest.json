@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
   "long_description": "Weavatrix builds dependency graphs of local repositories (tree-sitter WASM, no native toolchain) and serves 32 MCP tools for impact analysis, dead-code review, health, clones, architecture contracts, git-history evidence, and cross-repository API tracing. The default offline profile enables 29 local tools and no HTTP tools; pinned, osv, and hosted/full profiles tighten or explicitly expand that boundary.",
   "author": {
@@ -27,6 +27,7 @@
         "${user_config.capabilities}"
       ],
       "env": {
+        "WEAVATRIX_PRECISION": "${user_config.precision}",
         "WEAVATRIX_SYNC_URL": "${user_config.sync_url}",
         "WEAVATRIX_SYNC_TOKEN": "${user_config.sync_token}"
       }
@@ -44,6 +45,13 @@
       "title": "Security profile or capability groups",
       "description": "Use one profile: offline (default, no HTTP), pinned (no HTTP, repo switching, or cross-repo graph access), osv (explicit advisory refresh), hosted/full (owner-authenticated sync and contract pull). Advanced: exact comma-separated graph,search,source,health,build,retarget,crossrepo,advisories,hosted. Legacy online remains an alias for advisories,hosted.",
       "default": "offline",
+      "required": true
+    },
+    "precision": {
+      "type": "string",
+      "title": "TypeScript/JavaScript semantic precision",
+      "description": "Use lsp (default) for Weavatrix's bundled bounded language-server overlay, or off for parser-only graphs. This is applied before the first graph build.",
+      "default": "lsp",
       "required": true
     },
     "sync_url": {

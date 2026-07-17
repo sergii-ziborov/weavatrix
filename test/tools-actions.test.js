@@ -51,6 +51,8 @@ test("open_repo: switches to another Git repository with an existing graph in on
     repoBoundaryV: 1,
     edgeTypesV: 2,
     edgeProvenanceV: 1,
+    extractorSchemaV: 3,
+    graphPrecisionMode: "off",
   }));
   const ctx = {
     repoRoot: parent,
@@ -60,6 +62,7 @@ test("open_repo: switches to another Git repository with an existing graph in on
   try {
     const out = await tOpenRepo(null, { path: repo, build: false }, ctx);
     assert.match(out, /Opened .*target-repo/);
+    assert.match(out, /Build mode: full/);
     assert.equal(ctx.repoRoot, realpathSync.native(repo));
     assert.equal(ctx.graphPath, join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json"));
   } finally { rmSync(parent, { recursive: true, force: true }); }
@@ -169,6 +172,25 @@ test("sync_graph: uploads only the versioned metadata allowlist", async () => {
     globalThis.fetch = previousFetch;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("open_repo: build:false refuses an explicit build-mode mismatch without retargeting", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "wx-open-mode-"));
+  const repo = join(parent, "target-repo");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  const graphPath = join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json");
+  mkdirSync(graphOutDirForRepo(realpathSync.native(repo)), { recursive: true });
+  writeFileSync(graphPath, JSON.stringify({
+    nodes: [], links: [], repoBoundaryV: 1, edgeTypesV: 2, edgeProvenanceV: 1, extractorSchemaV: 3, graphPrecisionMode: "off",
+    graphBuildMode: "full",
+  }));
+  const ctx = { repoRoot: parent, graphPath: join(parent, "current.json"), reload() { throw new Error("must not reload"); } };
+  try {
+    const out = await tOpenRepo(null, { path: repo, mode: "no-tests", build: false }, ctx);
+    assert.match(out, /built in full, but no-tests was requested/);
+    assert.equal(ctx.repoRoot, parent);
+    assert.equal(ctx.graphPath, join(parent, "current.json"));
+  } finally { rmSync(parent, { recursive: true, force: true }); }
 });
 
 test("sync_graph: payload v3 derives and uploads a bounded evidence snapshot", async () => {

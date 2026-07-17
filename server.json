@@ -6,14 +6,14 @@
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.3",
+  "version": "0.2.4",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
@@ -33,6 +33,12 @@
         }
       ],
       "environmentVariables": [
+        {
+          "name": "WEAVATRIX_PRECISION",
+          "description": "Optional semantic precision mode: lsp (default) uses the bundled bounded TypeScript/JavaScript language-server overlay; off keeps parser-only graphs",
+          "format": "string",
+          "isRequired": false
+        },
         {
           "name": "WEAVATRIX_SYNC_URL",
           "description": "Optional endpoint used only by explicit hosted-profile sync_graph or pull_architecture_contract calls",

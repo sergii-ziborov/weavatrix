@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadGraph, diffGraphs, formatGraphDiff, findSeeds } from "../src/mcp/graph-context.mjs";
+import { loadGraph, diffGraphs, formatGraphDiff, findSeeds, prevGraphPathFor } from "../src/mcp/graph-context.mjs";
 import { tGodNodes, tQueryGraph } from "../src/mcp/tools-graph.mjs";
-import { tGetDependents } from "../src/mcp/tools-impact.mjs";
+import { tGetDependents, tGraphDiff } from "../src/mcp/tools-impact.mjs";
 import { tModuleMap, formatAuditFinding } from "../src/mcp/tools-health.mjs";
 import { aggregateGraph } from "../src/analysis/graph-analysis.js";
 
@@ -97,6 +97,125 @@ test("query_graph keeps one strong seed per architecture intent", () => {
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test("query_graph broad bootstrap and tool-execution seeds prefer executable production evidence", () => {
+  const product = [
+    { id: "bin/weavatrix-mcp.mjs", label: "weavatrix-mcp.mjs", source_file: "bin/weavatrix-mcp.mjs" },
+    { id: "src/mcp-server.mjs", label: "mcp-server.mjs", source_file: "src/mcp-server.mjs" },
+    { id: "src/mcp/catalog.mjs", label: "catalog.mjs", source_file: "src/mcp/catalog.mjs" },
+    { id: "src/mcp/tools-graph.mjs", label: "tools-graph.mjs", source_file: "src/mcp/tools-graph.mjs" },
+    { id: "src/mcp/tool-result.mjs", label: "tool-result.mjs", source_file: "src/mcp/tool-result.mjs" },
+  ];
+  const noise = [
+    { id: "server.json", label: "server.json", source_file: "server.json" },
+    { id: "site/index.html", label: "index.html", source_file: "site/index.html" },
+    { id: "docs/tool-execution.md", label: "tool-execution.md", source_file: "docs/tool-execution.md" },
+    { id: "benchmarks/fixtures/tool-runner.js", label: "tool-runner.js", source_file: "benchmarks/fixtures/tool-runner.js" },
+    { id: "test/tool-execution.test.js", label: "tool-execution.test.js", source_file: "test/tool-execution.test.js" },
+  ];
+  const fx = graphFile({
+    nodes: [...product, ...noise],
+    links: [
+      { source: product[0].id, target: product[1].id, relation: "imports" },
+      { source: product[1].id, target: product[2].id, relation: "imports" },
+      { source: product[2].id, target: product[3].id, relation: "imports" },
+      { source: product[1].id, target: product[4].id, relation: "imports" },
+    ],
+  });
+  try {
+    const seeds = findSeeds(fx.graph, "How does bootstrap and tool execution work?", 5).map((node) => node.id);
+    assert.deepEqual(seeds, [
+      "bin/weavatrix-mcp.mjs",
+      "src/mcp/catalog.mjs",
+      "src/mcp-server.mjs",
+      "src/mcp/tool-result.mjs",
+      "src/mcp/tools-graph.mjs",
+    ]);
+    assert.ok(seeds.every((id) => product.some((node) => node.id === id)), "metadata, site, docs, fixtures, and tests stay out of the default seeds");
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph treats frontend application startup as bootstrap instead of a feature-name match", () => {
+  const main = { id: "src/main.tsx", label: "main.tsx", source_file: "src/main.tsx" };
+  const root = { id: "src/index.tsx", label: "index.tsx", source_file: "src/index.tsx" };
+  const wrapper = { id: "src/apps/TopApplicationsWrapper.tsx", label: "TopApplicationsWrapper", source_file: "src/apps/TopApplicationsWrapper.tsx" };
+  const mapper = { id: "src/apps/top-applications.ts#mapTopApplication@12", label: "mapTopApplication()", source_file: "src/apps/top-applications.ts" };
+  const releaseHelper = { id: "scripts/verify-release.mjs#server@8", label: "server", source_file: "scripts/verify-release.mjs" };
+  const temporaryMain = { id: ".tmp-release/fixture/src/main.ts", label: "main.ts", source_file: ".tmp-release/fixture/src/main.ts" };
+  const helpers = Array.from({ length: 20 }, (_, index) => ({
+    id: `src/apps/application-helper-${index}.ts`, label: `application-helper-${index}.ts`, source_file: `src/apps/application-helper-${index}.ts`,
+  }));
+  const fx = graphFile({
+    nodes: [main, root, wrapper, mapper, releaseHelper, temporaryMain, ...helpers],
+    links: [
+      { source: main.id, target: root.id, relation: "imports" },
+      ...helpers.map((helper) => ({ source: wrapper.id, target: helper.id, relation: "imports" })),
+      ...helpers.map((helper) => ({ source: mapper.id, target: helper.id, relation: "calls" })),
+    ],
+  });
+  try {
+    const seeds = findSeeds(fx.graph, "How does application startup work?", 4).map((node) => node.id);
+    assert.deepEqual(seeds.slice(0, 2), [main.id, root.id]);
+    assert.ok(!seeds.slice(0, 2).includes(wrapper.id), "TopApplicationsWrapper cannot displace the real startup files despite its higher degree");
+    assert.ok(!seeds.slice(0, 2).includes(mapper.id), "mapTopApplication cannot displace the real startup files despite its higher degree");
+    assert.ok(!seeds.includes(releaseHelper.id), "release-script locals stay out of broad application-startup seeds");
+    assert.ok(!seeds.includes(temporaryMain.id), "temporary fixture entry points are classified out by default");
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph tool intent does not substring-match Tooltip components", () => {
+  const catalog = { id: "src/mcp/catalog.mjs", label: "catalog.mjs", source_file: "src/mcp/catalog.mjs" };
+  const tools = { id: "src/mcp/tools-actions.mjs", label: "tools-actions.mjs", source_file: "src/mcp/tools-actions.mjs" };
+  const tooltip = { id: "src/ui/Tooltip.tsx", label: "Tooltip", source_file: "src/ui/Tooltip.tsx" };
+  const rangesTooltip = { id: "src/chart/RangesTooltip.tsx#RangesTooltip@9", label: "RangesTooltip()", source_file: "src/chart/RangesTooltip.tsx" };
+  const helpers = Array.from({ length: 20 }, (_, index) => ({ id: `src/ui/helper-${index}.tsx`, label: `helper-${index}.tsx`, source_file: `src/ui/helper-${index}.tsx` }));
+  const fx = graphFile({
+    nodes: [catalog, tools, tooltip, rangesTooltip, ...helpers],
+    links: [
+      { source: catalog.id, target: tools.id, relation: "imports" },
+      ...helpers.map((helper) => ({ source: tooltip.id, target: helper.id, relation: "imports" })),
+      ...helpers.map((helper) => ({ source: rangesTooltip.id, target: helper.id, relation: "calls" })),
+    ],
+  });
+  try {
+    const seeds = findSeeds(fx.graph, "tool execution", 8).map((node) => node.id);
+    assert.deepEqual(seeds, [catalog.id, tools.id]);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph admits a classified surface only when the question asks for it", () => {
+  const product = { id: "src/mcp/tools-runner.mjs", label: "tools-runner.mjs", source_file: "src/mcp/tools-runner.mjs" };
+  const benchmark = { id: "benchmarks/tool-execution.js", label: "tool-execution.js", source_file: "benchmarks/tool-execution.js" };
+  const testFile = { id: "test/tool-execution.test.js", label: "tool-execution.test.js", source_file: "test/tool-execution.test.js" };
+  const fx = graphFile({ nodes: [product, benchmark, testFile], links: [] });
+  try {
+    assert.deepEqual(findSeeds(fx.graph, "tool execution", 3).map((node) => node.id), [product.id]);
+    assert.ok(findSeeds(fx.graph, "benchmark tool execution", 3).some((node) => node.id === benchmark.id));
+    assert.ok(findSeeds(fx.graph, "test tool execution", 3).some((node) => node.id === testFile.id));
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph uses repository path classification and product overrides", () => {
+  const product = { id: "src/mcp/tools-runner.mjs", label: "tools-runner.mjs", source_file: "src/mcp/tools-runner.mjs" };
+  const customBenchmark = { id: "custom-perf/tools-runner.mjs", label: "tools-runner.mjs", source_file: "custom-perf/tools-runner.mjs" };
+  const promotedBenchmark = { id: "benchmarks/product/tools-runner.mjs", label: "tools-runner.mjs", source_file: "benchmarks/product/tools-runner.mjs" };
+  const fx = graphFile({ nodes: [product, customBenchmark, promotedBenchmark], links: [] });
+  writeFileSync(join(fx.dir, ".weavatrix.json"), JSON.stringify({
+    classify: {
+      benchmark: ["custom-perf/**"],
+      product: ["benchmarks/product/**"],
+    },
+  }));
+  try {
+    const output = tQueryGraph(fx.graph, { question: "tool execution", depth: 1 }, { repoRoot: fx.dir });
+    assert.match(output, /src\/mcp\/tools-runner\.mjs/);
+    assert.match(output, /benchmarks\/product\/tools-runner\.mjs/, "classify.product keeps a benchmark-root runtime tool in production queries");
+    assert.doesNotMatch(output, /custom-perf\/tools-runner\.mjs/, "repository-defined benchmark paths are suppressed by default");
+
+    const explicit = tQueryGraph(fx.graph, { question: "benchmark tool execution", depth: 1 }, { repoRoot: fx.dir });
+    assert.match(explicit, /custom-perf\/tools-runner\.mjs/, "an explicit benchmark question can opt the custom class back in");
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
 test("query_graph exact seed_files disable fuzzy architecture seeds unless augmentation is explicit", () => {
   const pinned = { id: "src/main.tsx", label: "main.tsx", source_file: "src/main.tsx" };
   const fuzzy = { id: "src/auth/AuthGate.tsx", label: "AuthGate.tsx", source_file: "src/auth/AuthGate.tsx" };
@@ -108,6 +227,18 @@ test("query_graph exact seed_files disable fuzzy architecture seeds unless augme
     const augmented = tQueryGraph(fx.graph, {question: "authentication", seed_files: ["src/main.tsx"], augment_seeds: true, depth: 1});
     assert.match(augmented, /Seeds:.*AuthGate/);
   } finally { rmSync(fx.dir, {recursive: true, force: true}); }
+});
+
+test("query_graph exact seed_files can pin non-product evidence despite production-first fuzzy ranking", () => {
+  const production = { id: "src/mcp/tools-runner.mjs", label: "tools-runner.mjs", source_file: "src/mcp/tools-runner.mjs" };
+  const fixture = { id: "benchmarks/fixtures/tool-runner.js", label: "tool-runner.js", source_file: "benchmarks/fixtures/tool-runner.js" };
+  const fx = graphFile({ nodes: [production, fixture], links: [] });
+  try {
+    const output = tQueryGraph(fx.graph, { question: "tool execution", seed_files: [fixture.id], depth: 1 });
+    assert.match(output, /Seeds: tool-runner\.js/);
+    assert.match(output, /benchmarks\/fixtures\/tool-runner\.js/);
+    assert.doesNotMatch(output, /Seeds:.*tools-runner\.mjs/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
 test("barrel proxy hops do not inflate semantic hubs, modules, or dependents", () => {
@@ -237,6 +368,18 @@ test("graph_diff treats a method with only ownership remaining as newly orphaned
   assert.ok(diffGraphs(oldGraph, newGraph).orphaned.includes(nodes[1].id));
 });
 
+test("graph_diff refuses previous snapshots built in a different graph mode", async () => {
+  const fx = graphFile({ graphBuildMode: "no-tests", nodes: [{ id: "src/a.js" }], links: [] });
+  writeFileSync(prevGraphPathFor(fx.path), JSON.stringify({
+    graphBuildMode: "full", nodes: [{ id: "src/a.js" }, { id: "test/a.test.js" }], links: [],
+  }));
+  try {
+    const output = await tGraphDiff(fx.graph, {}, { graphPath: fx.path, repoRoot: fx.dir });
+    assert.match(output, /previous graph mode is full, current graph mode is no-tests/);
+    assert.match(output, /not comparable/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
 test("graph_diff calls an SCC shrink a membership change, not a newly introduced cycle", () => {
   const nodes = ["A", "B", "T"].map((id) => ({ id }));
   const oldGraph = {
@@ -333,5 +476,47 @@ test("module aggregation and module_map separate runtime, type-only, and compile
     assert.match(output, /Strongest runtime module dependencies:[\s\S]*main → shared/);
     assert.match(output, /Compile-time module dependencies[\s\S]*renderer → main  \(1; 1 type-only, 0 compile-only\)/);
     assert.match(output, /watcher-rs\/src → watcher-rs\/src\/api  \(1; 0 type-only, 1 compile-only\)/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("module_map excludes classified non-product surfaces unless explicitly requested", () => {
+  const graph = {
+    edgeTypesV: 2,
+    nodes: [
+      { id: "src/app.js", source_file: "src/app.js", file_type: "code" },
+      { id: "test/app.test.js", source_file: "test/app.test.js", file_type: "code" },
+      { id: "benchmarks/fixtures/case.js", source_file: "benchmarks/fixtures/case.js", file_type: "code" },
+    ],
+    links: [],
+  };
+  const fx = graphFile(graph);
+  try {
+    const production = tModuleMap(fx.graph, { top_n: 10 }, { graphPath: fx.path });
+    assert.match(production, /Scope: production-only \(default\); excluded 2/);
+    assert.match(production, /src .* 1 files/);
+    assert.doesNotMatch(production, /test .* 1 files|benchmarks .* 1 files/);
+    const complete = tModuleMap(fx.graph, { top_n: 10, include_non_product: true }, { graphPath: fx.path });
+    assert.match(complete, /Scope: all indexed files/);
+    assert.match(complete, /test .* 1 files/);
+    assert.match(complete, /benchmarks\/fixtures .* 1 files/);
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("module_map retains classified files automatically for a tests-only graph", () => {
+  const fx = graphFile({
+    graphBuildMode: "tests-only",
+    edgeTypesV: 2,
+    nodes: [
+      { id: "test/app.test.js", source_file: "test/app.test.js", file_type: "code" },
+      { id: "test/helpers/mock.js", source_file: "test/helpers/mock.js", file_type: "code" },
+    ],
+    links: [{ source: "test/app.test.js", target: "test/helpers/mock.js", relation: "imports" }],
+  });
+  try {
+    const output = tModuleMap(fx.graph, { top_n: 10 }, { graphPath: fx.path });
+    assert.match(output, /Scope: tests-only graph/);
+    assert.match(output, /test .* 1 files/);
+    assert.match(output, /test\/helpers .* 1 files/);
+    assert.doesNotMatch(output, /production-only/);
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });

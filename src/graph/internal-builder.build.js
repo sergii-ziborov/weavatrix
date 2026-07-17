@@ -89,6 +89,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       const suffix = /^:[A-Za-z0-9_-]+$/.test(extra?.idSuffix || "") ? extra.idSuffix : "";
       const id = `${fileRel}#${name}@${line}${suffix}`; if (nodeIds.has(id)) return;
       const sourceNode = extra && extra.sourceNode;
+      const selectionNode = extra && extra.selectionNode;
       const endLine = sourceNode?.endPosition ? sourceNode.endPosition.row + 1 : 0;
       let complexity = null;
       if (callable && sourceNode) {
@@ -98,10 +99,38 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       addNode({
         id,
         label: callable ? `${name}()` : name,
+        ...(callable ? { callable: true } : {}),
         file_type: "code",
         source_file: fileRel,
         source_location: `L${line}`,
         ...(endLine >= line ? { source_end: `L${endLine}` } : {}),
+        ...(sourceNode?.startPosition && sourceNode?.endPosition ? {
+          // web-tree-sitter Point columns are zero-based UTF-16 code-unit offsets. Keep the
+          // declaration body range as well as the identifier selection so LSP reference
+          // locations on a boundary line cannot be attributed to the wrong symbol.
+          source_range: {
+            start: {
+              line: sourceNode.startPosition.row,
+              character: sourceNode.startPosition.column,
+            },
+            end: {
+              line: sourceNode.endPosition.row,
+              character: sourceNode.endPosition.column,
+            },
+          },
+        } : {}),
+        ...(selectionNode?.startPosition && selectionNode?.endPosition ? {
+          // web-tree-sitter's JavaScript Point columns are already zero-based UTF-16 code-unit
+          // offsets, matching LSP positions exactly (including text before non-ASCII identifiers).
+          selection_start: {
+            line: selectionNode.startPosition.row,
+            character: selectionNode.startPosition.column,
+          },
+          selection_end: {
+            line: selectionNode.endPosition.row,
+            character: selectionNode.endPosition.column,
+          },
+        } : {}),
         ...(complexity ? { complexity } : {}),
         ...(extra && extra.exported ? { exported: true } : {}),
         ...(extra && extra.decorated ? { decorated: true } : {}),
@@ -217,7 +246,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     for (const cap of caps(grammar, lang.calls, tree.rootNode)) {
       const caller = enclosing(fileRel, cap.node.startPosition.row + 1); if (!caller) continue;
       const target = resolveCall(cap.node.text, fileRel); if (!target || target === caller.id) continue;
-      links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED" });
+      links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
     }
     // qualified/selector calls (Go): `pkg.Func()` → the imported package's dir; else `receiver.Method()` → the
     // SAME package (heuristic by method name — connects lifecycle methods like peer.Enable() that need type info).
@@ -229,7 +258,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       const dir = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : "";
       const dm = goDirSymbols.get(imp && imp.targetDir ? imp.targetDir : dir);
       const target = dm && dm.get(fld.text);
-      if (target && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED" });
+      if (target && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
     }
     for (const heritageSpec of lang.heritage || []) {
       const query = typeof heritageSpec === "string" ? heritageSpec : heritageSpec.query;
@@ -253,7 +282,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         if (origin.status !== "resolved") continue;
         const target = symByFileName.get(origin.origin.file)?.get(origin.origin.name);
         const caller = enclosing(fileRel, cap.node.startPosition.row + 1);
-        if (target && caller && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED" });
+        if (target && caller && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
       }
       for (const cap of caps(grammar, `[
         (jsx_opening_element name: (_) @jsx)
@@ -335,7 +364,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     complexityV: 1,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
-    extractorSchemaV: 1,
+    extractorSchemaV: 3,
     jsExportRecords: Object.fromEntries([...jsExports.entries()].sort(([a], [b]) => a.localeCompare(b))),
     fileHashes: snapshot.fileHashes,
     fileExportSignatures: snapshot.fileExportSignatures,

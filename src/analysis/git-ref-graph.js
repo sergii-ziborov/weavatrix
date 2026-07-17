@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os'
 import {spawnSync} from 'node:child_process'
 import {childProcessEnv} from '../child-env.js'
 import {buildInternalGraph} from '../graph/internal-builder.js'
+import {filterGraphForMode} from '../graph/graph-filter.js'
 
 const SAFE_REF = /^(?!-)[A-Za-z0-9][A-Za-z0-9._\/@{}+~^-]{0,199}$/
 
@@ -68,7 +69,14 @@ export async function withGitRefCheckout(repoRoot, requestedRef, operation) {
     }
 }
 
-export async function buildGraphAtGitRef(repoRoot, requestedRef) {
-    const result = await withGitRefCheckout(repoRoot, requestedRef, async (checkout) => buildInternalGraph(checkout))
+export async function buildGraphAtGitRef(repoRoot, requestedRef, {mode = 'full'} = {}) {
+    const buildMode = ['full', 'no-tests', 'tests-only'].includes(mode) ? mode : 'full'
+    const result = await withGitRefCheckout(repoRoot, requestedRef, async (checkout) => {
+        const fullGraph = await buildInternalGraph(checkout)
+        return {
+            ...filterGraphForMode(fullGraph, buildMode, {repoRoot: checkout}),
+            graphBuildMode: buildMode,
+        }
+    })
     return result.ok ? {...result, graph: result.value} : result
 }

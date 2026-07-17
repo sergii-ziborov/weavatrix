@@ -111,10 +111,19 @@ An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — instal
 compile-only edges (Rust module/use, Java imports) are reported separately where that distinction
 changes the result.
 
-Every current edge also carries versioned provenance: `EXTRACTED`, `RESOLVED`, or `INFERRED` today,
-with `EXACT_LSP` and `CONFLICT` reserved for the optional precision overlay. `graph_stats` reports
-the complete breakdown; provenance describes how the relationship was established, while the older
-`confidence` field remains for compatibility.
+Every current edge carries versioned provenance. The parser emits `EXTRACTED`, `RESOLVED`, and
+`INFERRED`; the built-in bounded TypeScript/JavaScript precision overlay upgrades only references
+confirmed by its bundled `typescript-language-server` + TypeScript runtime to `EXACT_LSP`.
+`CONFLICT` means evidence disagrees. `graph_stats` reports the provenance breakdown and the semantic
+provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means precision was explicitly
+disabled and only static evidence is active. Java and Rust language-server providers are not bundled
+in 0.2.4: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
+TypeScript/JavaScript overlay.
+
+The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
+before starting the MCP server for parser-only operation from the first build, or pass
+`precision:"off"` to `rebuild_graph` / `open_repo`. The MCPB installer exposes the same `lsp` / `off`
+choice as **TypeScript/JavaScript semantic precision**.
 
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback), `read_source` (a
 symbol's actual code in one hop), `list_endpoints` (HTTP route inventory:
@@ -159,8 +168,10 @@ in the per-user cache and never need to be committed to Git.
 
 `query_graph` accepts optional `seed_files` when an architectural question must start from exact
 entry points. Resolved explicit seeds are exclusive by default; set `augment_seeds:true` only when
-fuzzy question-derived seeds are also wanted. Broad bootstrap/routing/authentication questions
-without explicit seeds rank conventional entry points and high-level modules ahead of incidental matches.
+question-derived seeds are also wanted. Broad bootstrap/tool-execution/routing questions now rank
+conventional executables and graph-declared production entry points ahead of site, documentation, benchmark
+and fixture matches. Broad ranking remains orientation evidence; use `seed_files` when the intended
+entry point is already known.
 
 **advisories** *(network, explicit opt-in)* — `refresh_advisories`
 
@@ -172,6 +183,40 @@ ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
+
+### 0.2.4 graph-mode correctness and semantic precision patch
+
+- `graph_diff base_ref=...` builds the immutable baseline in the current graph mode, so a
+  `no-tests` graph is never compared with a hidden `full` universe. Previous-rebuild snapshots with
+  mismatched modes are rejected instead of reporting false removals or cycle drift.
+- `trace_api_contract` preserves each registered repository's build mode during refresh and exposes
+  that mode in `graphReconciliation`.
+- `graph_stats` and `open_repo` expose the canonical graph path and build mode; an explicit mode
+  mismatch with `build:false` fails closed instead of silently retargeting.
+- `module_map` is production-only by default and can opt back into classified tests, fixtures,
+  benchmarks, generated output and docs with `include_non_product:true`.
+- A bundled, read-only TypeScript/JavaScript language server validates a bounded set of semantic
+  references after graph reconciliation. Confirmed edges become `EXACT_LSP`; zero-reference evidence
+  can strengthen an internal dead-code candidate only after a successful exact query. Partial,
+  unavailable and revision-mismatched overlays stay visible and never become cosmetic exactness.
+  The provider is Weavatrix's pinned `typescript-language-server` + TypeScript runtime, never a
+  repository binary or `npx` download. Automatic type acquisition is disabled. Its child environment
+  is reduced to OS/temp/locale basics with a Node/System path; registry, proxy, cloud, token and
+  `NODE_OPTIONS` values are not inherited. TypeScript may still read locally declared project
+  configuration, dependencies and type declarations; Weavatrix accepts returned evidence only after
+  repository realpath containment. Applicable config chains are audited before provider startup;
+  configured language-service plugins and unresolved/outside config are refused, while semantic
+  inputs are fingerprinted before cache reuse and rechecked after each run. No source or evidence is
+  transmitted, and the provider performs no Weavatrix HTTP request. MCP EOF/SIGTERM drains or
+  tree-terminates TLS and tsserver before the stdio process exits.
+- Broad `query_graph` bootstrap and tool-execution ranking now prefers production executables and
+  graph-declared entry points over site, docs, benchmark and fixture surfaces. Exact `seed_files` remain
+  the deterministic option when the caller already knows the entry point.
+- The bundled skill routes orientation, diff review, cross-repository API tracing and exact-symbol
+  work through Weavatrix's own evidence states. Java/Rust exact providers remain `UNAVAILABLE` in
+  this release instead of being presented as compiler-confirmed.
+
+Full patch notes: [docs/releases/v0.2.4.md](docs/releases/v0.2.4.md).
 
 ### 0.2.3 real-wrapper patch
 
@@ -379,9 +424,9 @@ vulnerability findings. This is where each capability comes from and how it is c
 | Capability alert | Why it exists | Activation and boundary |
 |---|---|---|
 | Network access | `refresh_advisories` sends pinned package names and versions to OSV; `pull_architecture_contract` sends an opaque repository UUID and receives an owner-approved contract; `sync_graph` sends a normalized repository label plus an allowlisted graph/evidence payload. Evidence is derived locally from source and manifests, but source bodies, snippets, absolute paths, environment values, credentials and Git remotes are excluded | `offline` and `pinned` expose no network tools. `osv` exposes only advisory refresh. `hosted`/`full` expose all three; every request still requires an explicit tool call, and hosted calls require `WEAVATRIX_SYNC_URL` |
-| Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; timed-out Windows child processes may be terminated | Used only by the corresponding local operation; it does not imply network access |
+| Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; the bundled TLS/tsserver process supplies bounded JS/TS semantic evidence; timed-out Windows child trees may be terminated | Used only by the corresponding local operation. The semantic provider is package-pinned, disables automatic type acquisition, and never invokes a repository binary, script, installer or `npx` |
 | Debug / dynamic loading | Cache-busted `import()` hot-reloads watched MCP tool entry modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
-| Environment access | Reads `WEAVATRIX_*` configuration; local child processes inherit the normal host environment | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment and read only by `sync_graph` / `pull_architecture_contract` |
+| Environment access | Reads `WEAVATRIX_*` configuration; ordinary local helpers inherit a credential-stripped environment, while TLS/tsserver receives only allowlisted OS/temp/locale values and a constrained executable path | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment. TLS/tsserver also receives no registry/proxy/cloud credentials or `NODE_OPTIONS` |
 | Filesystem access | Reads the active repository, graph, lockfiles and coverage reports; writes derived graphs and advisory/architecture caches | Realpath containment blocks traversal and symlink/junction escapes. The `pinned` profile removes `open_repo`; the default `offline` profile permits only explicit local switching. The optional malware dependency scan may inspect installed dependency caches such as GOPATH |
 | URL strings | Fixed OSV/documentation URLs plus a user-configured sync URL | A URL string causes no request by itself; only the three network-profile tools perform requests |
 
@@ -435,9 +480,9 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
   [app.weavatrix.com](https://app.weavatrix.com): explicit source-free sync,
   immutable history, Flow/DSM/Map, target architecture and bounded review
   evidence. Hosted use remains optional and owner-authenticated.
-- **Semantic precision bridge** — optional local language-server validation for
-  ambiguous impact, reference and dead-code evidence; the current parser graph
-  remains the offline fallback.
+- **Semantic precision bridge** shipped for TypeScript/JavaScript in 0.2.4: a bounded, revision-bound
+  local overlay validates references with the bundled language server while the parser graph remains
+  the fallback. Java and Rust providers are not bundled yet and stay explicitly `UNAVAILABLE`.
 - **Git-native architecture history** — bounded tag/ref timelines and branch
   reports built outside the worktree; graph artifacts stay out of Git.
 - **Cross-repository company evidence** — endpoints, events and internal

@@ -14,7 +14,8 @@ import { graphHomeDir, graphOutDirForRepo, graphStorageKey, repoTopFolders, summ
 import { registerRepository } from "./graph/repo-registry.js";
 import { refreshGraphIncrementally, snapshotRepository } from "./graph/incremental-refresh.js";
 import { atomicWriteFileSync, withFileLock } from "./graph/file-lock.js";
-import { repositoryFreshnessProbe, stampRepositoryFreshness } from "./graph/freshness-probe.js";
+import { graphSchemaIsCurrent, repositoryFreshnessProbe, stampRepositoryFreshness } from "./graph/freshness-probe.js";
+import { buildLspPrecisionOverlay, invalidatePrecisionOverlay, precisionSummary } from "./precision/lsp-overlay.js";
 
 // The worker path deadlocks web-tree-sitter's WASM in Electron's worker threads (fine in plain Node) — off
 // until that's Electron-safe. In-process + event-loop yielding keeps the window responsive without it.
@@ -25,6 +26,10 @@ const USE_BUILD_WORKER = false;
 // workerStartFailed → we do NOT fall back to the in-process build, which would hang the same way and
 // freeze the whole app on the main thread). 4 min is generous for very large repos.
 const BUILD_WORKER_TIMEOUT_MS = 4 * 60 * 1000;
+
+export function defaultPrecisionMode(env = process.env) {
+  return env?.WEAVATRIX_PRECISION === "off" ? "off" : "lsp";
+}
 
 function buildGraphInWorker(payload) {
   return new Promise((resolve, reject) => {
@@ -56,7 +61,7 @@ function buildGraphInWorker(payload) {
   });
 }
 
-async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central }) {
+async function buildAndWriteInProcess(repoPath, { mode, scope, precision, graphJson, central }) {
   const { buildInternalGraph } = await import("./graph/internal-builder.js");
   // Capture the cheap Git state on both sides of the authoritative build. Only an unchanged pair is
   // safe to persist: if the working tree moves while parsing, the next process must take the slow path.
@@ -66,7 +71,7 @@ async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, centra
   if (mode === "full" && !scope && existsSync(graphJson)) {
     try {
       const existing = JSON.parse(readFileSync(graphJson, "utf8"));
-      if (existing.graphBuildMode === "full" && !existing.graphBuildScope) {
+      if (existing.graphBuildMode === "full" && !existing.graphBuildScope && graphSchemaIsCurrent(existing)) {
         refresh = await refreshGraphIncrementally(repoPath, existing, { buildGraph: buildInternalGraph });
         graph = refresh.graph;
       }
@@ -75,7 +80,7 @@ async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, centra
   if (!graph && mode !== "full" && !scope && existsSync(graphJson)) {
     try {
       const existing = JSON.parse(readFileSync(graphJson, "utf8"));
-      if (existing.graphBuildMode === mode && existing.graphRevision) {
+      if (existing.graphBuildMode === mode && existing.graphRevision && graphSchemaIsCurrent(existing)) {
         const snapshot = snapshotRepository(repoPath);
         if (snapshot.revision === existing.graphRevision) {
           graph = existing;
@@ -93,6 +98,9 @@ async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, centra
   if (scope) graph = filterGraphByScope(graph, scope);
   graph.graphBuildMode = mode;
   graph.graphBuildScope = scope || "";
+  const requestedPrecision = precision === "off" ? "off" : "lsp";
+  const precisionModeChanged = graph.graphPrecisionMode !== requestedPrecision;
+  graph.graphPrecisionMode = requestedPrecision;
   const probeAfter = scope ? null : repositoryFreshnessProbe(repoPath);
   const stableProbe = probeBefore && probeAfter === probeBefore ? probeAfter : null;
   const freshnessMetadataChanged = stampRepositoryFreshness(graph, stableProbe, mode);
@@ -100,9 +108,32 @@ async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, centra
   // multi-megabyte graph merely to answer that nothing changed (or manufacture a newer mtime).
   // A one-time metadata-only write is intentional for legacy graphs so the next MCP process can use
   // the persisted probe instead of repeating a full repository snapshot.
-  if (refresh?.kind !== "none" || freshnessMetadataChanged) {
+  if (refresh?.kind !== "none" || freshnessMetadataChanged || precisionModeChanged) {
     mkdirSync(central, { recursive: true });
     atomicWriteFileSync(graphJson, JSON.stringify(graph), "utf8");
+  }
+  mkdirSync(central, { recursive: true });
+  let precisionOverlay = await buildLspPrecisionOverlay({
+    repoRoot: repoPath,
+    graph,
+    graphPath: graphJson,
+    mode: requestedPrecision,
+  });
+  if (requestedPrecision === "lsp") {
+    try {
+      // LSP deliberately runs after graph serialization and can outlive the initial snapshot. A
+      // complete second content snapshot catches source/config add-delete races (including Git
+      // assume-unchanged paths) that a status-only token cannot prove away.
+      if (snapshotRepository(repoPath).revision !== graph.graphRevision) {
+        precisionOverlay = invalidatePrecisionOverlay(graphJson, graph);
+      }
+    } catch {
+      precisionOverlay = invalidatePrecisionOverlay(
+        graphJson,
+        graph,
+        "repository freshness could not be verified after semantic precision",
+      );
+    }
   }
   return {
     nodes: graph.nodes.length,
@@ -110,10 +141,17 @@ async function buildAndWriteInProcess(repoPath, { mode, scope, graphJson, centra
     communities: summarizeCommunities(graphJson),
     hotspots: summarizeHotspots(graphJson),
     refresh,
+    precision: precisionSummary(precisionOverlay),
   };
 }
 
-export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", outDir, graphHome } = {}) {
+export async function buildGraphForRepo(repoPath, {
+  mode = "full",
+  scope = "",
+  precision = defaultPrecisionMode(),
+  outDir,
+  graphHome,
+} = {}) {
   if (!existsSync(repoPath)) return { ok: false, error: "Repo path not found", builder: "internal" };
   const registryHome = graphHome || graphHomeDir();
   const canonicalDir = graphHome ? join(registryHome, graphStorageKey(repoPath)) : graphOutDirForRepo(repoPath);
@@ -126,11 +164,11 @@ export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", o
     // between file chunks, so the main-thread parse no longer freezes the window — the reason the worker was
     // introduced. buildGraphInWorker/USE_BUILD_WORKER are kept for a future Electron-safe re-enable.
     const build = () => USE_BUILD_WORKER
-      ? buildGraphInWorker({ repoPath, mode, scope, graphJson, central }).catch((e) => {
-          if (e && e.workerStartFailed) return buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central });
+      ? buildGraphInWorker({ repoPath, mode, scope, precision, graphJson, central }).catch((e) => {
+          if (e && e.workerStartFailed) return buildAndWriteInProcess(repoPath, { mode, scope, precision, graphJson, central });
           throw e;
         })
-      : buildAndWriteInProcess(repoPath, { mode, scope, graphJson, central });
+      : buildAndWriteInProcess(repoPath, { mode, scope, precision, graphJson, central });
     // Canonical graphs are shared by all local MCP clients. Serialize the complete read/refresh/write
     // transaction so an older process cannot overwrite a newer incremental result.
     const canonical = !scope && resolve(central) === resolve(canonicalDir);
@@ -154,7 +192,8 @@ export async function buildGraphForRepo(repoPath, { mode = "full", scope = "", o
       communities: built.communities,
       hotspots: built.hotspots,
       refresh: built.refresh,
-      log: `built-in builder: ${built.nodes} nodes, ${built.links} links (${built.refresh?.kind || "full"}: ${built.refresh?.reason || "build"})`
+      precision: built.precision,
+      log: `built-in builder: ${built.nodes} nodes, ${built.links} static links (${built.refresh?.kind || "full"}: ${built.refresh?.reason || "build"}); semantic precision ${built.precision?.state || "UNAVAILABLE"}, ${built.precision?.verifiedEdges || 0} EXACT_LSP edge(s)`
     };
   } catch (error) {
     return { ok: false, error: `graph build failed: ${error.message}`, builder: "internal" };

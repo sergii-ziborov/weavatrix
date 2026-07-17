@@ -60,15 +60,15 @@ Budgets live in `benchmark/cases.mjs` and are reported with every run:
 
 Edge provenance is a separate, versioned contract from legacy confidence:
 
-- `EXACT_LSP` is reserved for a future bounded language-server confirmation;
+- `EXACT_LSP` is emitted only by the bundled, bounded TypeScript/JavaScript language-server overlay;
 - `EXTRACTED` comes directly from parsed syntax or ownership structure;
 - `RESOLVED` means an extracted reference/import was resolved to a repository target;
 - `INFERRED` is a conservative static relationship such as a name-resolved call;
 - `CONFLICT` is reserved for disagreeing evidence that must not be silently collapsed.
 
-The current builder emits the middle three kinds. The schema deliberately exposes the two reserved
-kinds now so the optional 0.3.0 precision overlay can enrich individual ambiguous edges without
-changing graph identity or replacing repo-wide analysis.
+The static builder emits the middle three kinds. The revision-bound 0.2.4 precision sidecar can
+enrich individual TS/JS references with `EXACT_LSP` without changing static graph identity or
+replacing repo-wide analysis; `CONFLICT` remains reserved for explicitly disagreeing evidence.
 
 Correctness and byte gates are deterministic release blockers. Latency gates use deliberately broad
 ceilings and should be compared on the same class of machine; a failure still requires inspection

@@ -83,6 +83,7 @@ export default {
       const id = nodeIds.has(base) ? `${base}:c${nameNode.startPosition.column + 1}` : base;
       addSym(nameNode.text, lineOf(nameNode), callable, {
         ...extra,
+        selectionNode: nameNode,
         ...(id === base ? {} : { idSuffix: id.slice(base.length) }),
       });
       return nodeIds.has(id) ? id : null;

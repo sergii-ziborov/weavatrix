@@ -28,6 +28,24 @@ dependency caches such as GOPATH. `offline` permits repository switching only th
 local `open_repo` call; select `pinned` to remove that tool, the global repository listing, and
 cross-repository API tracing, holding a hard startup-repository boundary.
 
+The JS/TS precision overlay is enabled by default for new graphs and runs the package-pinned `typescript-language-server` and
+TypeScript runtime as local child processes. It never resolves a repository executable, invokes
+`npx`, runs package scripts, or installs dependencies. Automatic type acquisition is disabled, and
+the provider receives an allowlisted OS/temp/locale environment with a constrained executable path;
+registry, proxy, cloud, token and `NODE_OPTIONS` values are excluded. The provider makes no
+Weavatrix HTTP request and Weavatrix transmits no source or evidence. TypeScript may still read
+locally declared project configuration, dependencies and type declarations; returned evidence is
+accepted only after repository realpath containment. Before spawning the provider, Weavatrix parses
+the applicable repo-contained TypeScript/JavaScript config chains with its bundled TypeScript API and
+refuses semantic mode when a configured language-service plugin, unresolved/outside config, or input
+safety limit is encountered. Config and configured-project inputs are fingerprinted and rechecked
+before cached evidence is used and after each provider run.
+This is an application/process boundary rather than an operating-system
+network sandbox. On stdio EOF, SIGTERM or SIGINT, the MCP server stops new providers, performs a
+bounded graph-work drain, and closes or tree-terminates TLS/tsserver before exiting.
+Set `WEAVATRIX_PRECISION=off` before server startup (or select `off` in the MCPB semantic-precision
+setting) to keep new graphs parser-only from their first build.
+
 Network capabilities are split by purpose. `osv` adds only `refresh_advisories`, which sends pinned
 package names and versions to OSV.dev when called. `hosted` / `full` also expose `sync_graph` and
 `pull_architecture_contract`; both require a user-configured endpoint, and contract pull requires
