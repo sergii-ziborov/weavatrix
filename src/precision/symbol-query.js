@@ -1,5 +1,6 @@
 import {existsSync, readFileSync, statSync} from 'node:fs'
 import {dirname, resolve} from 'node:path'
+import {boundedInteger} from '../bounds.js'
 import {atomicWriteFileSync, withFileLock} from '../graph/file-lock.js'
 import {
     buildLspPrecisionOverlay,
@@ -14,11 +15,6 @@ const MAX_CACHE_ENTRIES = 32
 const MAX_CACHE_BYTES = 8 * 1024 * 1024
 const MAX_CACHE_READ_BYTES = 16 * 1024 * 1024
 const inFlight = new Map()
-
-const boundedInteger = (value, fallback, minimum, maximum) => {
-    const number = Number(value)
-    return Math.max(minimum, Math.min(maximum, Number.isFinite(number) ? Math.floor(number) : fallback))
-}
 
 export function symbolPrecisionCachePath(graphPath) {
     return resolve(dirname(graphPath), SYMBOL_PRECISION_CACHE_FILE)

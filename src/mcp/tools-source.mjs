@@ -1,4 +1,5 @@
 import {readFileSync, statSync} from 'node:fs'
+import {boundedInteger} from '../bounds.js'
 import {resolveRepoPath} from '../repo-path.js'
 import {isStructuralRelation} from '../graph/relations.js'
 import {querySymbolPrecision} from '../precision/symbol-query.js'
@@ -8,11 +9,6 @@ import {degreeOf, isSymbol, labelOf, resolveNodeInfo} from './graph-context.mjs'
 const MAX_EXCERPT_CHARS = 4_000
 const MAX_LOCATION_SAMPLES = 5
 const MAX_GRAPH_OCCURRENCES = 100
-
-const boundedInteger = (value, fallback, minimum, maximum) => {
-    const number = Number(value)
-    return Math.max(minimum, Math.min(maximum, Number.isFinite(number) ? Math.floor(number) : fallback))
-}
 
 const sourceLine = (node) => {
     const match = /L(\d+)/.exec(String(node?.source_location || ''))
@@ -25,7 +21,10 @@ function candidateNodes(g, query, limit = 20) {
     const exact = g.byLabel.get(text)
     const nodes = exact?.length ? exact : g.nodes.filter((node) =>
         String(node.id).toLowerCase().includes(text) || String(node.label || '').toLowerCase().includes(text))
-    return nodes.slice(0, limit).map((node) => ({id: String(node.id), label: String(node.label || node.id), file: node.source_file || null}))
+    return nodes.slice(0, limit).map((node) => ({
+        id: String(node.id), label: String(node.label || node.id), file: node.source_file || null,
+        ...(node.symbol_space ? {space: node.symbol_space} : {}),
+    }))
 }
 
 function excerpt(repoRoot, file, focusLine, contextLines) {
@@ -192,6 +191,8 @@ export async function tInspectSymbol(g, args = {}, ctx = {}) {
         id: targetId,
         label: String(node.label || targetId),
         kind: String(node.symbol_kind || 'symbol'),
+        space: String(node.symbol_space || 'value'),
+        exported: node.exported === true,
         file: String(node.source_file || targetId.split('#')[0]),
         line: sourceLine(node),
         ...(node.source_range ? {range: node.source_range} : {}),

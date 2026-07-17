@@ -90,6 +90,17 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
   unbounded claim inside the local syntax model.
 - Executable scope, tests and release gates: [`v0.2.5-development-plan.md`](v0.2.5-development-plan.md).
 
+### Public `0.2.6` — compact context and TypeScript identities
+
+- Delivered: bounded `context_bundle` output that aggregates graph relations into logical containers
+  and combines them with exact point-query evidence and a small source workset.
+- Delivered: line-addressable named, aliased, type-only and star re-export occurrences with resolved
+  origin propagation through barrel chains.
+- Delivered: separate TypeScript type/value graph identities, including merged-space classes and
+  enums, with type-only references kept out of runtime call evidence.
+- CFG reachability, data flow, taint/security analysis and interprocedural complexity remain a
+  separately versioned hosted engine rather than claims attached to the local syntax graph.
+
 ### Public `0.3.0` — precision expansion
 
 - Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and

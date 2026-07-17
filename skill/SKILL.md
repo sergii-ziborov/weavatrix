@@ -40,13 +40,14 @@ Start from the task, not from the complete tool list:
   `get_dependents` and `read_source`.
 - **Trace an API across repositories**: `list_known_repos` -> `trace_api_contract` with an explicit
   backend and client list; inspect each `graphReconciliation.buildMode` before using the verdict.
-- **Inspect exact symbol references**: start with `graph_stats`, then call `inspect_symbol` with an
-  exact node ID (or an unambiguous label). It spends a bounded point query beyond the broad overlay
-  cap and returns occurrence containers plus source context. Use `get_dependents` for transitive
+- **Inspect exact symbol references**: start with `graph_stats`, then call `context_bundle` with an
+  exact node ID (or an unambiguous label) for a compact definition, grouped relations, exact
+  re-export sites and source workset. Use `inspect_symbol` when the raw bounded point query is needed;
+  it spends evidence beyond the broad overlay cap. Use `get_dependents` for transitive
   graph impact and `find_dead_code` for bounded zero-reference
   candidates. Treat `PARTIAL`, `UNAVAILABLE`, `OFF`, or zero exact edges as incomplete evidence, not
   a compiler-exact result; `OFF` means the caller explicitly selected static-only mode. Java and Rust
-  providers are not bundled in 0.2.5, so their edges never become `EXACT_LSP` even when a mixed
+  providers are not bundled in 0.2.6, so their edges never become `EXACT_LSP` even when a mixed
   repository has a complete TypeScript/JavaScript overlay.
 - **Explore an architectural question**: use broad `query_graph` when entry points are unknown; its
   bootstrap/tool-execution ranking prefers production executables over docs, sites and fixtures.

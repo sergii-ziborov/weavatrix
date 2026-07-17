@@ -9,7 +9,7 @@ import {childProcessEnv} from '../child-env.js'
 import {createRepoBoundary} from '../repo-path.js'
 
 export const REPOSITORY_FRESHNESS_PROBE_V = 1
-export const GRAPH_BUILDER_SCHEMA_V = 4
+export const GRAPH_BUILDER_SCHEMA_V = 5
 export const GRAPH_BUILDER_VERSION = (() => {
     try { return String(createRequire(import.meta.url)('../../package.json').version) }
     catch { return '0.0.0' }
@@ -25,7 +25,9 @@ const CURRENT_GRAPH_SCHEMA = Object.freeze({
     complexityV: 2,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
-    extractorSchemaV: 4,
+    reExportOccurrencesV: 1,
+    symbolSpacesV: 1,
+    extractorSchemaV: 5,
 })
 const CONTROL_FILES = ['.gitignore', '.weavatrixignore', '.weavatrix.json']
 const MAX_CONTROL_BYTES = 1_000_000

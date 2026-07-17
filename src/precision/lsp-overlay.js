@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { boundedInteger } from "../bounds.js";
 import { atomicWriteFileSync } from "../graph/file-lock.js";
 import { edgeProvenance } from "../graph/edge-provenance.js";
 import { isStructuralRelation } from "../graph/relations.js";
@@ -448,11 +449,6 @@ function publicSemanticSafetyReason(reason) {
   return reason === "CONFIGURED_TSSERVER_PLUGINS"
     ? "configured TypeScript language-service plugins are not allowed"
     : "TypeScript project configuration could not be verified safely";
-}
-
-function boundedInteger(value, fallback, minimum, maximum) {
-  const number = Number(value);
-  return Math.max(minimum, Math.min(maximum, Number.isFinite(number) ? Math.floor(number) : fallback));
 }
 
 export async function buildLspPrecisionOverlay({

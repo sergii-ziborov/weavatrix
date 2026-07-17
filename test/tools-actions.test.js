@@ -51,7 +51,9 @@ test("open_repo: switches to another Git repository with an existing graph in on
     repoBoundaryV: 1,
     edgeTypesV: 2,
     edgeProvenanceV: 1,
-    extractorSchemaV: 4,
+    extractorSchemaV: 5,
+    reExportOccurrencesV: 1,
+    symbolSpacesV: 1,
     graphPrecisionMode: "off",
   }));
   const ctx = {
@@ -181,7 +183,8 @@ test("open_repo: build:false refuses an explicit build-mode mismatch without ret
   const graphPath = join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json");
   mkdirSync(graphOutDirForRepo(realpathSync.native(repo)), { recursive: true });
   writeFileSync(graphPath, JSON.stringify({
-    nodes: [], links: [], repoBoundaryV: 1, edgeTypesV: 2, edgeProvenanceV: 1, extractorSchemaV: 4, graphPrecisionMode: "off",
+    nodes: [], links: [], repoBoundaryV: 1, edgeTypesV: 2, edgeProvenanceV: 1, extractorSchemaV: 5,
+    reExportOccurrencesV: 1, symbolSpacesV: 1, graphPrecisionMode: "off",
     graphBuildMode: "full",
   }));
   const ctx = { repoRoot: parent, graphPath: join(parent, "current.json"), reload() { throw new Error("must not reload"); } };

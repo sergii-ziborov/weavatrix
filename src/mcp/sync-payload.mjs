@@ -180,7 +180,7 @@ function sanitizeNodeV3(value) {
     else delete out.file_type;
     if (sourceFile) out.source_file = sourceFile;
     else delete out.source_file;
-    for (const key of ['symbol_kind', 'member_of', 'visibility']) setIf(out, key, safeToken(value[key], 128));
+    for (const key of ['symbol_kind', 'symbol_space', 'member_of', 'visibility']) setIf(out, key, safeToken(value[key], 128));
     if (out.complexity) {
         for (const key of ['family', 'scope', 'complexityScope', 'confidence']) {
             const safe = safeToken(value.complexity?.[key], 32);

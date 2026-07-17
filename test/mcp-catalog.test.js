@@ -8,9 +8,10 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
   const api = await loadHotApi(0, undefined);
   const got = names(api);
   assert.deepEqual([...api.caps], [...DEFAULT_CAPS]);
-  assert.equal(api.tools.length, 31);
+  assert.equal(api.tools.length, 32);
   assert.ok(got.has("read_source"));
   assert.ok(got.has("inspect_symbol"));
+  assert.ok(got.has("context_bundle"));
   assert.ok(got.has("hot_path_review"));
   assert.ok(got.has("rebuild_graph"));
   assert.ok(got.has("open_repo"));
@@ -25,12 +26,12 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
 test("MCP profiles: offline is the named default and pinned removes retargeting", async () => {
   const offline = await loadHotApi(0, "offline");
   assert.deepEqual([...offline.caps], [...DEFAULT_CAPS]);
-  assert.equal(offline.tools.length, 31);
+  assert.equal(offline.tools.length, 32);
 
   const api = await loadHotApi(0, "pinned");
   const got = names(api);
   assert.deepEqual([...api.caps], ["graph", "search", "source", "health", "build"]);
-  assert.equal(api.tools.length, 28);
+  assert.equal(api.tools.length, 29);
   assert.ok(got.has("read_source"));
   assert.ok(!got.has("open_repo"));
   assert.ok(!got.has("list_known_repos"));
@@ -43,7 +44,7 @@ test("MCP profiles: offline is the named default and pinned removes retargeting"
 test("MCP profiles: osv enables only advisory networking", async () => {
   const api = await loadHotApi(0, "osv");
   const got = names(api);
-  assert.equal(api.tools.length, 32);
+  assert.equal(api.tools.length, 33);
   assert.ok(got.has("open_repo"));
   assert.ok(got.has("refresh_advisories"));
   assert.ok(!got.has("pull_architecture_contract"));
@@ -54,7 +55,7 @@ test("MCP profiles: hosted and full expose the complete catalog", async () => {
   for (const profile of ["hosted", "full"]) {
     const api = await loadHotApi(0, profile);
     const got = names(api);
-    assert.equal(api.tools.length, 34, profile);
+    assert.equal(api.tools.length, 35, profile);
     assert.ok(got.has("refresh_advisories"), profile);
     assert.ok(got.has("pull_architecture_contract"), profile);
     assert.ok(got.has("sync_graph"), profile);
@@ -80,7 +81,7 @@ test("MCP capabilities: legacy online remains an alias for advisories plus hoste
 
 test("MCP capabilities: an explicit full capability selection exposes all tools", async () => {
   const api = await loadHotApi(0, `${DEFAULT_CAPS.join(",")},advisories,hosted`);
-  assert.equal(api.tools.length, 34);
+  assert.equal(api.tools.length, 35);
 });
 
 test("MCP capabilities: an explicit empty selection exposes no tools", async () => {
@@ -138,6 +139,11 @@ test("inspect_symbol and small-clone schemas expose bounded precision controls",
   assert.deepEqual(inspect.inputSchema.properties.precision.enum, ["auto", "graph", "lsp"]);
   assert.equal(inspect.inputSchema.properties.max_references.maximum, 5000);
   assert.equal(inspect.inputSchema.properties.context_lines.maximum, 40);
+  const bundle = api.byName.get("context_bundle");
+  assert.ok(bundle);
+  assert.equal(bundle.inputSchema.properties.max_related.maximum, 30);
+  assert.equal(bundle.inputSchema.properties.max_reexports.maximum, 100);
+  assert.equal(bundle.inputSchema.properties.max_source_files.maximum, 8);
   const duplicates = api.byName.get("find_duplicates");
   assert.equal(duplicates.inputSchema.properties.min_tokens.minimum, 12);
   assert.equal(duplicates.inputSchema.properties.min_tokens.maximum, 400);

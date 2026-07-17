@@ -5,7 +5,7 @@
 Grep sees text. Weavatrix sees structure. It builds a dependency graph of any local repository —
 files, symbols, and the imports/calls/inheritance connecting them — and serves it to Claude Code,
 Codex, or any MCP client: change impact, transitive dependents, health audit, clone detection,
-coverage mapping. **34 tools available; 31 enabled by the default offline profile. Local-first: with
+coverage mapping. **35 tools available; 32 enabled by the default offline profile. Local-first: with
 the defaults, no repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
@@ -22,7 +22,8 @@ answers grep can't produce:
   depends on them — with test coverage attached, so the **untested part of the blast radius** stands
   out before you ship.
 - *"Who calls this function?"* → `inspect_symbol` returns exact bounded TS/JS occurrences plus
-  source context; `get_dependents` walks the symbol-level reverse graph transitively. Opt into
+  source context; `context_bundle` adds grouped graph relations, exact re-export sites, and a
+  smaller source workset. `get_dependents` walks the symbol-level reverse graph transitively. Opt into
   `include_container_importers:true` only when a broader module-import radius is intended.
 - *"Did my refactor actually decouple anything?"* → `graph_diff base_ref=HEAD~1` builds an immutable
   baseline graph without checking it out, then reports the structural delta: new module
@@ -110,7 +111,8 @@ An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — instal
 `change_impact`, `git_history`, `graph_diff`, `get_architecture_contract`,
 `prepare_change`. Runtime dependencies, TypeScript type-only coupling and language
 compile-only edges (Rust module/use, Java imports) are reported separately where that distinction
-changes the result.
+changes the result. TypeScript type-space and value-space declarations keep distinct identities;
+classes and enums that inhabit both spaces are labelled `both`.
 
 Every current edge carries versioned provenance. The parser emits `EXTRACTED`, `RESOLVED`, and
 `INFERRED`; the built-in bounded TypeScript/JavaScript precision overlay upgrades only references
@@ -118,7 +120,7 @@ confirmed by its bundled `typescript-language-server` + TypeScript runtime to `E
 `CONFLICT` means evidence disagrees. `graph_stats` reports the provenance breakdown and the semantic
 provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means precision was explicitly
 disabled and only static evidence is active. Java and Rust language-server providers are not bundled
-in 0.2.5: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
+in 0.2.6: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
 TypeScript/JavaScript overlay.
 
 The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
@@ -127,8 +129,9 @@ before starting the MCP server for parser-only operation from the first build, o
 choice as **TypeScript/JavaScript semantic precision**.
 
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback), `read_source` (a
-symbol's actual code in one hop), `inspect_symbol` (one exact bounded TS/JS reference query,
-logical containers, impact and source excerpts), `list_endpoints` (HTTP route inventory:
+symbol's actual code in one hop), `context_bundle` (definition plus grouped inbound/outbound
+containers, exact re-export sites and a few bounded source excerpts), `inspect_symbol` (one exact
+bounded TS/JS reference query, logical containers, impact and source excerpts), `list_endpoints` (HTTP route inventory:
 Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web …)
 
 **health** — `find_dead_code` (bounded review queue for statically unreferenced and test-only files,
@@ -192,6 +195,19 @@ ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
+
+### 0.2.6 compact-context and TypeScript identity patch
+
+- New `context_bundle` turns a symbol into a bounded workset: definition, grouped inbound/outbound
+  containers, reference evidence, exact re-export locations and a small number of source excerpts.
+- Re-export records retain their concrete file, line, alias, specifier, type-only flag and resolved
+  origin. Barrel propagation through `export *` stays exact and private declarations are not exposed.
+- TypeScript interfaces and type aliases are first-class type-space nodes. Same-named runtime values
+  keep separate identities, while classes and enums are explicitly marked as inhabiting both spaces.
+- Graph schema v5 and freshness gates rebuild older caches before these precision-sensitive results
+  are used. The changes remain local-only and add no runtime dependency.
+
+Full patch notes: [docs/releases/v0.2.6.md](docs/releases/v0.2.6.md).
 
 ### 0.2.5 exact-symbol and graph-fidelity patch
 

@@ -896,8 +896,10 @@ test("same-line type evidence never upgrades a shadowed static call", {timeout: 
   try {
     const built = await buildInternalGraph(root);
     const run = built.nodes.find((node) => node.source_file === "src/app.ts" && node.label === "run()");
+    const typeAlias = built.nodes.find((node) => node.source_file === "src/app.ts" && node.label === "T"
+      && node.symbol_space === "type");
     const helper = built.nodes.find((node) => node.source_file === "src/lib.ts" && node.label === "helper()");
-    assert.ok(run && helper, "shadowing fixture symbols are indexed");
+    assert.ok(run && typeAlias && helper, "shadowing fixture symbols are indexed in their TypeScript spaces");
     const staticCall = {source: run.id, target: helper.id, relation: "calls", line: 2, provenance: "INFERRED"};
     const graph = {
       ...built,
@@ -909,7 +911,7 @@ test("same-line type evidence never upgrades a shadowed static call", {timeout: 
     assert.equal(overlay.state, "COMPLETE", JSON.stringify(overlay));
     const typeColumn = runLine.indexOf("actual");
     const callColumn = runLine.indexOf("h();");
-    const exactType = overlay.links.find((link) => link.source === run.id && link.target === helper.id
+    const exactType = overlay.links.find((link) => link.source === typeAlias.id && link.target === helper.id
       && link.relation === "references" && link.line === 2 && link.character === typeColumn);
     assert.equal(exactType?.typeOnly, true, JSON.stringify(overlay.links));
     assert.equal(overlay.links.some((link) => link.source === run.id && link.target === helper.id
@@ -918,7 +920,7 @@ test("same-line type evidence never upgrades a shadowed static call", {timeout: 
     const merged = mergePrecisionOverlay(graph, overlay);
     assert.equal(merged.links.find((link) => link.source === run.id && link.target === helper.id
       && link.relation === "calls")?.provenance, "INFERRED");
-    assert.equal(merged.links.find((link) => link.source === run.id && link.target === helper.id
+    assert.equal(merged.links.find((link) => link.source === typeAlias.id && link.target === helper.id
       && link.relation === "references" && link.character === typeColumn)?.provenance, "EXACT_LSP");
   } finally {
     rmSync(root, {recursive: true, force: true, maxRetries: 20, retryDelay: 100});

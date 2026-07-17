@@ -63,7 +63,9 @@ export function aggregateGraph(graph, repoRoot) {
         line: String(node.source_location || "").replace(/^L/, ""),
         endLine: String(node.source_end || "").replace(/^L/, ""),
         ...(node.complexity ? { complexity: node.complexity } : {}),
-        ...(node.decorated ? { decorated: true } : {})
+        ...(node.decorated ? { decorated: true } : {}),
+        ...(node.symbol_kind ? {symbolKind: node.symbol_kind} : {}),
+        ...(node.symbol_space ? {symbolSpace: node.symbol_space} : {})
       });
       fileSymbols.set(fid, list);
     }

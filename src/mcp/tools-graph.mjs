@@ -48,6 +48,8 @@ export function tGraphStats(g, ctx) {
         g.edgeProvenanceV ? `- Edge provenance: v${g.edgeProvenanceV} (${fmt(provenance.counts)}; ${provenance.complete ? 'complete' : `${provenance.counts.UNKNOWN} unclassified`})` : `- Edge provenance: unavailable (rebuild_graph required)`,
         `- Semantic precision: ${precision.state}${precision.provider ? ` via ${precision.provider}${precision.providerVersion ? ` ${precision.providerVersion}` : ''}${precision.typescriptVersion ? ` (TypeScript ${precision.typescriptVersion})` : ''}` : ''}; ${precision.verifiedEdges || 0} EXACT_LSP edge(s), ${precision.queried || 0}/${precision.candidates || 0} bounded target(s) queried${precision.truncated ? ' (partial/truncated)' : ''}${precision.reason ? `; ${precision.reason}` : ''}`,
         g.barrelResolutionV ? `- Barrel resolution: v${g.barrelResolutionV} (semantic tools look through JS/TS re-export facades)` : `- Barrel resolution: unavailable (rebuild_graph required for JS/TS barrel transparency)`,
+        g.reExportOccurrencesV ? `- Re-export occurrences: v${g.reExportOccurrencesV} (${g.reExportOccurrences.length} exact site(s))` : `- Re-export occurrences: unavailable (rebuild_graph required)`,
+        g.symbolSpacesV ? `- TypeScript symbol spaces: v${g.symbolSpacesV} (type/value identities separated)` : `- TypeScript symbol spaces: unavailable (rebuild_graph required)`,
         `- Relations: ${fmt(relCount)}`,
         Object.keys(confCount).length ? `- Legacy confidence: ${fmt(confCount)}` : null,
         `- Communities: ${comm.size} (top by size: ${topComm.map(([c, n]) => `#${c}=${n}`).join(', ')})`,

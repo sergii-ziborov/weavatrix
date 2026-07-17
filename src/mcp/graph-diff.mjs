@@ -35,7 +35,7 @@ function stableNodeIndex(graph) {
         if (!raw) continue
         const stem = terminalLineSuffix(raw)
         const params = Number.isInteger(node?.complexity?.params) ? node.complexity.params : ''
-        const signature = [stem, node?.symbol_kind || '', node?.exported === true ? 'exported' : '', params].join('\u0000')
+        const signature = [stem, node?.symbol_kind || '', node?.symbol_space || '', node?.exported === true ? 'exported' : '', params].join('\u0000')
         if (!groups.has(signature)) groups.set(signature, [])
         groups.get(signature).push(node)
     }

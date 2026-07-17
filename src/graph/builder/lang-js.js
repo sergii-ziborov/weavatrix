@@ -14,6 +14,10 @@ const TOPVARS = `
   (program (variable_declaration (variable_declarator) @decl))
   (program (export_statement (lexical_declaration (variable_declarator) @decl)))
   (program (export_statement (variable_declaration (variable_declarator) @decl)))`;
+const TYPES = `
+  (interface_declaration name: (_) @interface)
+  (type_alias_declaration name: (_) @type)
+  (enum_declaration name: (_) @enum)`;
 const REQUIRE = `(variable_declarator name: (_) @lhs value: (call_expression function: (identifier) @req arguments: (arguments (string (string_fragment) @src))))`;
 
 function parseExportSpecifiers(raw) {
@@ -95,7 +99,13 @@ export default {
         sourceNode: cap.node.parent,
         selectionNode: cap.node,
         ...(exportStatement ? { exported: true } : {}),
-        ...(isMethod ? methodMetadata(cap.node) : { symbolKind: cap.name === "class" ? "class" : "function", moduleDeclaration: isModuleDeclaration(cap.node) })
+        ...(isMethod
+          ? {...methodMetadata(cap.node), symbolSpace: "value"}
+          : {
+              symbolKind: cap.name === "class" ? "class" : "function",
+              symbolSpace: cap.name === "class" ? "both" : "value",
+              moduleDeclaration: isModuleDeclaration(cap.node),
+            })
       });
       if (exportStatement) {
         recordJsExport({
@@ -103,6 +113,7 @@ export default {
           exported: /^\s*export\s+default\b/.test(exportStatement.text) ? "default" : cap.node.text,
           local: cap.node.text,
           typeOnly: false,
+          line: exportStatement.startPosition.row + 1,
         });
       }
     }
@@ -115,9 +126,40 @@ export default {
         selectionNode: nameNode,
         ...(exported ? { exported: true } : {}),
         symbolKind: "variable",
+        symbolSpace: "value",
         moduleDeclaration: true
       });
-      if (exported) recordJsExport({ kind: "local", exported: nameNode.text, local: nameNode.text, typeOnly: false });
+      if (exported) recordJsExport({
+        kind: "local", exported: nameNode.text, local: nameNode.text, typeOnly: false,
+        line: exportStatementOf(cap.node)?.startPosition.row + 1 || nameNode.startPosition.row + 1,
+      });
+    }
+
+    // TypeScript has separate type and value namespaces. Keep interface/type declarations as
+    // first-class type-space nodes instead of folding them into a same-named runtime declaration.
+    // Enums and classes intentionally occupy both spaces because TypeScript emits runtime values.
+    if (grammar !== "javascript") for (const cap of caps(grammar, TYPES, tree.rootNode)) {
+      const declaration = cap.node.parent;
+      const exportStatement = exportStatementOf(cap.node);
+      const symbolKind = cap.name === "interface" ? "interface" : cap.name === "type" ? "type" : "enum";
+      const symbolSpace = cap.name === "enum" ? "both" : "type";
+      addSym(cap.node.text, cap.node.startPosition.row + 1, false, {
+        sourceNode: declaration,
+        selectionNode: cap.node,
+        idSuffix: symbolSpace === "type" ? ":type" : "",
+        ...(exportStatement ? {exported: true} : {}),
+        symbolKind,
+        symbolSpace,
+        moduleDeclaration: isModuleDeclaration(cap.node),
+      });
+      if (exportStatement) recordJsExport({
+        kind: "local",
+        exported: cap.node.text,
+        local: cap.node.text,
+        typeOnly: symbolSpace === "type",
+        line: exportStatement.startPosition.row + 1,
+        symbolSpace,
+      });
     }
 
     const importTypeOnly = (node) => {
@@ -218,12 +260,12 @@ export default {
         const namespace = text.match(/^export\s+(type\s+)?\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\b/);
         const clause = text.match(/^export\s+(type\s+)?\{([\s\S]*?)\}\s+from\b/);
         if (namespace) {
-          recordJsExport({ kind: "namespace", exported: namespace[2], targetFile: tgt, typeOnly: !!namespace[1] });
+          recordJsExport({ kind: "namespace", exported: namespace[2], imported: "*", targetFile: tgt, typeOnly: !!namespace[1], line, specifier: rawSpec });
         } else if (star) {
-          recordJsExport({ kind: "star", targetFile: tgt, typeOnly: !!star[1] });
+          recordJsExport({ kind: "star", exported: "*", imported: "*", targetFile: tgt, typeOnly: !!star[1], line, specifier: rawSpec });
         } else if (clause) {
           for (const spec of parseExportSpecifiers(clause[2])) {
-            recordJsExport({ kind: "named", exported: spec.exported, imported: spec.imported, targetFile: tgt, typeOnly: !!clause[1] || spec.typeOnly });
+            recordJsExport({ kind: "named", exported: spec.exported, imported: spec.imported, targetFile: tgt, typeOnly: !!clause[1] || spec.typeOnly, line, specifier: rawSpec });
           }
         }
       }
@@ -239,26 +281,19 @@ export default {
       const text = node.text.trim();
       const clause = text.match(/^export\s+(type\s+)?\{([\s\S]*?)\}/);
       if (clause) for (const spec of parseExportSpecifiers(clause[2])) {
-        recordJsExport({ kind: "local", exported: spec.exported, local: spec.imported, typeOnly: !!clause[1] || spec.typeOnly });
+        recordJsExport({ kind: "local", exported: spec.exported, local: spec.imported, typeOnly: !!clause[1] || spec.typeOnly, line: node.startPosition.row + 1 });
       }
       const identifierDefault = text.match(/^export\s+default\s+([A-Za-z_$][\w$]*)\s*;?$/);
-      if (identifierDefault) recordJsExport({ kind: "local", exported: "default", local: identifierDefault[1], typeOnly: false });
-      const typedDeclaration = text.match(/^export\s+(?:declare\s+)?(type|interface|enum)\s+([A-Za-z_$][\w$]*)\b/);
-      if (typedDeclaration) recordJsExport({
-        kind: "local",
-        exported: typedDeclaration[2],
-        local: typedDeclaration[2],
-        typeOnly: typedDeclaration[1] !== "enum",
-      });
+      if (identifierDefault) recordJsExport({ kind: "local", exported: "default", local: identifierDefault[1], typeOnly: false, line: node.startPosition.row + 1 });
       const defaultValue = field(node, "value");
       if (defaultValue?.type === "object") {
         // Service facades commonly expose local helpers through `export default { getSchema,
         // save: persist }`. Record the public member -> local binding instead of treating the
         // object as an opaque default export.
-        recordJsExport({kind: "facade-root", exported: "default", local: "default", typeOnly: false});
+        recordJsExport({kind: "facade-root", exported: "default", local: "default", typeOnly: false, line: node.startPosition.row + 1});
         for (const property of defaultValue.namedChildren || []) {
           if (["shorthand_property_identifier", "shorthand_property_identifier_pattern"].includes(property.type)) {
-            recordJsExport({kind: "facade-member", member: property.text, local: property.text, typeOnly: false});
+            recordJsExport({kind: "facade-member", member: property.text, local: property.text, typeOnly: false, line: node.startPosition.row + 1});
             markExported(property.text);
             continue;
           }
@@ -268,7 +303,7 @@ export default {
           if (!key || value?.type !== "identifier") continue;
           const member = key.text.replace(/^['"`]|['"`]$/g, "");
           if (!/^[A-Za-z_$][\w$]*$/.test(member)) continue;
-          recordJsExport({kind: "facade-member", member, local: value.text, typeOnly: false});
+          recordJsExport({kind: "facade-member", member, local: value.text, typeOnly: false, line: node.startPosition.row + 1});
           markExported(value.text);
         }
       }

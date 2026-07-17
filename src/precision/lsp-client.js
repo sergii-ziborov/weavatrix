@@ -425,7 +425,7 @@ export class StdioLspClient {
         await this.writeMessage({jsonrpc: JSON_RPC_VERSION, method, params})
     }
 
-    async initialize({capabilities = {}, initializationOptions, clientInfo = {name: 'weavatrix', version: '0.2.5'}} = {}) {
+    async initialize({capabilities = {}, initializationOptions, clientInfo = {name: 'weavatrix', version: '0.2.6'}} = {}) {
         if (this.state !== 'running') throw new Error(`LSP initialize is invalid in state=${this.state}`)
         const result = await this.request('initialize', {
             processId: process.pid,

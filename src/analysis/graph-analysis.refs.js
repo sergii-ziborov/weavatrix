@@ -63,7 +63,7 @@ function importCandidates(fromFile, spec) {
 function stripModuleStatements(text) {
   return String(text || "")
     .replace(/\bimport\s+[\s\S]*?\s+from\s*['"][^'"]+['"]\s*;?/g, "")
-    .replace(/\bexport\s+\{[\s\S]*?\}\s+from\s*['"][^'"]+['"]\s*;?/g, "")
+    .replace(/\bexport\s+(?:type\s+)?\{[\s\S]*?\}\s+from\s*['"][^'"]+['"]\s*;?/g, "")
     .replace(/\b(?:const|let|var)\s+\{[\s\S]*?\}\s*=\s*require\(\s*['"][^'"]+['"]\s*\)\s*;?/g, "");
 }
 
@@ -73,8 +73,10 @@ function parseNamedSpecifiers(raw) {
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => {
-      const m = part.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
-      return m ? { imported: m[1], local: m[2] || m[1] } : null;
+      const typeOnly = /^type\s+/.test(part);
+      const clean = part.replace(/^type\s+/, "").trim();
+      const m = clean.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+      return m ? { imported: m[1], local: m[2] || m[1], typeOnly } : null;
     })
     .filter(Boolean);
 }
@@ -93,17 +95,20 @@ export function computeSymbolExternalRefs(filePath, fileSymbols, fileText) {
       const name = bareSymbolName(sym.label);
       if (!isIdentifierName(name)) continue;
       const ids = byName.get(name) || [];
-      ids.push(sym.id);
+      ids.push({id: sym.id, space: sym.symbolSpace || "value"});
       byName.set(name, ids);
     }
     symbolIdsByFileAndName.set(fid, byName);
   }
 
   const symbolExternalRefs = new Map();
-  const addExternalRefs = (targetFid, importedName, refs) => {
+  const addExternalRefs = (targetFid, importedName, refs, typeOnly = false) => {
     if (!targetFid || refs <= 0 || !isIdentifierName(importedName)) return;
     const ids = symbolIdsByFileAndName.get(targetFid)?.get(importedName) || [];
-    for (const id of ids) symbolExternalRefs.set(id, (symbolExternalRefs.get(id) || 0) + refs);
+    for (const entry of ids) {
+      const matches = entry.space === "both" || (typeOnly ? entry.space === "type" : entry.space !== "type");
+      if (matches) symbolExternalRefs.set(entry.id, (symbolExternalRefs.get(entry.id) || 0) + refs);
+    }
   };
   const resolveImportedFid = (fromPath, spec) => {
     for (const candidate of importCandidates(fromPath, spec)) {
@@ -123,18 +128,21 @@ export function computeSymbolExternalRefs(filePath, fileSymbols, fileText) {
       if (!targetFid) continue;
       const named = String(m[1] || "").match(/\{([\s\S]*?)\}/);
       if (named) {
-        for (const spec of parseNamedSpecifiers(named[1])) addExternalRefs(targetFid, spec.imported, countIdentifierInText(scrubbed, spec.local));
+        const statementTypeOnly = /^\s*type\b/.test(String(m[1] || ""));
+        for (const spec of parseNamedSpecifiers(named[1])) addExternalRefs(targetFid, spec.imported, countIdentifierInText(scrubbed, spec.local), statementTypeOnly || spec.typeOnly);
       }
       const ns = String(m[1] || "").match(/\*\s+as\s+([A-Za-z_$][\w$]*)/);
       if (ns) {
         const byName = symbolIdsByFileAndName.get(targetFid) || new Map();
-        for (const name of byName.keys()) addExternalRefs(targetFid, name, countMemberAccess(scrubbed, ns[1], name));
+        const statementTypeOnly = /^\s*type\b/.test(String(m[1] || ""));
+        for (const name of byName.keys()) addExternalRefs(targetFid, name, countMemberAccess(scrubbed, ns[1], name), statementTypeOnly);
       }
     }
-    for (const m of String(txt).matchAll(/\bexport\s+\{([\s\S]*?)\}\s+from\s*['"]([^'"]+)['"]\s*;?/g)) {
-      const targetFid = resolveImportedFid(importerPath, m[2]);
+    for (const m of String(txt).matchAll(/\bexport\s+(type\s+)?\{([\s\S]*?)\}\s+from\s*['"]([^'"]+)['"]\s*;?/g)) {
+      const targetFid = resolveImportedFid(importerPath, m[3]);
       if (!targetFid) continue;
-      for (const spec of parseNamedSpecifiers(m[1])) addExternalRefs(targetFid, spec.imported, 1);
+      const statementTypeOnly = Boolean(m[1]);
+      for (const spec of parseNamedSpecifiers(m[2])) addExternalRefs(targetFid, spec.imported, 1, statementTypeOnly || spec.typeOnly);
     }
     for (const m of String(txt).matchAll(/\b(?:const|let|var)\s+\{([\s\S]*?)\}\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)\s*;?/g)) {
       const targetFid = resolveImportedFid(importerPath, m[2]);

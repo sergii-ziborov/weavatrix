@@ -37,6 +37,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   const addNode = (n) => { if (!nodeIds.has(n.id)) { nodeIds.add(n.id); nodes.push(n); nodeById.set(n.id, n); } };
   const perFileSymbols = new Map();
   const symByFileName = new Map();
+  const symIdsByFileName = new Map();
   const importedLocals = new Map();
   const jsExports = new Map();
   if (requestedFiles && opts.baseGraph?.jsExportRecords) {
@@ -54,6 +55,11 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       let names = symByFileName.get(file);
       if (!names) symByFileName.set(file, (names = new Map()));
       if (!names.has(match[1])) names.set(match[1], id);
+      let idsByName = symIdsByFileName.get(file);
+      if (!idsByName) symIdsByFileName.set(file, (idsByName = new Map()));
+      const ids = idsByName.get(match[1]) || [];
+      ids.push(id);
+      idsByName.set(match[1], ids);
       nodeById.set(id, node);
     }
   }
@@ -73,17 +79,17 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   for (const abs of files) {
     const fileRel = rel(abs); const ext = extname(abs);
     addNode({ id: fileRel, label: fileRel.split("/").pop(), file_type: "code", source_file: fileRel, source_location: "L1" });
-    if (isDataFile(fileRel) || isDocFile(fileRel)) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); continue; }  // config/infra/docs file-only node
+    if (isDataFile(fileRel) || isDocFile(fileRel)) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); symIdsByFileName.set(fileRel, new Map()); continue; }  // config/infra/docs file-only node
     const grammar = EXT_LANG[ext]; const lang = LANGS[FAMILY[grammar]]; if (!lang || !langs[grammar]) continue;
     let code; try { code = readFileSync(abs, "utf8"); } catch { continue; }
     // giant / generated / minified file → keep the file NODE but don't parse symbols (avoids a wedged parse)
-    if (code.length > MAX_PARSE_BYTES) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); continue; }
+    if (code.length > MAX_PARSE_BYTES) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); symIdsByFileName.set(fileRel, new Map()); continue; }
     if ((++_parsed % 24) === 0) await new Promise((r) => setImmediate(r)); // breathe: let the UI paint between chunks
     if (typeof opts.onParseFile === "function") opts.onParseFile(fileRel);
     const parser = new Parser(); parser.setLanguage(langs[grammar]);
     let tree; try { tree = parser.parse(code); } catch { continue; }
 
-    const syms = []; const nameToId = new Map(); const moduleNameToId = new Map();
+    const syms = []; const nameToId = new Map(); const nameToIds = new Map(); const moduleNameToId = new Map();
     const addSym = (name, line, callable, extra) => {
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return;
       const suffix = /^:[A-Za-z0-9_-]+$/.test(extra?.idSuffix || "") ? extra.idSuffix : "";
@@ -135,6 +141,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         ...(extra && extra.exported ? { exported: true } : {}),
         ...(extra && extra.decorated ? { decorated: true } : {}),
         ...(extra && extra.symbolKind ? { symbol_kind: extra.symbolKind } : {}),
+        ...(extra && extra.symbolSpace ? { symbol_space: extra.symbolSpace } : {}),
         ...(extra && extra.memberOf ? { member_of: extra.memberOf } : {}),
         ...(extra && extra.visibility ? { visibility: extra.visibility } : {})
       });
@@ -146,8 +153,12 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         end: endLine >= line ? endLine : 0,
         ...(extra?.memberOf ? {memberOf: extra.memberOf} : {}),
         ...(extra?.symbolKind ? {symbolKind: extra.symbolKind} : {}),
+        ...(extra?.symbolSpace ? {symbolSpace: extra.symbolSpace} : {}),
       });
       if (!nameToId.has(name)) nameToId.set(name, id);
+      const ids = nameToIds.get(name) || [];
+      ids.push(id);
+      nameToIds.set(name, ids);
       if (extra?.moduleDeclaration && !moduleNameToId.has(name)) moduleNameToId.set(name, id);
       return id;
     };
@@ -196,7 +207,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     for (let i = 0; i < syms.length; i++) {
       if (!syms[i].end || syms[i].end < syms[i].start) syms[i].end = i + 1 < syms.length ? syms[i + 1].start - 1 : eof;
     }
-    perFileSymbols.set(fileRel, syms); symByFileName.set(fileRel, nameToId);
+    perFileSymbols.set(fileRel, syms); symByFileName.set(fileRel, nameToId); symIdsByFileName.set(fileRel, nameToIds);
     tree.delete();
   }
 
@@ -211,7 +222,27 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     let dm = goDirSymbols.get(d); if (!dm) goDirSymbols.set(d, (dm = new Map()));
     for (const [n, id] of m) if (!dm.has(n)) dm.set(n, id);
   }
-  const { resolveNamespaceMember } = resolveJsBarrels({ jsExports, importedLocals, links });
+  const inferredSymbolSpace = (node) => {
+    const explicit = String(node?.symbol_space || "");
+    if (["value", "type", "both"].includes(explicit)) return explicit;
+    const kind = String(node?.symbol_kind || "").toLowerCase();
+    if (["interface", "type"].includes(kind)) return "type";
+    if (["class", "enum"].includes(kind)) return "both";
+    return "value";
+  };
+  const resolveNamedSymbol = (file, name, space = "value") => {
+    const ids = symIdsByFileName.get(file)?.get(name) || [];
+    const accepts = (id) => {
+      const symbolSpace = inferredSymbolSpace(nodeById.get(id));
+      return symbolSpace === "both" || symbolSpace === space;
+    };
+    const exact = ids.find((id) => inferredSymbolSpace(nodeById.get(id)) === space);
+    return exact || ids.find(accepts) || null;
+  };
+  const { resolveNamespaceMember, reExportOccurrences } = resolveJsBarrels({
+    jsExports, importedLocals, links,
+    resolveSymbol: (file, name, typeOnly) => resolveNamedSymbol(file, name, typeOnly ? "type" : "value"),
+  });
   // Exact source ranges can overlap (a named function nested inside another function). Attribute a call
   // to the innermost matching symbol, not whichever outer declaration happened to be added first.
   const enclosing = (fileRel, line) => {
@@ -223,13 +254,13 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     return best;
   };
   const resolveCall = (name, fileRel) => {
-    const local = symByFileName.get(fileRel); if (local && local.has(name)) return local.get(name);
+    const local = resolveNamedSymbol(fileRel, name, "value"); if (local) return local;
     if (sharesDirScope(fileRel)) { const d = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : ""; const dm = goDirSymbols.get(d); if (dm && dm.has(name)) return dm.get(name); }
     const imp = importedLocals.get(fileRel) && importedLocals.get(fileRel).get(name);
     if (imp && imp.targetFile) {
       const targetFile = imp.originFile || imp.targetFile;
       const importedName = imp.originName || imp.imported;
-      const tf = symByFileName.get(targetFile); if (tf && tf.has(importedName)) return tf.get(importedName);
+      return resolveNamedSymbol(targetFile, importedName, "value");
     }
     return null;
   };
@@ -295,7 +326,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         if (!imp || !["*", "default"].includes(imp.imported) || imp.typeOnly) continue;
         const origin = resolveNamespaceMember(fileRel, imp, property.text, "call");
         if (origin.status !== "resolved") continue;
-        const target = symByFileName.get(origin.origin.file)?.get(origin.origin.name);
+        const target = resolveNamedSymbol(origin.origin.file, origin.origin.name, "value");
         const caller = enclosing(fileRel, cap.node.startPosition.row + 1);
         if (target && caller && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
       }
@@ -315,12 +346,24 @@ export async function buildInternalGraph(repoDir, opts = {}) {
           const origin = resolveNamespaceMember(fileRel, imp, parts[parts.length - 1], "jsx");
           if (origin.status === "resolved") { targetFile = origin.origin.file; importedName = origin.origin.name; }
         }
-        const targetSymbols = symByFileName.get(targetFile);
-        if (!targetSymbols) continue;
-        const target = targetSymbols.get(importedName) || targetSymbols.get(localName);
+        const target = resolveNamedSymbol(targetFile, importedName, "value") || resolveNamedSymbol(targetFile, localName, "value");
         if (!target) continue;
         const owner = enclosing(fileRel, cap.node.startPosition.row + 1);
         links.push({ source: owner?.id || fileRel, target, relation: "references", confidence: "INFERRED", usage: "jsx", line: cap.node.startPosition.row + 1 });
+      }
+      // Type identifiers are a separate namespace in TypeScript. Resolve them to type/both-space
+      // declarations without creating runtime calls or keeping a same-named value symbol alive.
+      if (grammar !== "javascript") for (const cap of caps(grammar, `(type_identifier) @typeRef`, tree.rootNode)) {
+        const name = cap.node.text;
+        const imp = importedLocals.get(fileRel)?.get(name);
+        const targetFile = imp?.originFile || imp?.targetFile || fileRel;
+        const targetName = imp?.originName || imp?.imported || name;
+        const target = resolveNamedSymbol(targetFile, targetName, "type");
+        if (!target || String(target).startsWith(`${fileRel}#${name}@${cap.node.startPosition.row + 1}`)) continue;
+        const owner = enclosing(fileRel, cap.node.startPosition.row + 1);
+        const source = owner?.id || fileRel;
+        if (source === target) continue;
+        links.push({source, target, relation: "references", confidence: "EXTRACTED", provenance: "RESOLVED", typeOnly: true, line: cap.node.startPosition.row + 1, usage: "type"});
       }
     }
     // Go value references: a top-level const/var/type/func used BY NAME (bare `X`, or cross-package `pkg.X`) in
@@ -379,7 +422,10 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     complexityV: 2,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
-    extractorSchemaV: 4,
+    reExportOccurrencesV: 1,
+    symbolSpacesV: 1,
+    extractorSchemaV: 5,
+    reExportOccurrences,
     jsExportRecords: Object.fromEntries([...jsExports.entries()].sort(([a], [b]) => a.localeCompare(b))),
     fileHashes: snapshot.fileHashes,
     fileExportSignatures: snapshot.fileExportSignatures,

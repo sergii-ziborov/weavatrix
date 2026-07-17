@@ -91,7 +91,9 @@ export async function tOpenRepo(g, args, ctx) {
             savedPrecision = ['lsp', 'off'].includes(saved.graphPrecisionMode) ? saved.graphPrecisionMode : defaultPrecisionMode()
             schemaUpgrade = !Number.isInteger(saved.edgeTypesV) || saved.edgeTypesV < 2
                 || !Number.isInteger(saved.edgeProvenanceV) || saved.edgeProvenanceV < 1
-                || !Number.isInteger(saved.extractorSchemaV) || saved.extractorSchemaV < 4
+                || !Number.isInteger(saved.extractorSchemaV) || saved.extractorSchemaV < 5
+                || !Number.isInteger(saved.reExportOccurrencesV) || saved.reExportOccurrencesV < 1
+                || !Number.isInteger(saved.symbolSpacesV) || saved.symbolSpacesV < 1
             if (savedPrecision === 'lsp') {
                 const overlay = readPrecisionOverlay(graphPath, saved)
                 precisionUpgrade = !overlay || (typeof overlay.semanticInputFingerprint === 'string'

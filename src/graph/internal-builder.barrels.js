@@ -28,7 +28,7 @@ function withTypeOnly(result, typeOnly) {
   return resolved(result.origin.file, result.origin.name, true);
 }
 
-export function resolveJsBarrels({ jsExports, importedLocals, links }) {
+export function resolveJsBarrels({ jsExports, importedLocals, links, resolveSymbol = () => null }) {
   const tables = new Map();
   for (const [file, records] of jsExports) {
     const table = { explicit: new Map(), stars: [], facadeMembers: new Map() };
@@ -110,6 +110,43 @@ export function resolveJsBarrels({ jsExports, importedLocals, links }) {
       return resolved(file, local, record.typeOnly);
     }));
   };
+
+  // Materialize source-free, occurrence-level re-export evidence. Named/local alias records retain
+  // their exact public name and final declaration origin; wildcard/namespace records retain the
+  // concrete facade statement and target for on-demand propagation in context tools.
+  const reExportOccurrences = [];
+  for (const [file, records] of jsExports) for (const record of records || []) {
+    if (["facade-root", "facade-member"].includes(record.kind)) continue;
+    const resolution = record.kind === "star" || !record.exported
+      ? MISSING
+      : resolveExport(file, record.exported);
+    if (resolution.status === "resolved") {
+      record.originFile = resolution.origin.file;
+      record.originName = resolution.origin.name;
+      record.originTypeOnly = resolution.origin.typeOnly === true;
+      record.originId = resolveSymbol(resolution.origin.file, resolution.origin.name, resolution.origin.typeOnly === true) || null;
+    }
+    const reExportedLocal = record.kind === "local" && resolution.status === "resolved" && resolution.origin.file !== file;
+    if (!record.targetFile && !reExportedLocal) continue;
+    reExportOccurrences.push({
+      file,
+      line: Number(record.line) || 1,
+      kind: record.kind,
+      exported: record.exported || record.member || "*",
+      imported: record.imported || record.local || "*",
+      targetFile: record.targetFile || resolution.origin?.file || file,
+      typeOnly: record.typeOnly === true || resolution.origin?.typeOnly === true,
+      ...(record.specifier ? {specifier: record.specifier} : {}),
+      status: record.kind === "star" ? "wildcard" : resolution.status,
+      ...(resolution.status === "resolved" ? {
+        originFile: resolution.origin.file,
+        originName: resolution.origin.name,
+        ...(record.originId ? {originId: record.originId} : {}),
+      } : {}),
+    });
+  }
+  reExportOccurrences.sort((left, right) => left.file.localeCompare(right.file)
+    || left.line - right.line || left.exported.localeCompare(right.exported));
 
   // Every internal re-export is a physical facade hop. It remains in the graph for runtime cycle truth,
   // but semantic consumers ignore it in favor of importer -> declaration edges below.
@@ -194,5 +231,5 @@ export function resolveJsBarrels({ jsExports, importedLocals, links }) {
     return result;
   };
 
-  return { resolveExport, resolveNamespaceMember, resolveFacadeMember };
+  return { resolveExport, resolveNamespaceMember, resolveFacadeMember, reExportOccurrences };
 }
