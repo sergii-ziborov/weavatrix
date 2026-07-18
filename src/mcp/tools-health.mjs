@@ -22,6 +22,7 @@ import {toolResult} from './tool-result.mjs'
 import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {createRepoBoundary} from '../repo-path.js'
 import {filterGraphForMode} from '../graph/graph-filter.js'
+import {readCachedSymbolPrecisionEvidence} from '../precision/symbol-query.js'
 
 const NON_PRODUCT_DUPLICATE_CLASSES = new Set(['generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const fragmentEligible = (fragment, {tokMin, skipTests, includeClassified}) => {
@@ -101,7 +102,27 @@ export function tFindDuplicates(g, args, ctx) {
 // candidates. It never returns an automatic-delete verdict.
 export function tFindDeadCode(g, args, ctx) {
     if (!ctx.repoRoot) return 'Dead-code review needs the repo root (not provided to this server).'
-    const graph = effectiveRawGraph(ctx)
+    const effectiveGraph = effectiveRawGraph(ctx)
+    const pointEvidence = readCachedSymbolPrecisionEvidence({repoRoot: ctx.repoRoot, graphPath: ctx.graphPath, graph: effectiveGraph})
+    const graph = {
+        ...effectiveGraph,
+        precisionReferenceSymbols: [...new Set([
+            ...(effectiveGraph.precisionReferenceSymbols || []),
+            ...pointEvidence.referenceSymbols,
+        ])],
+        precisionProductionReferenceSymbols: [...new Set([
+            ...(effectiveGraph.precisionProductionReferenceSymbols || []),
+            ...pointEvidence.productionReferenceSymbols,
+        ])],
+        precisionTestReferenceSymbols: [...new Set([
+            ...(effectiveGraph.precisionTestReferenceSymbols || []),
+            ...pointEvidence.testReferenceSymbols,
+        ])],
+        precisionNoReferenceSymbols: [...new Set([
+            ...(effectiveGraph.precisionNoReferenceSymbols || []),
+            ...pointEvidence.noReferenceSymbols,
+        ])],
+    }
     const boundary = createRepoBoundary(ctx.repoRoot)
     const pkg = readRepoJson(boundary, 'package.json') || {}
     const rules = readRepoJson(boundary, '.weavatrix-deps.json') || {}

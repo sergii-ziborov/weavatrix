@@ -55,6 +55,17 @@ test("lang-rust: symbols and same-folder cross-file calls", async () => {
     for (const name of ["Greeter", "Console", "Mode", "MAX_GREETS", "greet", "format_msg"]) {
       assert.ok(sym(name), `symbol ${name} extracted`);
     }
+    assert.equal(sym("Greeter").symbol_kind, "trait");
+    assert.equal(sym("Console").symbol_kind, "struct");
+    assert.equal(sym("Mode").symbol_kind, "enum");
+    assert.equal(sym("MAX_GREETS").symbol_kind, "constant");
+    assert.equal(sym("format_msg").symbol_kind, "function");
+    assert.equal(sym("format_msg").exported, true);
+    const consoleGreet = g.nodes.find((node) => node.source_file === "src/lib.rs" && node.label === "greet()" && node.member_of === "Console");
+    assert.ok(consoleGreet, "impl method retains its owning type");
+    assert.equal(consoleGreet.symbol_kind, "method");
+    assert.equal(consoleGreet.visibility, "private");
+    assert.ok(g.links.some((link) => link.source === sym("Console").id && link.target === consoleGreet.id && link.relation === "method"));
     const ep = (v) => String(v && typeof v === "object" ? v.id : v);
     const call = g.links.find((l) => l.relation === "calls" && ep(l.source).includes("lib.rs#greet") && ep(l.target).includes("helper.rs#format_msg"));
     assert.ok(call, "cross-file call greet → format_msg via same-folder scope");

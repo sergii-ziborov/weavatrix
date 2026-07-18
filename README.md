@@ -216,6 +216,25 @@ disclosed instead of silently guessed; and the server **hot-reloads its watched 
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect.
 
+### 0.2.8 trust and precision patch
+
+- Dead-code review no longer labels a declaration `test-only` when it has a same-file production
+  use. Revision-bound positive evidence from an exact `inspect_symbol` point query also removes that
+  declaration from later dead-code candidates instead of remaining isolated in its cache.
+- Python dependency checks discover nested `requirements*.txt`, `requirements/*.txt`,
+  `pyproject.toml`, and `Pipfile` manifests and assign imports to their nearest manifest scope.
+  A root `test.py` is classified consistently as test code.
+- Endpoint extraction masks commented-out routes without shifting source offsets and rejects
+  primitive path-to-name maps such as `{'/.codex': 'claude'}` while retaining real route tables.
+- Rust symbols now expose concrete kinds, owner types, visibility/export state, selection ranges and
+  structural owner/member edges. This is parser evidence; Rust semantic/LSP precision remains
+  explicitly unavailable.
+- Natural-language retrieval honors explicit Rust, Python, TypeScript, JavaScript, Go, Java, and C#
+  intent in mixed repositories. Compact `verified_change` text now includes decisive exact reference
+  counts and bounded inbound caller names for every selected edit symbol.
+
+Full patch notes: [docs/releases/v0.2.8.md](docs/releases/v0.2.8.md).
+
 ### 0.2.7 verified-change workflow
 
 - New `verified_change` composes task retrieval, exact symbol context, change impact, immutable Git

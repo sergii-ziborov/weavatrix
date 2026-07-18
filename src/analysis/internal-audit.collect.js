@@ -3,7 +3,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps } from "./manifests.js";
+import { parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps, pep503 } from "./manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { childProcessEnv } from "../child-env.js";
 import { filterWeavatrixIgnored } from "../path-ignore.js";
@@ -254,28 +254,61 @@ export function workspacePkgNames(repoRoot, pkg) {
 
 export const TEST_FILE_RE = /(^|[/])(test|tests|__tests__|spec|e2e|__mocks__)([/]|$)|[._-](test|spec)\.[a-z0-9]+$/i;
 
-// Python declared deps: root requirements*.txt/.in + requirements/ dir + pyproject.toml + Pipfile.
+// Python declared deps are owned by the nearest manifest root, matching nested service/monorepo
+// layouts. `requirements/*.txt` belongs to the directory above `requirements`; a colocated
+// requirements.txt, pyproject.toml or Pipfile owns its own directory.
 // present=false (no manifest at all) softens missing-dep findings instead of suppressing them.
 export function collectPyManifest(repoRoot) {
-  const deps = [];
-  let present = false;
-  let names = [];
   const boundary = createRepoBoundary(repoRoot);
-  try { names = readdirSync(boundary.root).filter((n) => /^requirements[\w.-]*\.(txt|in)$/i.test(n)); } catch { /* unreadable root */ }
-  try {
-    const requirements = boundary.resolve("requirements");
-    if (requirements.ok) names.push(...readdirSync(requirements.path).filter((n) => /\.(txt|in)$/i.test(n)).map((n) => `requirements/${n}`));
-  } catch { /* no requirements dir */ }
-  for (const n of names) {
-    const t = readRepoText(boundary, n);
+  const scopes = new Map();
+  const scopeFor = (root) => {
+    const normalized = normRoot(root);
+    if (!scopes.has(normalized)) scopes.set(normalized, { root: normalized, present: false, deps: [], manifests: [] });
+    return scopes.get(normalized);
+  };
+  const addManifest = (root, manifest, parsedDeps, present = true) => {
+    if (!present) return;
+    const scope = scopeFor(root);
+    scope.present = true;
+    scope.manifests.push(manifest);
+    scope.deps.push(...parsedDeps.map((dep) => ({ ...dep, manifest })));
+  };
+  const files = listRepoFiles(repoRoot);
+  for (const file of files.filter((name) => /(^|\/)requirements[\w.-]*\.(?:txt|in)$/i.test(name)
+    || /(^|\/)requirements\/[^/]+\.(?:txt|in)$/i.test(name))) {
+    const t = readRepoText(boundary, file);
     if (t == null) continue;
-    present = true;
-    const dev = /dev|test|lint|doc|ci/i.test(n.replace(/^requirements[/\\]?/i, ""));
-    for (const d of parseRequirementsNames(t)) deps.push({ ...d, dev });
+    const parent = normRoot(dirname(file));
+    const root = /(^|\/)requirements$/i.test(parent) ? normRoot(dirname(parent)) : parent;
+    const dev = /dev|test|lint|doc|ci/i.test(file.slice(file.lastIndexOf("/") + 1));
+    addManifest(root, file, parseRequirementsNames(t).map((dep) => ({ ...dep, dev })));
   }
-  const pp = readRepoText(boundary, "pyproject.toml");
-  if (pp != null) { const r = parsePyprojectDeps(pp); if (r.present) { present = true; deps.push(...r.deps); } }
-  const pf = readRepoText(boundary, "Pipfile");
-  if (pf != null) { const r = parsePipfileDeps(pf); if (r.present) { present = true; deps.push(...r.deps); } }
-  return { present, deps };
+  for (const file of files.filter((name) => /(^|\/)pyproject\.toml$/i.test(name))) {
+    const parsed = parsePyprojectDeps(readRepoText(boundary, file));
+    addManifest(dirname(file), file, parsed.deps, parsed.present);
+  }
+  for (const file of files.filter((name) => /(^|\/)Pipfile$/i.test(name))) {
+    const parsed = parsePipfileDeps(readRepoText(boundary, file));
+    addManifest(dirname(file), file, parsed.deps, parsed.present);
+  }
+  const normalizedScopes = [...scopes.values()]
+    .map((scope) => {
+      const seen = new Set();
+      return {
+        ...scope,
+        manifests: [...new Set(scope.manifests)].sort(),
+        deps: scope.deps.filter((dep) => {
+          const key = pep503(dep.name);
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+      };
+    })
+    .sort((left, right) => right.root.length - left.root.length || left.root.localeCompare(right.root));
+  return {
+    present: normalizedScopes.some((scope) => scope.present),
+    deps: normalizedScopes.flatMap((scope) => scope.deps),
+    scopes: normalizedScopes,
+  };
 }

@@ -163,6 +163,30 @@ const CLASS_QUERY_TERMS = Object.freeze({
 })
 const CODE_FILE_RE = /\.(?:[cm]?[jt]sx?|py|go|java|rs|kt|kts|cs|rb|php)$/i
 const DATA_OR_PROSE_RE = /\.(?:json|ya?ml|toml|ini|md|mdx|rst|adoc|html?|css|scss|less|svg)$/i
+const LANGUAGE_EXTENSIONS = Object.freeze({
+    rust: ['rs'], python: ['py', 'pyi'], typescript: ['ts', 'tsx', 'mts', 'cts'],
+    javascript: ['js', 'jsx', 'mjs', 'cjs'], go: ['go'], java: ['java'], csharp: ['cs'],
+})
+
+function requestedLanguages(query) {
+    const raw = String(query || '')
+    const words = new Set(wordsOf(query))
+    const requested = new Set()
+    if (words.has('rust')) requested.add('rust')
+    if (words.has('python') || words.has('py')) requested.add('python')
+    if (words.has('typescript') || words.has('ts') || /typescript/i.test(raw)) requested.add('typescript')
+    if (words.has('javascript') || words.has('js') || words.has('nodejs') || /javascript|node\.?js/i.test(raw)) requested.add('javascript')
+    if (words.has('golang') || /(?:^|[^A-Za-z])Go(?:[^A-Za-z]|$)/.test(raw)) requested.add('go')
+    if (words.has('java')) requested.add('java')
+    if (words.has('csharp') || words.has('dotnet') || /csharp|(?:^|[^A-Za-z])C#(?:[^A-Za-z]|$)/i.test(raw)) requested.add('csharp')
+    return new Set([...requested].flatMap((language) => LANGUAGE_EXTENSIONS[language]))
+}
+
+const matchesLanguage = (node, extensions) => {
+    if (!extensions.size) return true
+    const match = /\.([^.\/]+)$/.exec(sourceFileOf(node))
+    return !!match && extensions.has(match[1].toLowerCase())
+}
 
 const sourceFileOf = (node) => {
     const source = node?.source_file || String(node?.id ?? '').split('#', 1)[0]
@@ -266,6 +290,14 @@ function conceptScore(g, node, concept, queryContext) {
         else if (words.has(term)) match = Math.max(match, primary ? 36 : 25)
         else if (term.length >= 4 && term !== 'tool' && term !== 'tools' && (id.includes(term) || label.includes(term))) match = Math.max(match, primary ? 12 : 7)
     })
+    const extension = (/\.([^.\/]+)$/.exec(source) || [])[1] || ''
+    const languageConcept = {
+        rust: ['rs'], python: ['py', 'pyi'], py: ['py', 'pyi'],
+        typescript: ['ts', 'tsx', 'mts', 'cts'], ts: ['ts', 'tsx', 'mts', 'cts'],
+        javascript: ['js', 'jsx', 'mjs', 'cjs'], js: ['js', 'jsx', 'mjs', 'cjs'], nodejs: ['js', 'jsx', 'mjs', 'cjs'],
+        golang: ['go'], go: ['go'], java: ['java'], csharp: ['cs'], dotnet: ['cs'],
+    }[concept.raw]
+    if (languageConcept?.includes(extension) && queryContext.languageExtensions.has(extension)) match = Math.max(match, 58)
     const fileNode = !isSymbol(node.id)
     const depth = source ? source.split('/').length : 9
     if (concept.id === 'bootstrap') match = Math.max(match, entrypointSignal(g, node, source, stem))
@@ -288,13 +320,16 @@ export function findSeeds(g, query, limit = 8, {repoRoot = null} = {}) {
     const concepts = queryConcepts(query)
     if (!concepts.length || limit <= 0) return []
     const requestedClasses = requestedPathClasses(query)
+    const languageExtensions = requestedLanguages(query)
     const queryContext = {
         runtimeIntent: concepts.some((concept) => concept.id === 'bootstrap' || concept.id === 'tool-execution'),
         maintenanceIntent: wordsOf(query).some((word) => ['script', 'scripts', 'build', 'release', 'publish', 'packaging'].includes(word)),
+        languageExtensions,
     }
     const classifier = createPathClassifier(repoRoot)
     const classificationCache = new Map()
-    const rows = g.nodes.filter((node) => isQueryEligible(node, requestedClasses, classificationCache, classifier)).map((node) => {
+    const rows = g.nodes.filter((node) => matchesLanguage(node, languageExtensions)
+        && isQueryEligible(node, requestedClasses, classificationCache, classifier)).map((node) => {
         const scores = concepts.map((concept) => conceptScore(g, node, concept, queryContext))
         return {node, scores, total: Math.max(...scores) + scores.reduce((sum, score) => sum + score, 0) / 10}
     })

@@ -62,6 +62,21 @@ function architectureState(result) {
   return result.verification.new?.length || String(result.verification.status).toUpperCase() === 'FAIL' ? 'BLOCKED' : 'PASS'
 }
 
+function exactUsageLines(contexts, g) {
+  if (!contexts.length) return []
+  return contexts.map((context) => {
+    const node = g.byId.get(String(context.symbol || context.definition?.id || ''))
+    const label = String(context.definition?.label || node?.label || context.symbol || 'symbol')
+    if (context.status !== 'OK') return `Exact usage: ${label} — unavailable (${context.status || 'UNKNOWN'}).`
+    const exact = context.evidence?.state === 'EXACT'
+    const occurrences = Number(context.references?.occurrences) || 0
+    const files = Number(context.references?.files) || 0
+    const inbound = Array.isArray(context.inbound?.shown) ? context.inbound.shown.slice(0, 3) : []
+    const callers = inbound.map((item) => `${item.label || item.id}${item.file ? ` [${item.file}]` : ''}`).join(', ')
+    return `${exact ? 'Exact usage' : 'Bounded usage'}: ${label} — ${occurrences} reference occurrence(s)${files ? ` in ${files} file(s)` : ''}; ${Number(context.inbound?.total) || 0} inbound container(s)${callers ? `: ${callers}` : ''}.`
+  })
+}
+
 function decide({phase, impact, graph, architecture, duplicates, api, tests, suggestedTests, testCoverageState}) {
   if (phase === 'plan') return tests.state === 'BLOCKED'
     ? {verdict: 'BLOCKED', blockers: [`targeted test plan was rejected: ${tests.reason || 'invalid request'}`], unknowns: []}
@@ -162,6 +177,7 @@ export async function tVerifiedChange(g, args = {}, ctx = {}, tools = {}, permis
     `${decision.verdict} — verified_change ${phase}`, `Task: ${String(args.task).slice(0, 500)}`,
     `Change: ${changedFiles.length} file(s), ${impact.seeds?.ids?.length || 0} exact seed(s), blast radius ${impact.blastRadius?.impacted || 0}.`,
     `Edit context: ${retrieval.selected.length} symbol(s); ${contexts.length} exact bundle(s); data-flow ${dataFlow.status} (${dataFlow.edges.length} call edge(s)).`,
+    ...exactUsageLines(contexts, g),
     `Ratchets: graph ${graph.state}; architecture ${architecture.state}; duplicates ${duplicates.state}; API ${api.state}; tests ${testProof.state}.`,
     ...decision.blockers.map((item) => `BLOCKER: ${item}`), ...decision.unknowns.map((item) => `UNKNOWN: ${item}`),
   ].join('\n')

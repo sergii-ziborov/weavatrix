@@ -103,8 +103,8 @@ test('verified_change plan returns one proof envelope instead of requiring manua
       blastRadius: {impacted: 1, nodes: [{id: 'src/caller.js#caller@2', testEvidence: {staticTestReachability: {status: 'REACHABLE', test: 'test/target.test.js'}}}]},
     }),
     context: async (_g, args) => toolResult('context', {
-      status: 'OK', definition: {id: args.label}, evidence: {state: 'EXACT'}, references: {occurrences: 2},
-      inbound: {total: 1}, outbound: {total: 0}, reExports: {total: 0}, source: [],
+      status: 'OK', definition: {id: args.label}, evidence: {state: 'EXACT'}, references: {occurrences: 2, files: 1},
+      inbound: {total: 1, shown: [{id: 'src/caller.js#caller@2', label: 'caller()', file: 'src/caller.js'}]}, outbound: {total: 0}, reExports: {total: 0}, source: [],
     }),
     inspect: async () => null,
     prepareChange: () => toolResult('architecture', {state: 'READY'}),
@@ -118,4 +118,5 @@ test('verified_change plan returns one proof envelope instead of requiring manua
   assert.equal(result.result.editContexts[0].evidence.state, 'EXACT')
   assert.deepEqual(result.result.tests.suggestedFiles, ['test/target.test.js'])
   assert.match(result.text, /^UNKNOWN — verified_change plan/)
+  assert.match(result.text, /Exact usage: target\(\) — 2 reference occurrence\(s\) in 1 file\(s\); 1 inbound container\(s\): caller\(\) \[src\/caller\.js\]\./)
 })

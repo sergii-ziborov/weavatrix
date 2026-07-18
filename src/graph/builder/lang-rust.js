@@ -4,23 +4,43 @@
 // `crate/self/super` paths resolve to repo-local .rs or */mod.rs files. External crates deliberately stay out
 // of this adapter; Cargo dependency analysis owns them.
 const SYMS_CORE = `
-  (function_item name: (identifier) @method)
-  (struct_item name: (type_identifier) @class)
-  (enum_item name: (type_identifier) @class)
-  (trait_item name: (type_identifier) @class)
-  (type_item name: (type_identifier) @class)
-  (mod_item name: (identifier) @class)
-  (const_item name: (identifier) @field)
-  (static_item name: (identifier) @field)`;
+  (function_item name: (identifier) @function)
+  (struct_item name: (type_identifier) @struct)
+  (enum_item name: (type_identifier) @enum)
+  (trait_item name: (type_identifier) @trait)
+  (type_item name: (type_identifier) @type)
+  (mod_item name: (identifier) @module)
+  (const_item name: (identifier) @constant)
+  (static_item name: (identifier) @static)`;
 // Grammar-version-dependent node types, compiled SEPARATELY (one unknown type voids its whole query).
 const SYMS_OPTIONAL = [
-  `(macro_definition name: (identifier) @method)`,
-  `(union_item name: (type_identifier) @class)`,
+  `(function_signature_item name: (identifier) @function)`,
+  `(macro_definition name: (identifier) @macro)`,
+  `(union_item name: (type_identifier) @union)`,
 ];
 
 const cleanSegment = (part) => String(part || "").trim().replace(/^r#/, "");
 const pathParts = (node) => String(node?.text || "").split("::").map(cleanSegment).filter(Boolean);
 const under = (node, type) => { for (let p = node?.parent; p; p = p.parent) if (p.type === type) return true; return false; };
+const ancestor = (node, types) => {
+  for (let parent = node?.parent; parent; parent = parent.parent) if (types.has(parent.type)) return parent;
+  return null;
+};
+const memberOwners = new Set(["impl_item", "trait_item"]);
+const publicVisibility = (declaration, owner) => {
+  if (owner?.type === "trait_item") return "public";
+  const source = String(declaration?.text || "").trimStart();
+  if (/^pub\s/.test(source)) return "public";
+  if (/^pub\s*\(/.test(source)) return "protected";
+  return "private";
+};
+const ownerName = (owner, field) => {
+  if (!owner) return "";
+  if (owner.type === "trait_item") return field(owner, "name")?.text || "";
+  const type = field(owner, "type")?.text || "";
+  const withoutGenerics = type.replace(/<[^<>]*>/g, "");
+  return (withoutGenerics.match(/[A-Za-z_]\w*/g) || []).at(-1) || "";
+};
 
 function pathAttribute(modNode) {
   for (let prev = modNode?.previousNamedSibling; prev?.type === "attribute_item"; prev = prev.previousNamedSibling) {
@@ -93,11 +113,28 @@ export default {
   ],
 
   pass1(ctx) {
-    const { grammar, tree, fileRel, caps, addSym, addImportEdge, imports, resolveRustMod, resolveRustPath } = ctx;
+    const { grammar, tree, fileRel, caps, field, addSym, addImportEdge, imports, resolveRustMod, resolveRustPath, links, nameToId } = ctx;
+    const owned = [];
     for (const src of [SYMS_CORE, ...SYMS_OPTIONAL]) {
       for (const cap of caps(grammar, src, tree.rootNode)) {
-        addSym(cap.node.text, cap.node.startPosition.row + 1, cap.name === "method", { sourceNode: cap.node.parent });
+        const declaration = cap.node.parent;
+        const owner = cap.name === "function" ? ancestor(cap.node, memberOwners) : null;
+        const memberOf = ownerName(owner, field);
+        const symbolKind = cap.name === "function" ? (memberOf ? "method" : "function") : cap.name;
+        const visibility = publicVisibility(declaration, owner);
+        const id = addSym(cap.node.text, cap.node.startPosition.row + 1, cap.name === "function", {
+          sourceNode: declaration,
+          selectionNode: cap.node,
+          symbolKind,
+          ...(memberOf ? { memberOf, visibility } : { moduleDeclaration: true }),
+          ...(!memberOf && visibility === "public" ? { exported: true } : {}),
+        });
+        if (id && memberOf) owned.push({owner: memberOf, id});
       }
+    }
+    for (const member of owned) {
+      const ownerId = nameToId.get(member.owner);
+      if (ownerId && ownerId !== member.id) links.push({source: ownerId, target: member.id, relation: "method", confidence: "EXTRACTED"});
     }
 
     // File dependency edges are intentionally unique per source/target/relation. A qualified path can be

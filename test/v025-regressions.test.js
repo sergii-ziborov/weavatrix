@@ -6,12 +6,12 @@ import {tmpdir} from "node:os";
 import {pathToFileURL} from "node:url";
 import {loadGraph} from "../src/mcp/graph-context.mjs";
 import {tGetDependents} from "../src/mcp/tools-impact.mjs";
-import {tFindDuplicates} from "../src/mcp/tools-health.mjs";
+import {tFindDeadCode, tFindDuplicates} from "../src/mcp/tools-health.mjs";
 import {tInspectSymbol} from "../src/mcp/tools-source.mjs";
 import {computeDuplicates} from "../src/analysis/duplicates.js";
 import {computeDeadCodeReview} from "../src/analysis/dead-code-review.js";
 import {buildInternalGraph} from "../src/graph/internal-builder.js";
-import {querySymbolPrecision} from "../src/precision/symbol-query.js";
+import {querySymbolPrecision, readCachedSymbolPrecisionEvidence} from "../src/precision/symbol-query.js";
 
 function withGraph(graph) {
   const root = mkdtempSync(join(tmpdir(), "weavatrix-v025-"));
@@ -162,6 +162,13 @@ test("on-demand symbol precision queries only the requested declaration and uses
     assert.equal(first.overlay.coverage.selected, 1);
     assert.equal(first.overlay.locations.length, 1);
     assert.equal(first.overlay.locations[0].source.includes("#caller@"), true);
+    const evidence = readCachedSymbolPrecisionEvidence({repoRoot: root, graphPath, graph});
+    assert.deepEqual(evidence.referenceSymbols, [target.id]);
+    assert.deepEqual(evidence.productionReferenceSymbols, [target.id]);
+    assert.deepEqual(evidence.testReferenceSymbols, []);
+    assert.deepEqual(evidence.noReferenceSymbols, []);
+    const deadReview = tFindDeadCode(loadGraph(graphPath, {repoRoot: root}), {}, {repoRoot: root, graphPath});
+    assert.ok(!deadReview.result.candidates.some((candidate) => candidate.id === target.id), "an exact point-query caller removes the symbol from find_dead_code");
     const second = await querySymbolPrecision({repoRoot: root, graphPath, targetId: target.id, clientFactory});
     assert.equal(second.cached, true);
     assert.equal(references, 1);

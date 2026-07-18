@@ -7,6 +7,7 @@ import {
     precisionOverlayMatches,
     precisionSemanticInputsMatch,
 } from './lsp-overlay.js'
+import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
 export const SYMBOL_PRECISION_CACHE_V = 1
 export const SYMBOL_PRECISION_CACHE_FILE = 'precision-symbols.json'
@@ -77,6 +78,56 @@ function cacheable(overlay) {
     if (overlay?.state === 'COMPLETE') return true
     return overlay?.state === 'PARTIAL'
         && overlay?.reason === 'semantic precision stopped at a configured safety limit'
+}
+
+// Point-query results intentionally live outside the broad precision overlay. Health tools still
+// need to consume revision-bound positive evidence: once an exact query found a reference, the
+// same symbol must not remain in a dead-code queue. This reader is synchronous and fail-closed;
+// stale, malformed, incomplete no-reference, or semantically changed entries contribute nothing.
+export function readCachedSymbolPrecisionEvidence({repoRoot, graphPath, graph} = {}) {
+    const empty = {referenceSymbols: [], productionReferenceSymbols: [], testReferenceSymbols: [], noReferenceSymbols: []}
+    if (!repoRoot || !graphPath || !graph) return empty
+    const precisionGraph = graph.graphPrecisionMode === 'off' ? {...graph, graphPrecisionMode: 'lsp'} : graph
+    const nodesById = new Map((precisionGraph.nodes || []).map((node) => [String(node.id), node]))
+    const classifier = createPathClassifier(repoRoot)
+    const referenced = new Set()
+    const production = new Set()
+    const tests = new Set()
+    const noReference = new Set()
+    const semanticMatches = new Map()
+    for (const entry of readCache(symbolPrecisionCachePath(graphPath)).entries) {
+        const overlay = entry?.overlay
+        if (!overlay || !precisionOverlayMatches(overlay, precisionGraph, {request: overlay.request})) continue
+        const fingerprint = String(overlay.semanticInputFingerprint || '')
+        if (!semanticMatches.has(fingerprint)) semanticMatches.set(
+            fingerprint,
+            precisionSemanticInputsMatch(overlay, repoRoot, precisionGraph),
+        )
+        if (!semanticMatches.get(fingerprint)) continue
+        const targetId = String(entry.targetId || '')
+        if (!nodesById.has(targetId)) continue
+        const locations = Array.isArray(overlay.locations)
+            ? overlay.locations.filter((location) => String(location?.target || '') === targetId)
+            : []
+        if (locations.length) {
+            referenced.add(targetId)
+            for (const location of locations) {
+                const file = String(location?.file || nodesById.get(String(location?.source || ''))?.source_file || '')
+                if (!file) continue
+                const info = classifier.explain(file, {content: ''})
+                if (hasPathClass(info, 'test', 'e2e')) tests.add(targetId)
+                else production.add(targetId)
+            }
+        }
+        if (overlay.state === 'COMPLETE' && Array.isArray(overlay.noReferenceSymbols)
+            && overlay.noReferenceSymbols.some((id) => String(id) === targetId)) noReference.add(targetId)
+    }
+    return {
+        referenceSymbols: [...referenced],
+        productionReferenceSymbols: [...production],
+        testReferenceSymbols: [...tests],
+        noReferenceSymbols: [...noReference],
+    }
 }
 
 export async function querySymbolPrecision({

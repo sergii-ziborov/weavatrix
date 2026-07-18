@@ -111,3 +111,35 @@ test("Go and Python dependency checks ignore declared non-runtime template roots
   });
   assert.deepEqual(py.findings.filter((finding) => finding.rule === "missing-dep").map((finding) => finding.package), ["requests"]);
 });
+
+test("Python dependency checks use the nearest nested manifest without leaking it to sibling code", () => {
+  const pyManifest = {
+    present: true,
+    deps: [{name: "slack_bolt", dev: false}],
+    scopes: [{
+      root: "autobot",
+      present: true,
+      manifests: ["autobot/requirements.txt"],
+      deps: [{name: "slack_bolt", dev: false, manifest: "autobot/requirements.txt"}],
+    }],
+  };
+  const result = computePyDepFindings({
+    pyManifest,
+    externalImports: [
+      pyImp("slack_bolt", "slack_bolt", "autobot/autobot.py"),
+      pyImp("slack_bolt", "slack_bolt", "other/tool.py"),
+    ],
+  });
+  const missing = result.findings.filter((finding) => finding.rule === "missing-dep");
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].file, "other/tool.py");
+  assert.equal(missing[0].severity, "low", "a sibling without a Python manifest remains unknown, not falsely covered");
+});
+
+test("root test.py imports are classified as test-only dependency evidence", () => {
+  const result = computePyDepFindings({
+    pyManifest: {present: true, deps: []},
+    externalImports: [pyImp("requests", "requests", "test.py")],
+  });
+  assert.equal(result.findings[0].severity, "low");
+});

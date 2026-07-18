@@ -46,7 +46,7 @@ const DEFAULT_RULES = [
   {
     category: "test",
     pattern: "test/spec roots and conventional test filenames",
-    regex: /(^|\/)(?:__tests?__|tests?|spec)(\/|$)|\.(?:test|itest|spec)\.[^.\/]+$|_test\.go$|(^|\/)test_[^/]*\.py$/i,
+    regex: /(^|\/)(?:__tests?__|tests?|spec)(\/|$)|\.(?:test|itest|spec)\.[^.\/]+$|_test\.go$|(^|\/)test(?:_[^/]*)?\.py$/i,
   },
   {
     category: "generated",
