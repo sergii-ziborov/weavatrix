@@ -27,6 +27,38 @@ function lineAt(text, index) {
   return line;
 }
 
+// Regex extractors must never see commented-out routes. Preserve string literals and every source
+// offset, but replace comment bodies with spaces so endpoint line numbers still refer to the original
+// file. Python `#` comments are enabled only for .py files; Rust attributes such as #[get] stay intact.
+function maskComments(text, { hashComments = false } = {}) {
+  const chars = String(text || "").split("");
+  let quote = "", escaped = false, lineComment = false, blockComment = false;
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i], next = chars[i + 1];
+    if (lineComment) {
+      if (ch === "\n" || ch === "\r") lineComment = false;
+      else chars[i] = " ";
+      continue;
+    }
+    if (blockComment) {
+      if (ch === "*" && next === "/") { chars[i] = chars[i + 1] = " "; i++; blockComment = false; }
+      else if (ch !== "\n" && ch !== "\r") chars[i] = " ";
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
+    if (ch === "/" && next === "/") { chars[i] = chars[i + 1] = " "; i++; lineComment = true; continue; }
+    if (ch === "/" && next === "*") { chars[i] = chars[i + 1] = " "; i++; blockComment = true; continue; }
+    if (hashComments && ch === "#") { chars[i] = " "; lineComment = true; }
+  }
+  return chars.join("");
+}
+
 // best-effort bare handler name from a value expression: the LAST identifier, unwrapping wrappers like
 // executionRoute(queryHandlers.executeQuery) → executeQuery, asyncHandler(fn) → fn, a.b.c → c.
 // An INLINE handler (arrow / function literal) has no named method to join to, so it returns "" (the
@@ -75,6 +107,7 @@ export function extractEndpointsFromText(text, file) {
   const py = /\.py$/i.test(file);
   const rust = /\.rs$/i.test(file);
   const java = /\.java$/i.test(file);
+  const scanText = maskComments(text, { hashComments: py });
   const add = (method, path, expr, idx) => {
     const p = cleanPath(path);
     if (!looksLikePath(p)) return;
@@ -90,13 +123,13 @@ export function extractEndpointsFromText(text, file) {
     const seen = new Set();
     const direct = /\bexport\s+(?:(?:async|declare)\s+)*(?:function\s+|(?:const|let|var)\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g;
     let nm;
-    while ((nm = direct.exec(text))) {
+    while ((nm = direct.exec(scanText))) {
       const method = nm[1].toUpperCase();
       if (!seen.has(method)) { seen.add(method); add(method, nextPath, method, nm.index); }
     }
     const lists = /\bexport\s*\{([^}]+)\}/g;
     let lm;
-    while ((lm = lists.exec(text))) {
+    while ((lm = lists.exec(scanText))) {
       for (const item of lm[1].split(",")) {
         const mm = /^\s*([A-Za-z_$][\w$]*)(?:\s+as\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))?\s*$/.exec(item);
         if (!mm) continue;
@@ -108,9 +141,9 @@ export function extractEndpointsFromText(text, file) {
     }
   }
 
-  if (rust) extractRustEndpoints(text, add);
+  if (rust) extractRustEndpoints(scanText, add);
   if (java) {
-    out.push(...extractSpringEndpoints(text, file));
+    out.push(...extractSpringEndpoints(scanText, file));
     return out; // generic JS-style method calls would turn Java HTTP clients into fake server routes
   }
 
@@ -118,14 +151,14 @@ export function extractEndpointsFromText(text, file) {
   // find each  "…": {  or  "…": expr,  where the key looks like a path
   const objKeyRe = /(["'`])(\/[^"'`]*)\1\s*:\s*(\{)?/g;
   let m;
-  while ((m = objKeyRe.exec(text))) {
+  while ((m = objKeyRe.exec(scanText))) {
     const path = m[2], keyIdx = m.index;
     if (m[3]) {
       // object of METHOD: handler — scan to the matching close brace (routes objects are shallow)
       let i = objKeyRe.lastIndex, depth = 1;
       const start = i;
-      while (i < text.length && depth > 0) { const c = text[i]; if (c === "{") depth++; else if (c === "}") depth--; i++; }
-      const body = text.slice(start, i - 1);
+      while (i < scanText.length && depth > 0) { const c = scanText[i]; if (c === "{") depth++; else if (c === "}") depth--; i++; }
+      const body = scanText.slice(start, i - 1);
       objKeyRe.lastIndex = i;
       if (OPENAPI_BLOCK.test(body)) continue; // documentation, not a route table
       const methodRe = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b\s*:\s*([^,\n}]+)/gi;
@@ -133,9 +166,10 @@ export function extractEndpointsFromText(text, file) {
       while ((mm = methodRe.exec(body))) add(mm[1], path, mm[2], keyIdx);
     } else {
       // "/path": handlerExpr — a direct handler (any method); grab up to the next , or }
-      const tail = text.slice(objKeyRe.lastIndex, objKeyRe.lastIndex + 200);
+      const tail = scanText.slice(objKeyRe.lastIndex, objKeyRe.lastIndex + 200);
       const em = /^([^,\n}]+)/.exec(tail);
-      if (em && !/^\s*\{/.test(em[1])) add("ANY", path, em[1], keyIdx);
+      // A string/number/array value is an ordinary path/name lookup, not an executable handler.
+      if (em && !/^\s*(?:\{|["'`\[]|[-+]?\d|true\b|false\b|null\b|undefined\b)/i.test(em[1])) add("ANY", path, em[1], keyIdx);
     }
   }
 
@@ -146,7 +180,7 @@ export function extractEndpointsFromText(text, file) {
   // FRONTEND code, not server routes. A server route also REQUIRES a handler arg (an identifier/function),
   // so a bare `client.get("/x")` or one whose 2nd arg is a config object literal `{…}` is skipped.
   const callRe = /(?<!@)\b([\w$]+)\s*\.\s*(get|post|put|patch|delete|head|options|all)\s*\(\s*(["'`])(\/[^"'`]*)\3\s*(?:,\s*([\s\S]{0,160}?))?\)/gi;
-  while ((m = callRe.exec(text))) {
+  while ((m = callRe.exec(scanText))) {
     const caller = m[1], arg2 = String(m[5] || "").trim();
     if (HTTP_CLIENT_CALLER.test(caller)) continue;          // axios/http/fetch/apiClient… → a client request
     if (!arg2 || arg2[0] === "{") continue;                 // no handler, or a config object → not a route def
@@ -155,14 +189,14 @@ export function extractEndpointsFromText(text, file) {
 
   // ---- Go net/http: mux.HandleFunc("/path", handler) / http.Handle("/path", h) ------------------
   const goRe = /\.\s*(?:HandleFunc|Handle)\s*\(\s*(["'`])(\/[^"'`]*)\1\s*,\s*([\s\S]{0,120}?)\)/g;
-  while ((m = goRe.exec(text))) add("ANY", m[2], m[3], m.index);
+  while ((m = goRe.exec(scanText))) add("ANY", m[2], m[3], m.index);
 
   // ---- decorators: @app.get("/path") / @router.post("/path") / @Get("/path") -------------------
   if (py || /\.(ts|js|tsx|jsx|cjs|mjs)$/i.test(file)) {
     const decoRe = /@[\w$]*\.?\s*(get|post|put|patch|delete|head|options)\s*\(\s*(["'`])(\/[^"'`]*)\2/gi;
-    while ((m = decoRe.exec(text))) {
+    while ((m = decoRe.exec(scanText))) {
       // the handler is the def/function on a following line — best-effort: next def name
-      const after = text.slice(decoRe.lastIndex, decoRe.lastIndex + 200);
+      const after = scanText.slice(decoRe.lastIndex, decoRe.lastIndex + 200);
       const fn = /\b(?:def|async\s+def|function|const|export\s+function)\s+([A-Za-z_$][\w$]*)/.exec(after);
       add(m[1], m[3], fn ? fn[1] : "", m.index);
     }

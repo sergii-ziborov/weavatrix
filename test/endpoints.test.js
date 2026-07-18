@@ -114,6 +114,23 @@ test("endpoints: non-route strings and URLs are not mistaken for endpoints", () 
   assert.ok(!find(eps, "GET", "/not-a-route-but-a-string"), "a lone fetch string is not a declared route");
 });
 
+test("endpoints: commented-out routes and ordinary path-to-name maps are ignored", () => {
+  const text = `
+    // router.delete('/:id', requireRole('admin'), handler);
+    /* app.post('/disabled', disabledHandler); */
+    const agentHomes = {
+      '/.codex': 'claude',
+      '/.cursor': 'cursor',
+    };
+    router.get('/health', healthHandler);`;
+  const eps = extractEndpointsFromText(text, "src/config.ts");
+  assert.ok(!find(eps, "DELETE", "/:id"));
+  assert.ok(!find(eps, "POST", "/disabled"));
+  assert.ok(!find(eps, "ANY", "/.codex"));
+  assert.ok(!find(eps, "ANY", "/.cursor"));
+  assert.equal(find(eps, "GET", "/health").handler, "healthHandler");
+});
+
 test("endpoints: FRONTEND client HTTP calls (axios/http/fetch/apiClient) are NOT mistaken for server routes", () => {
   const text = `
     const users = await axios.get('/api/users');

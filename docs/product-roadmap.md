@@ -119,6 +119,21 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
   latency metrics. External Codebase Memory and Serena results remain an independent-data release
   requirement rather than fabricated in-repository scores.
 
+### Public `0.2.8` — trust and precision corrections
+
+- Delivered: dead-code liveness reconciles same-file production use and revision-bound positive
+  point-query evidence instead of reporting a symbol that exact inspection already proved used.
+- Delivered: nearest-manifest ownership for nested Python requirements/pyproject/Pipfile layouts,
+  including explicit unknown scope for sibling code that has no manifest.
+- Delivered: comment-aware endpoint extraction and primitive path-map rejection for the two verified
+  false-positive classes found during mixed-repository dogfooding.
+- Delivered: Rust symbol kinds, ownership, visibility/export metadata and structural member edges.
+- Delivered: explicit-language constraints in mixed-repository natural-language retrieval and
+  decisive exact-reference summaries in compact `verified_change` output.
+- Still next: Python/Rust/Java LSP providers, vector/semantic retrieval, CFG/value/taint analysis,
+  runtime trace ingestion and a blind end-to-end competitor benchmark. Parser evidence is not
+  relabelled as semantic proof.
+
 ### Public `0.3.0` — precision expansion
 
 - Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and

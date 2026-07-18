@@ -84,8 +84,23 @@ test("manifest, config, coverage and installed-package readers reject external d
     symlinkSync(outside, join(repo, "coverage"), process.platform === "win32" ? "junction" : "dir");
 
     assert.equal(collectConfigTexts(repo).size, 0);
-    assert.deepEqual(collectPyManifest(repo), { present: false, deps: [] });
+    assert.deepEqual(collectPyManifest(repo), { present: false, deps: [], scopes: [] });
     assert.equal(readCoverageForRepo(repo, ["src/a.js"]).size, 0);
     assert.ok(!collectInstalled(repo).installed.some((pkg) => pkg.name === "outside-secret-package"));
   } finally { rmSync(parent, { recursive: true, force: true }); }
+});
+
+test("nested Python requirements are collected with nearest-manifest ownership", () => {
+  const repo = mkdtempSync(join(tmpdir(), "wx-python-manifest-scope-"));
+  try {
+    mkdirSync(join(repo, "autobot"), { recursive: true });
+    mkdirSync(join(repo, "worker", "requirements"), { recursive: true });
+    writeFileSync(join(repo, "autobot", "requirements.txt"), "slack_bolt>=1.6.1\n");
+    writeFileSync(join(repo, "worker", "requirements", "base.txt"), "requests~=2.32\n");
+    const manifest = collectPyManifest(repo);
+    assert.equal(manifest.present, true);
+    assert.deepEqual(manifest.scopes.map((scope) => scope.root).sort(), ["autobot", "worker"]);
+    assert.equal(manifest.scopes.find((scope) => scope.root === "autobot").deps[0].name, "slack_bolt");
+    assert.equal(manifest.scopes.find((scope) => scope.root === "worker").deps[0].name, "requests");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });

@@ -1,6 +1,6 @@
 import { makeFinding } from "./findings.js";
 
-const TEST_PATH_RE = /(^|[/\\])(test|tests|__tests__|spec|e2e|__mocks__)([/\\]|$)|[._-](test|spec)\.[a-z0-9]+$|_test\.go$/i;
+const TEST_PATH_RE = /(^|[/\\])(test|tests|__tests__|spec|e2e|__mocks__)([/\\]|$)|[._-](test|spec)\.[a-z0-9]+$|_test\.go$|(^|[/\\])test(?:_[^/\\]*)?\.py$/i;
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\w.-])`).test(blob);
 
@@ -79,7 +79,7 @@ const PY_TOOL_DISTS = new Set(("pytest tox nox black ruff flake8 pylint mypy pyr
   "pip-tools uv virtualenv pipenv gunicorn uwsgi supervisor ipython jupyter jupyterlab notebook ipykernel codecov autopep8 yapf commitizen detect-secrets safety pip-audit hatchling flit flit-core pdm").split(" "));
 const pyNorm = (n) => String(n || "").toLowerCase().replace(/[-_.]+/g, "-");
 
-export function computePyDepFindings({
+function computePyDepFindingsFlat({
   externalImports = [], pyManifest = null, configTexts = new Map(),
   managedDependencies = [], ignoredDependencies = [], nonRuntimeRoots = [],
 } = {}) {
@@ -158,6 +158,45 @@ export function computePyDepFindings({
       source: "internal",
       fixHint: present ? `pip install ${u.dist}  (and add it to requirements.txt / pyproject)` : `add ${u.dist} to a Python manifest, or declare it as a managed runtime dependency`,
     }));
+  }
+  return { findings, declared, managed };
+}
+
+const normPyScope = (root) => String(root || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+const pyScopeOwns = (root, file) => !root || file === root || String(file || "").replace(/\\/g, "/").startsWith(`${root}/`);
+
+export function computePyDepFindings(options = {}) {
+  const scopes = Array.isArray(options.pyManifest?.scopes) ? options.pyManifest.scopes : [];
+  if (!scopes.length) return computePyDepFindingsFlat(options);
+  const normalized = scopes.map((scope) => ({ ...scope, root: normPyScope(scope.root) }))
+    .sort((left, right) => right.root.length - left.root.length);
+  if (!normalized.some((scope) => !scope.root)) normalized.push({ root: "", present: false, deps: [], manifests: [] });
+  const importsByScope = new Map(normalized.map((scope) => [scope, []]));
+  const configByScope = new Map(normalized.map((scope) => [scope, new Map()]));
+  for (const entry of options.externalImports || []) {
+    const owner = normalized.find((scope) => pyScopeOwns(scope.root, entry.file)) || normalized.at(-1);
+    importsByScope.get(owner).push(entry);
+  }
+  for (const [file, text] of options.configTexts || new Map()) {
+    const owner = normalized.find((scope) => pyScopeOwns(scope.root, file)) || normalized.at(-1);
+    configByScope.get(owner).set(file, text);
+  }
+  const findings = [];
+  const declared = new Set();
+  const managed = new Set();
+  for (const scope of normalized) {
+    const result = computePyDepFindingsFlat({
+      ...options,
+      externalImports: importsByScope.get(scope),
+      configTexts: configByScope.get(scope),
+      pyManifest: {present: scope.present, deps: scope.deps || []},
+    });
+    findings.push(...result.findings.map((finding) => ({
+      ...finding,
+      ...(scope.manifests?.length ? {manifest: scope.manifests[0]} : {}),
+    })));
+    for (const name of result.declared) declared.add(`${scope.root || "."}:${name}`);
+    for (const name of result.managed) managed.add(name);
   }
   return { findings, declared, managed };
 }

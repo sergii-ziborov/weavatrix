@@ -97,6 +97,25 @@ test("query_graph keeps one strong seed per architecture intent", () => {
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test("query_graph honors an explicit language in mixed-language repositories", () => {
+  const nodes = [
+    {id: "rust-server/src/server.rs", label: "server.rs", source_file: "rust-server/src/server.rs"},
+    {id: "python/server.py", label: "server.py", source_file: "python/server.py"},
+    {id: "web/server.ts", label: "server.ts", source_file: "web/server.ts"},
+    {id: "templates/rust-server.js", label: "rust-server.js", source_file: "templates/rust-server.js"},
+  ];
+  const fx = graphFile({nodes, links: []});
+  try {
+    const rust = findSeeds(fx.graph, "Explain the Rust server architecture", 8).map((node) => node.id);
+    assert.deepEqual(rust, ["rust-server/src/server.rs"]);
+    const both = findSeeds(fx.graph, "Compare the Rust and TypeScript server", 8).map((node) => node.id);
+    assert.ok(both.includes("rust-server/src/server.rs"));
+    assert.ok(both.includes("web/server.ts"));
+    assert.ok(!both.includes("python/server.py"));
+    assert.ok(!both.includes("templates/rust-server.js"));
+  } finally { rmSync(fx.dir, {recursive: true, force: true}); }
+});
+
 test("query_graph broad bootstrap and tool-execution seeds prefer executable production evidence", () => {
   const product = [
     { id: "bin/weavatrix-mcp.mjs", label: "weavatrix-mcp.mjs", source_file: "bin/weavatrix-mcp.mjs" },

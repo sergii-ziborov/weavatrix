@@ -90,3 +90,35 @@ test("computeDead: Java method ownership is structural, not an inbound usage", (
   const result = computeDead(graph, new Map([["Child.java", "class Child {\n  void deadUniqueName() {}\n}\n"]]));
   assert.ok(result.deadSymbols.some((symbol) => symbol.id === "Child.java#deadUniqueName@2"));
 });
+
+test("computeDead: a local production use prevents a same-named test occurrence from becoming test-only evidence", () => {
+  const target = { id: "src/context.js#USER_HEADER@1", label: "USER_HEADER", source_file: "src/context.js" };
+  const graph = {
+    nodes: [
+      { id: "src/context.js", source_file: "src/context.js" },
+      target,
+      { id: "test/context.test.js", source_file: "test/context.test.js" },
+    ],
+    links: [{ source: "src/context.js", target: target.id, relation: "contains" }],
+  };
+  const sources = new Map([
+    ["src/context.js", "const USER_HEADER = 'x-user';\nexport function read(request) { return request.headers.get(USER_HEADER); }\n"],
+    ["test/context.test.js", "const USER_HEADER = 'fixture';\n"],
+  ]);
+  const result = computeDead(graph, sources);
+  assert.equal(result.deadSymbols.some((symbol) => symbol.id === target.id), false);
+  assert.equal(result.testOnlySymbols.some((symbol) => symbol.id === target.id), false);
+});
+
+test("computeDead: revision-bound exact reference evidence keeps a symbol out of the dead queue", () => {
+  const target = { id: "src/context.js#USER_HEADER@1", label: "USER_HEADER", source_file: "src/context.js" };
+  const graph = {
+    nodes: [{ id: "src/context.js", source_file: "src/context.js" }, target],
+    links: [{ source: "src/context.js", target: target.id, relation: "contains" }],
+    precisionReferenceSymbols: [target.id],
+    precisionProductionReferenceSymbols: [target.id],
+  };
+  const result = computeDead(graph, new Map([["src/context.js", "const USER_HEADER = 'x-user';\n"]]));
+  assert.equal(result.deadSymbols.some((symbol) => symbol.id === target.id), false);
+  assert.equal(result.testOnlySymbols.some((symbol) => symbol.id === target.id), false);
+});

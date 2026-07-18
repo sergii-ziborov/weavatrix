@@ -126,13 +126,28 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
 
   const symbolNames = new Set([...symById.values()].map((node) => bareName(node.label)).filter(Boolean));
   const occurrenceFiles = new Map();
+  const occurrenceCounts = new Map();
   for (const [file, text] of sources) for (const match of String(text || "").matchAll(IDENT_RE)) {
     const name = match[0];
     if (!symbolNames.has(name)) continue;
     const files = occurrenceFiles.get(name) || new Set();
     files.add(file);
     occurrenceFiles.set(name, files);
+    const counts = occurrenceCounts.get(name) || new Map();
+    counts.set(file, (counts.get(file) || 0) + 1);
+    occurrenceCounts.set(name, counts);
   }
+
+  const declarationCounts = new Map();
+  for (const node of symById.values()) {
+    const name = bareName(node.label);
+    if (!name) continue;
+    const key = `${node.source_file}\0${name}`;
+    declarationCounts.set(key, (declarationCounts.get(key) || 0) + 1);
+  }
+  const exactReferenceIds = new Set(graph.precisionReferenceSymbols || []);
+  const exactProductionReferenceIds = new Set(graph.precisionProductionReferenceSymbols || []);
+  const exactTestReferenceIds = new Set(graph.precisionTestReferenceSymbols || []);
 
   // decorated defs (@app.route/@app.event/@pytest.fixture…) are entered by the framework: trust the
   // builder's flag when present, else walk the source line(s) above the definition (graph-builder graphs).
@@ -155,6 +170,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
 
   const isReferenced = (n) => {
     if (inbound.has(n.id)) return true;                          // a real graph edge targets it
+    if (exactReferenceIds.has(String(n.id))) return true;        // revision-bound point-query evidence found a caller
     const name = bareName(n.label);
     if (!name || !/^[A-Za-z_$]/.test(name)) return true;         // selectors/odd labels → don't flag
     if (/^__\w+__$/.test(name)) return true;                     // dunders are invoked implicitly (with/str/==/iter…), never spelled
@@ -182,8 +198,14 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
     const name = bareName(n.label);
     const occurrenceSet = occurrenceFiles.get(name) || new Set();
     const externalOccurrences = [...occurrenceSet].filter((file) => file !== n.source_file);
+    const localOccurrences = occurrenceCounts.get(name)?.get(n.source_file) || 0;
+    const localDeclarations = declarationCounts.get(`${n.source_file}\0${name}`) || 0;
+    const hasLocalProductionUse = localOccurrences > localDeclarations;
     const lexicalTestOnly = externalOccurrences.length > 0 && externalOccurrences.every((file) => isTestFile(file));
-    if (hasProductionInbound || (!hasTestInbound && !lexicalTestOnly)) continue;
+    const hasExactProductionInbound = exactProductionReferenceIds.has(String(n.id));
+    const hasExactTestInbound = exactTestReferenceIds.has(String(n.id));
+    if (hasProductionInbound || hasExactProductionInbound || hasLocalProductionUse
+      || (!hasTestInbound && !hasExactTestInbound && !lexicalTestOnly)) continue;
     testOnlySymbols.push({
       id: n.id,
       file: n.source_file,
@@ -191,7 +213,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
       test: false,
       reason: "referenced only from test/e2e code; no production consumer was found",
       testConsumerFiles: [...new Set(sourceFiles.filter((file) => file && isTestFile(file)))].sort(),
-      evidence: hasTestInbound ? "graph" : "lexical",
+      evidence: hasTestInbound ? "graph" : hasExactTestInbound ? "exact-semantic" : "lexical",
       publicApi: n.exported === true || ["public", "protected"].includes(String(n.visibility || "").toLowerCase()),
     });
   }

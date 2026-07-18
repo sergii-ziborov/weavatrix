@@ -20,6 +20,7 @@ test("path classification explains defaults for e2e, generated, mock, stories, d
     ["docs/architecture.md", ["docs"]],
     ["benchmarks/bench_common.py", ["benchmark"]],
     ["tools/__temp/import_pos.py", ["temp"]],
+    ["test.py", ["test"]],
   ];
   for (const [path, expected] of cases) {
     const info = explainPathClassification(null, path, { content: "" });
