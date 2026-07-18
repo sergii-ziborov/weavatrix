@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { computeDuplicates, runDuplicates } from "../src/analysis/duplicates.js";
 import { tFindDuplicates } from "../src/mcp/tools-health.mjs";
-import { compareDuplicateGroups } from "../src/analysis/duplicate-groups.js";
+import { compareDuplicateGroups, isFrameworkBoilerplateCloneGroup } from "../src/analysis/duplicate-groups.js";
 
 const CLONE = `function collectRows(items) {
   const out = [];
@@ -29,6 +29,17 @@ const DISTINCT = `function totallyDifferent(a, b) {
   while (a < b) { acc += Math.sqrt(a) / (b || 1); a += 3; }
   switch (acc % 4) { case 0: return "zero"; case 1: return acc; default: return null; }
 }`;
+
+test("duplicates: conventional router-only groups are recognized as framework boilerplate", () => {
+  assert.equal(isFrameworkBoilerplateCloneGroup({members: [
+    {file: "services/auth/auth.router.js", label: "router"},
+    {file: "services/attack/attack.router.js", label: "router"},
+  ]}), true);
+  assert.equal(isFrameworkBoilerplateCloneGroup({members: [
+    {file: "services/auth/auth.router.js", label: "router"},
+    {file: "services/attack/attack.controller.js", label: "startMitigate()"},
+  ]}), false);
+});
 
 function makeRepo() {
   const dir = mkdtempSync(join(tmpdir(), "weavatrix-dup-"));

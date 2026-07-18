@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { loadGraph, diffGraphs, formatGraphDiff, findSeeds, prevGraphPathFor } from "../src/mcp/graph-context.mjs";
 import { tGodNodes, tQueryGraph } from "../src/mcp/tools-graph.mjs";
 import { tGetDependents, tGraphDiff } from "../src/mcp/tools-impact.mjs";
-import { tModuleMap, formatAuditFinding } from "../src/mcp/tools-health.mjs";
+import { auditFindingPathScope, tModuleMap, formatAuditFinding } from "../src/mcp/tools-health.mjs";
 import { aggregateGraph } from "../src/analysis/graph-analysis.js";
 
 function graphFile(graph) {
@@ -248,6 +248,40 @@ test("query_graph exact seed_files disable fuzzy architecture seeds unless augme
   } finally { rmSync(fx.dir, {recursive: true, force: true}); }
 });
 
+test("query_graph does not turn generic REST task instructions into config/path seeds", () => {
+  const app = { id: "app.js", label: "app.js", source_file: "app.js" };
+  const router = { id: "services/attack/attack.router.js", label: "attack.router.js", source_file: "services/attack/attack.router.js" };
+  const controller = { id: "services/attack/attack.controller.js#startMitigate@10", label: "startMitigate()", source_file: "services/attack/attack.controller.js", symbol_kind: "function" };
+  const configPath = { id: "jest.config.cjs#path@8", label: "path", source_file: "jest.config.cjs", symbol_kind: "variable" };
+  const fx = graphFile({nodes: [app, router, controller, configPath], links: []});
+  try {
+    const output = tQueryGraph(fx.graph, {
+      question: "Trace the main REST API request path from HTTP controller or route through service logic. Focus on production code and identify the best exact symbol to inspect.",
+      depth: 1,
+    }, {repoRoot: fx.dir});
+    assert.doesNotMatch(output, /Seeds:.*\bpath\b/);
+    assert.doesNotMatch(output, /jest\.config\.cjs/);
+    assert.match(output, /attack\.router\.js|startMitigate/);
+  } finally { rmSync(fx.dir, {recursive: true, force: true}); }
+});
+
+test("query_graph code-shaped identifiers outrank generic controller/service/flow concepts", () => {
+  const controller = { id: "services/attack/attack.controller.js#startMitigate@10", label: "startMitigate()", source_file: "services/attack/attack.controller.js" };
+  const service = { id: "services/attack/attack.service.js#startMitigate@20", label: "startMitigate()", source_file: "services/attack/attack.service.js" };
+  const messaging = { id: "services/messaging/messaging.js#startMitigate@30", label: "startMitigate()", source_file: "services/messaging/messaging.js" };
+  const wrongController = { id: "services/protected/protected.controller.js", label: "protected.controller.js", source_file: "services/protected/protected.controller.js" };
+  const wrongService = { id: "services/protected/protected.service.js", label: "protected.service.js", source_file: "services/protected/protected.service.js" };
+  const wrongFlow = { id: "services/keycloak/flowManagement.js", label: "flowManagement.js", source_file: "services/keycloak/flowManagement.js" };
+  const fx = graphFile({nodes: [controller, service, messaging, wrongController, wrongService, wrongFlow], links: [
+    {source: controller.id, target: service.id, relation: "calls"},
+    {source: service.id, target: messaging.id, relation: "calls"},
+  ]});
+  try {
+    const seeds = findSeeds(fx.graph, "inspect the exact REST request path and controller service flow for startMitigate", 6, {repoRoot: fx.dir});
+    assert.deepEqual(seeds.map((node) => node.id).sort(), [controller.id, service.id, messaging.id].sort());
+  } finally { rmSync(fx.dir, {recursive: true, force: true}); }
+});
+
 test("query_graph exact seed_files can pin non-product evidence despite production-first fuzzy ranking", () => {
   const production = { id: "src/mcp/tools-runner.mjs", label: "tools-runner.mjs", source_file: "src/mcp/tools-runner.mjs" };
   const fixture = { id: "benchmarks/fixtures/tool-runner.js", label: "tool-runner.js", source_file: "benchmarks/fixtures/tool-runner.js" };
@@ -373,6 +407,18 @@ test("audit finding output exposes dependency confidence reasons", () => {
   assert.match(output, /\[medium\/high\]/);
   assert.match(output, /reason: A direct stylesheet import requires this package\./);
   assert.match(output, /verification: MANIFEST_PLUS_INDEXED_SOURCE; manifest NOT_FOUND; indexed imports FOUND; decision DECLARE_AFTER_SCOPE_REVIEW/);
+});
+
+test("run_audit path policy suppresses test-only cycles without hiding mixed/product evidence", () => {
+  const findings = [
+    {rule: "circular-dep", file: "services/auth/__test__/actions.js", cycleRoute: "services/auth/__test__/actions.js → services/common/tests/utils.js → services/auth/__test__/actions.js"},
+    {rule: "circular-dep", file: "src/app.js", cycleRoute: "src/app.js → test/helper.js → src/app.js"},
+    {rule: "missing-dep", package: "mongodb"},
+  ];
+  const scoped = auditFindingPathScope(findings, {repoRoot: tmpdir()});
+  assert.equal(scoped.suppressed, 1);
+  assert.deepEqual(scoped.findings.map((finding) => finding.rule), ["circular-dep", "missing-dep"]);
+  assert.equal(auditFindingPathScope(findings, {includeClassified: true, repoRoot: tmpdir()}).findings.length, 3);
 });
 
 test("get_dependents keeps a real runtime path even when a shorter type-only path exists", () => {

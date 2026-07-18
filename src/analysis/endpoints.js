@@ -11,8 +11,10 @@ import { safeRead } from "../util.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { extractRustEndpoints } from "./endpoints-rust.js";
 import { extractSpringEndpoints } from "./endpoints-java.js";
+import { posix } from "node:path";
 
 const MAX_FILES = 3000;
+const MAX_ENDPOINTS = 2000;
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT", "ALL", "ANY"]);
 // UNAMBIGUOUS HTTP CLIENTS (make requests) vs servers (define routes) — reject `axios.get("/x")`-style client
 // calls in frontend code. Ambiguous names (api/client/service — could be a server router) are NOT listed;
@@ -84,6 +86,152 @@ const OPENAPI_BLOCK = /\boperationId\b|\bresponses\s*:|\brequestBody\b|\bschemaR
 const looksLikePath = (p) => typeof p === "string" && /^\/[\w\-./:{}*$?]*$/.test(p) && !p.includes("://");
 const cleanPath = (p) => String(p || "").replace(/\/+$/, "") || "/";
 
+const JS_ROUTE_EXTENSIONS = [".js", ".ts", ".tsx", ".jsx", ".cjs", ".mjs"];
+const normalizedFile = (file) => String(file || "").replace(/\\/g, "/").replace(/^\.\//, "");
+
+function importBindings(text) {
+  const bindings = new Map();
+  const add = (name, specifier) => {
+    if (/^[A-Za-z_$][\w$]*$/.test(name || "") && typeof specifier === "string") bindings.set(name, specifier);
+  };
+  let match;
+  const direct = /\bimport\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\})?\s+from\s*(["'`])([^"'`]+)\2/g;
+  while ((match = direct.exec(text))) add(match[1], match[3]);
+  const namespace = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*(["'`])([^"'`]+)\2/g;
+  while ((match = namespace.exec(text))) add(match[1], match[3]);
+  const named = /\bimport\s*\{([^}]+)\}\s*from\s*(["'`])([^"'`]+)\2/g;
+  while ((match = named.exec(text))) {
+    for (const item of match[1].split(",")) {
+      const binding = /^\s*[A-Za-z_$][\w$]*(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(item);
+      if (binding) add(binding[1] || item.trim(), match[3]);
+    }
+  }
+  const commonJs = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*(["'`])([^"'`]+)\2\s*\)/g;
+  while ((match = commonJs.exec(text))) add(match[1], match[3]);
+  return bindings;
+}
+
+function handlerReference(expr) {
+  const s = String(expr || "").trim();
+  if (!s || /=>/.test(s) || /^\s*(async\s+)?function\b/.test(s)) return "";
+  const refs = [...s.matchAll(/([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)+)/g)];
+  return refs.length ? refs.at(-1)[1].replace(/\s+/g, "") : "";
+}
+
+function resolveImportedFile(importer, specifier, availableFiles) {
+  if (!specifier?.startsWith(".")) return null;
+  const base = posix.normalize(posix.join(posix.dirname(importer), specifier));
+  const candidates = [base];
+  if (!JS_ROUTE_EXTENSIONS.some((extension) => base.endsWith(extension))) {
+    for (const extension of JS_ROUTE_EXTENSIONS) candidates.push(`${base}${extension}`);
+    for (const extension of JS_ROUTE_EXTENSIONS) candidates.push(`${base}/index${extension}`);
+  }
+  return candidates.find((candidate) => availableFiles.has(candidate)) || null;
+}
+
+function callArguments(text, openParen) {
+  let quote = "", escaped = false, depth = 0, start = openParen + 1;
+  const args = [];
+  for (let index = openParen; index < text.length; index++) {
+    const char = text[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") { quote = char; continue; }
+    if (char === "(") { depth++; continue; }
+    if (char === ")") {
+      depth--;
+      if (depth === 0) {
+        args.push(text.slice(start, index).trim());
+        return {args, end: index + 1};
+      }
+      continue;
+    }
+    if (char === "," && depth === 1) {
+      args.push(text.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  return null;
+}
+
+function routerMounts(text, file, availableFiles) {
+  const scanText = maskComments(text);
+  const bindings = importBindings(scanText);
+  const mounts = [];
+  const useCall = /\b[A-Za-z_$][\w$]*\s*\.\s*use\s*\(/g;
+  let match;
+  while ((match = useCall.exec(scanText))) {
+    const openParen = scanText.indexOf("(", match.index);
+    const parsed = callArguments(scanText, openParen);
+    if (!parsed) continue;
+    useCall.lastIndex = parsed.end;
+    const args = parsed.args.filter(Boolean);
+    if (!args.length) continue;
+    const literal = /^(["'`])(\/[^"'`]*)\1$/.exec(args[0]);
+    const mountPath = literal ? cleanPath(literal[2]) : "/";
+    const childExpression = args.at(-1) || "";
+    const identifier = /^([A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)?$/.exec(childExpression)?.[1];
+    const specifier = identifier ? bindings.get(identifier) : null;
+    const child = resolveImportedFile(file, specifier, availableFiles);
+    if (child && child !== file) mounts.push({parent: file, child, path: mountPath, line: lineAt(text, match.index)});
+  }
+  return mounts;
+}
+
+function joinEndpointPath(base, route) {
+  const left = cleanPath(base || "/");
+  const right = cleanPath(route || "/");
+  if (left === "/") return right;
+  if (right === "/") return left;
+  return cleanPath(`${left}/${right.replace(/^\/+/, "")}`.replace(/\/{2,}/g, "/"));
+}
+
+function mountedBasePaths(files, sources) {
+  const available = new Set(files);
+  const incoming = new Map();
+  const mounts = [];
+  for (const file of files) {
+    for (const mount of routerMounts(sources.get(file) || "", file, available)) {
+      mounts.push(mount);
+      if (!incoming.has(mount.child)) incoming.set(mount.child, []);
+      incoming.get(mount.child).push(mount);
+    }
+  }
+  const cache = new Map();
+  const resolve = (file, stack = new Set()) => {
+    if (cache.has(file)) return cache.get(file);
+    if (stack.has(file)) return [];
+    const parents = incoming.get(file) || [];
+    if (!parents.length) return [{path: "", chain: []}];
+    const nextStack = new Set(stack).add(file);
+    const paths = [];
+    for (const mount of parents) {
+      for (const base of resolve(mount.parent, nextStack)) {
+        const composed = joinEndpointPath(base.path, mount.path);
+        const key = `${composed}\0${base.chain.map((item) => `${item.file}:${item.line}:${item.path}`).join("|")}\0${mount.parent}:${mount.line}:${mount.path}`;
+        if (!paths.some((item) => item.key === key)) paths.push({
+          key,
+          path: composed,
+          chain: [...base.chain, {file: mount.parent, line: mount.line, path: mount.path, child: mount.child}],
+        });
+        if (paths.length >= 32) break;
+      }
+      if (paths.length >= 32) break;
+    }
+    const result = paths.length ? paths.map(({key, ...item}) => item) : [{path: "", chain: []}];
+    cache.set(file, result);
+    return result;
+  };
+  return {
+    paths: new Map(files.map((file) => [file, resolve(file)])),
+    mounts,
+  };
+}
+
 export function nextRoutePath(file) {
   const parts = String(file || "").replace(/\\/g, "/").split("/").filter(Boolean);
   if (!/^route\.[cm]?[jt]s$/i.test(parts.at(-1) || "")) return "";
@@ -113,7 +261,9 @@ export function extractEndpointsFromText(text, file) {
     if (!looksLikePath(p)) return;
     const m = String(method || "ANY").toUpperCase();
     if (!HTTP_METHODS.has(m)) return;
-    out.push({ method: m, path: p, handler: handlerName(expr), file, line: lineAt(text, idx) });
+    const handler = handlerName(expr);
+    const handlerRef = handlerReference(expr);
+    out.push({ method: m, path: p, handler, ...(handlerRef ? {handlerRef} : {}), file, line: lineAt(text, idx) });
   };
 
   // Next.js App Router: the filesystem provides the path and exported HTTP-method functions provide the
@@ -212,26 +362,76 @@ const normParamKey = (p) => String(p).replace(/\{([^/}]+)\}/g, ":$1");
 // Detect endpoints across the repo's code files (from the graph's file nodes, or a caller-supplied list
 // of {path, full}). Deduped by method+normalized-path; on a collision the entry with a resolvable
 // handler (and `:param` display) wins. Capped. Returns [{method, path, handler, file, line}].
-export function detectEndpoints(repoPath, codeFiles) {
+export function analyzeEndpointInventory(repoPath, codeFiles) {
   const files = (codeFiles || []).slice(0, MAX_FILES);
   const byKey = new Map();
+  const declarations = new Map();
   const boundary = createRepoBoundary(repoPath);
+  const sources = new Map();
+  const eligibleFiles = [];
   for (const f of files) {
-    const rel = f.path || f;
+    const rel = normalizedFile(f.path || f);
     if (!/\.(js|ts|tsx|jsx|cjs|mjs|py|go|rs|java)$/i.test(rel)) continue;
     const resolved = boundary.resolve(rel);
     if (!resolved.ok) continue;
     const text = safeRead(resolved.path);
+    sources.set(rel, text || "");
+    eligibleFiles.push(rel);
+  }
+  const mountAnalysis = mountedBasePaths(eligibleFiles, sources);
+  let truncated = false;
+  for (const rel of eligibleFiles) {
+    const text = sources.get(rel);
     if (!text || (!nextRoutePath(rel) && !/["'`]\/|\.(get|post|put|patch|delete)\s*\(|HandleFunc|@\w*\.?(get|post|put|patch|delete)|@(?:[\w$]+\.)*(?:Request|Get|Post|Put|Patch|Delete)Mapping\b/i.test(text))) continue;
     for (const e of extractEndpointsFromText(text, rel.replace(/\\/g, "/"))) {
-      const key = `${e.method} ${normParamKey(e.path)}`;
-      const prev = byKey.get(key);
-      if (!prev) { byKey.set(key, e); }
-      else if (preferEndpoint(e, prev)) { byKey.set(key, e); }
-      if (byKey.size >= 500) return [...byKey.values()].sort(sortEndpoints);
+      const declarationKey = `${e.file}\0${e.line}\0${e.method}\0${normParamKey(e.path)}`;
+      if (!declarations.has(declarationKey)) declarations.set(declarationKey, e);
+      const bases = mountAnalysis.paths.get(rel) || [{path: "", chain: []}];
+      for (const base of bases) {
+        const composed = base.path ? joinEndpointPath(base.path, e.path) : e.path;
+        const endpoint = {
+          ...e,
+          declaredPath: e.path,
+          path: composed,
+          mountState: base.chain.length ? "COMPOSED_STATIC" : "DECLARED_LOCAL",
+          confidence: base.chain.length ? "high" : "medium",
+          mountChain: base.chain,
+          ...(base.path ? {localPath: e.path} : {}),
+        };
+        const key = `${endpoint.method} ${normParamKey(endpoint.path)}`;
+        const prev = byKey.get(key);
+        if (!prev) { byKey.set(key, endpoint); }
+        else if (preferEndpoint(endpoint, prev)) { byKey.set(key, endpoint); }
+        if (byKey.size >= MAX_ENDPOINTS) { truncated = true; break; }
+      }
+      if (truncated) break;
     }
+    if (truncated) break;
   }
-  return [...byKey.values()].sort(sortEndpoints);
+  const endpoints = [...byKey.values()].sort(sortEndpoints);
+  const composed = endpoints.filter((endpoint) => endpoint.mountChain.length).length;
+  return {
+    endpoints,
+    declarations: [...declarations.values()].sort(sortEndpoints),
+    mounts: mountAnalysis.mounts,
+    stats: {
+      scannedFiles: eligibleFiles.length,
+      declaredRoutes: declarations.size,
+      emittedRoutes: endpoints.length,
+      reachableRoutes: composed,
+      reachableStaticRoutes: composed,
+      composedRoutes: composed,
+      localRoutes: endpoints.length - composed,
+      localDeclarations: endpoints.length - composed,
+      staticMounts: mountAnalysis.mounts.length,
+      truncated,
+      maxEndpoints: MAX_ENDPOINTS,
+    },
+  };
+}
+
+export function detectEndpoints(repoPath, codeFiles) {
+  return analyzeEndpointInventory(repoPath, codeFiles).endpoints;
 }
 
 // true when candidate `a` is a better representative of a route than the already-kept `b`:

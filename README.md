@@ -2,10 +2,11 @@
 
 **Code graph & blast-radius MCP server for AI coding agents.**
 
-Grep sees text. Weavatrix sees structure. It builds a dependency graph of any local repository —
-files, symbols, and the imports/calls/inheritance connecting them — and serves it to Claude Code,
-Codex, or any MCP client: change impact, transitive dependents, health audit, clone detection,
-coverage mapping. **36 tools available; 33 enabled by the default offline profile. Local-first: with
+Weavatrix builds and compares the living architecture of any local repository: files, symbols,
+imports, calls, inheritance, health findings, clone families and Git-history coupling. It serves that
+evidence to Claude Code, Codex, or any MCP client for change impact, transitive dependents, health
+audit, clone detection and coverage mapping. Text search is included as a convenience, not the product
+core. **38 tools available; 34 enabled by the default offline profile. Local-first: with
 the defaults, no repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
@@ -14,8 +15,8 @@ the defaults, no repository data leaves your machine.**
 
 ## Why
 
-An AI agent editing code without the dependency graph is refactoring blind. Weavatrix gives it
-answers grep can't produce:
+An AI agent editing code without architecture, health and history evidence is refactoring blind.
+Weavatrix answers questions a text index cannot:
 
 - *"What breaks if I change this?"* → `change_impact` diffs your branch (staged, unstaged and
   untracked included), maps the changed files and symbols onto the graph, and lists everything that
@@ -28,6 +29,9 @@ answers grep can't produce:
 - *"Did my refactor actually decouple anything?"* → `graph_diff base_ref=HEAD~1` builds an immutable
   baseline graph without checking it out, then reports the structural delta: new module
   dependencies, broken or introduced import cycles, and symbols that lost their last caller.
+- *"Where is the repo rotting or repeating itself?"* → `run_audit`, `find_dead_code`,
+  `find_duplicates`, `hot_path_review` and `git_history` combine deterministic findings, graph
+  connectivity and co-change evidence instead of treating a matching string as an architecture fact.
 
 - *"Is this change actually safe?"* -> `verified_change` accepts the task plus current diff/files and
   returns one proof-carrying `PASS`, `BLOCKED`, or `UNKNOWN`: compact edit contexts, exact-symbol
@@ -67,7 +71,7 @@ argument when a stricter repository boundary or a network feature is wanted:
 | `offline` (default) | Yes, only through `open_repo` | Yes, only through `trace_api_contract` | No | No |
 | `pinned` | No | No | No | No |
 | `osv` | Yes | Yes, only when called | Only when `refresh_advisories` is called | No |
-| `hosted` / `full` | Yes | Yes, only when called | Only when called | Only when `sync_graph` or `pull_architecture_contract` is called |
+| `hosted` / `full` | Yes | Yes, only when called | Only when called | `preview_sync` is local; only `sync_graph` or `pull_architecture_contract` can make a request |
 
 ```sh
 # Hard-pin one repository and expose no network tools:
@@ -125,7 +129,7 @@ confirmed by its bundled `typescript-language-server` + TypeScript runtime to `E
 `CONFLICT` means evidence disagrees. `graph_stats` reports the provenance breakdown and the semantic
 provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means precision was explicitly
 disabled and only static evidence is active. Java and Rust language-server providers are not bundled
-in 0.2.7: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
+in 0.2.9: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
 TypeScript/JavaScript overlay.
 
 The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
@@ -133,21 +137,28 @@ before starting the MCP server for parser-only operation from the first build, o
 `precision:"off"` to `rebuild_graph` / `open_repo`. The MCPB installer exposes the same `lsp` / `off`
 choice as **TypeScript/JavaScript semantic precision**.
 
-**search / source** — `search_code` (ripgrep-backed, pure-Node fallback), `read_source` (a
+**search / source** — `search_code` (ripgrep-backed, pure-Node fallback, with repository-relative
+path globs on Windows/macOS/Linux), `read_source` (a
 symbol's actual code in one hop), `context_bundle` (definition plus grouped inbound/outbound
-containers, exact re-export sites and a few bounded source excerpts), `inspect_symbol` (one exact
+containers, exact re-export sites, call-site/target provenance and bounded excerpts around decisive
+edges), `inspect_symbol` (one exact
 bounded TS/JS reference query, logical containers, impact and source excerpts), `list_endpoints` (HTTP route inventory:
-Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web …)
+Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web, including nested Express
+`router.use(...)` mount composition, declaration/reachability counts and mount provenance),
+`trace_endpoint` (one exact composed route → handler → bounded production call graph with call-site excerpts)
 
 **health** — `find_dead_code` (bounded review queue for statically unreferenced and test-only files,
 functions, methods, and symbols, with evidence tiers, completed/remaining verification and explicit
 public/framework/dynamic caveats),
-`run_audit` (unused files/exports/dependencies with per-finding manifest/indexed-source/script/config verification,
+`run_audit` (unused files/exports/dependencies with per-finding manifest/indexed-source/script/config verification;
+`category:dependencies` isolates missing/unused/duplicate declarations, unresolved imports and lockfile drift,
 missing npm/Go/Python deps, runtime
 cycles, type-only/compile-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
 lockfile drift; accepts an immutable `base_ref`, `changed_files`, and `debt: new|existing|all` for
-review-scoped results), `find_duplicates` (MOSS winnowing over method bodies — catches copy-paste even
-after renames and can inspect strict small clones down to 12 tokens), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
+review-scoped results; production paths are the default and `include_classified:true` opts into
+test/generated/docs evidence), `find_duplicates` (MOSS winnowing over method bodies — catches copy-paste even
+after renames and can inspect strict small clones down to 12 tokens; homogeneous router boilerplate
+is suppressed unless `include_boilerplate:true`), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
 ranked by connectivity — tests are never executed), `hot_path_review` (bounded local-cost evidence
 with separate graph/test risk), `verify_architecture`,
 `explain_architecture_violation`, `propose_architecture_exception`
@@ -197,24 +208,59 @@ not CFG, value-propagation, or taint analysis.
 
 `query_graph` accepts optional `seed_files` when an architectural question must start from exact
 entry points. Resolved explicit seeds are exclusive by default; set `augment_seeds:true` only when
-question-derived seeds are also wanted. Broad bootstrap/tool-execution/routing questions now rank
+question-derived seeds are also wanted. A code-shaped identifier such as `startMitigate` is treated
+as a stronger bounded seed than surrounding words such as controller/service/flow; all exact
+same-name declarations are retained instead of adding unrelated concept seeds. Broad
+bootstrap/tool-execution/routing questions rank
 conventional executables and graph-declared production entry points ahead of site, documentation, benchmark
 and fixture matches. Production-first classification also applies during traversal, so unrelated
 tests/generated/docs/benchmarks do not leak back from a production seed; name a class in the
 question or set `include_classified:true` to include it. Unreferenced unmatched constant/field leaves
 are hidden unless `include_low_signal:true`. Broad ranking remains orientation evidence; use
-`seed_files` when the intended entry point is already known.
+`seed_files`, an exact endpoint, or `inspect_symbol` when the intended entry point is already known.
+Instruction words such as “REST”, “path”, and “inspect” do not become fuzzy code seeds.
 
 **advisories** *(network, explicit opt-in)* — `refresh_advisories`
 
-**hosted** *(network, explicit opt-in)* — `pull_architecture_contract`, `sync_graph`
+**hosted** *(explicit opt-in; preview is local, send/pull are networked)* — `preview_sync`,
+`pull_architecture_contract`, `sync_graph`. `preview_sync` performs no request and returns the destination,
+repository UUID, exact payload fields/sections/size/hash and a short-lived confirmation token for
+the cached payload. `sync_graph` sends only with both that token and `dry_run:false`; its legacy
+dry-run form remains a no-network compatibility alias.
 
 Quality of life: graph/health reads auto-reconcile and expose `none` / `incremental` / `full`
 freshness, with a short clean-read debounce to avoid rescanning the repository for every tool call;
 ambiguous name lookups are
 disclosed instead of silently guessed; and the server **hot-reloads its watched MCP tool entry
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
-reconnect.
+reconnect. Every MCP response also carries local, transient `_meta["weavatrix/metrics"]` with elapsed
+time, output bytes/token estimate, graph freshness/revision/update and graph-cache status. These
+metrics are not persisted or transmitted by Weavatrix.
+
+### 0.2.9 correctness, signal, and consent patch
+
+- Express endpoint inventory composes nested imported `router.use(...)` mounts, so a local route such
+  as `/:attackId/startMitigate` is reported with its reachable `/warRoom/attack` prefix, declared vs
+  reachable counts and the exact static mount chain. `trace_endpoint` continues from that route into
+  the bounded call graph and call-site excerpts.
+- `context_bundle` keeps the call-site file/line separate from the target definition and adds bounded
+  excerpts around decisive edges instead of stopping inside a long leading comment.
+- `search_code` applies documented repository-relative path globs correctly when ripgrep runs on
+  Windows. Broad `query_graph` prompts no longer turn generic REST/instruction words into noisy
+  configuration-file seeds, and code-shaped identifiers outrank generic controller/service/flow
+  concepts.
+- `run_audit` is production-first by default while retaining explicit access to classified evidence;
+  `category:dependencies` provides a focused dependency-health slice;
+  duplicate review suppresses homogeneous Express router boilerplate unless requested.
+- the separate no-network `preview_sync` produces the exact payload approval artifact; `sync_graph`
+  requires that preview followed by an exact short-lived confirmation token,
+  validates the configured destination, requires HTTPS outside loopback, and never networks during
+  preview. Contract-pull HTTP failures expose actionable auth/not-found/not-ready states.
+- Every MCP call exposes transient local execution/output/freshness metrics without collection or
+  egress. The public site, privacy/security pages, package metadata and license presentation now
+  describe the same 38-tool/34-offline surface and the same network boundary.
+
+Full patch notes: [docs/releases/v0.2.9.md](docs/releases/v0.2.9.md).
 
 ### 0.2.8 trust and precision patch
 
@@ -492,20 +538,27 @@ Weavatrix itself initiates outbound HTTP only from three tools; all are absent f
 - `pull_architecture_contract` — sends the active repository's opaque stable UUID with bearer
   authentication, downloads the owner-approved target-architecture contract, validates it, and
   stores the contract in the local graph cache. It sends no source, symbol, or repository path.
-- `sync_graph` — builds a bounded evidence snapshot locally, then sends payload v3: the v2 graph
+- `preview_sync` — builds a bounded evidence snapshot locally without sending anything. The preview
+  shows the destination host/path, normalized repository name, opaque UUID,
+  payload version, exact top-level fields, included sections, node/link/byte counts and canonical
+  SHA-256 hash. A `sync_graph` call with `dry_run:false` and its exact short-lived `confirm_token` sends
+  the cached payload to the same destination. A token alone does not send while the default dry-run
+  remains active. It
+  sends payload v3: the v2 graph
   allowlist plus module dependencies, runtime/compile-time cycles, declared boundary violations,
   health findings, complexity-threshold breaches, stack identifiers, a bounded direct/transitive
   dependency graph, direct package usage, and bounded clone/divergence review candidates. Local
   analyzers may read repository source and manifests to derive those
   facts. The wire contract has no fields for file bodies, snippets, absolute host paths, environment
   values or Git remotes; unknown fields are discarded and unsafe optional path metadata is omitted.
-  The request also carries the normalized repository display name used by the
+  The confirmed request also carries the normalized repository display name used by the
   hosted list. The endpoint is **yours**, configured through `WEAVATRIX_SYNC_URL` and the optional
   `WEAVATRIX_SYNC_TOKEN`; the feature is off by default. Pass `payload_version: 2` only for an
   intentional graph-only compatibility sync—there is no silent downgrade that discards evidence.
   Graphs that predate current typed-edge/provenance metadata must be rebuilt once before V3 sync;
   V3 also refuses a stale graph so
-  source-derived evidence cannot be mixed with old topology.
+  source-derived evidence cannot be mixed with old topology. HTTPS is required except for an
+  explicitly configured loopback endpoint; embedded URL credentials and fragments are rejected.
 
 Evidence sections carry independent `state` (`COMPLETE`, `PARTIAL`, `NOT_CHECKED`,
 `NOT_APPLICABLE`, `ERROR`) and `verdict` (`PASS`, `FAIL`, `UNKNOWN`) fields plus exact
@@ -531,7 +584,7 @@ vulnerability findings. This is where each capability comes from and how it is c
 
 | Capability alert | Why it exists | Activation and boundary |
 |---|---|---|
-| Network access | `refresh_advisories` sends pinned package names and versions to OSV; `pull_architecture_contract` sends an opaque repository UUID and receives an owner-approved contract; `sync_graph` sends a normalized repository label plus an allowlisted graph/evidence payload. Evidence is derived locally from source and manifests, but source bodies, snippets, absolute paths, environment values, credentials and Git remotes are excluded | `offline` and `pinned` expose no network tools. `osv` exposes only advisory refresh. `hosted`/`full` expose all three; every request still requires an explicit tool call, and hosted calls require `WEAVATRIX_SYNC_URL` |
+| Network access | `refresh_advisories` sends pinned package names and versions to OSV; `pull_architecture_contract` sends an opaque repository UUID and receives an owner-approved contract; confirmed `sync_graph` sends a normalized repository label plus an allowlisted graph/evidence payload. Evidence is derived locally from source and manifests, but source bodies, snippets, absolute paths, environment values, credentials and Git remotes are excluded | `offline` and `pinned` expose no network tools. `osv` exposes only advisory refresh. `hosted`/`full` expose all three. Sync defaults to a no-network dry-run and then requires both `dry_run:false` and its exact short-lived token; hosted calls require `WEAVATRIX_SYNC_URL`, and non-loopback hosted endpoints require HTTPS |
 | Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; the bundled TLS/tsserver process supplies bounded JS/TS semantic evidence; timed-out Windows child trees may be terminated; `verified_change` can optionally run an existing package test/check/verify script | The semantic provider never invokes repository code. Test execution separately requires `run_tests:true` plus `WEAVATRIX_ALLOW_TEST_RUNS=1`, rejects arbitrary commands and shell-sensitive arguments, and should be enabled only for trusted repository scripts |
 | Debug / dynamic loading | Cache-busted `import()` hot-reloads watched MCP tool entry modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
 | Environment access | Reads `WEAVATRIX_*` configuration; ordinary local helpers inherit a credential-stripped environment, while TLS/tsserver receives only allowlisted OS/temp/locale values and a constrained executable path | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment. TLS/tsserver also receives no registry/proxy/cloud credentials or `NODE_OPTIONS` |
@@ -584,10 +637,10 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
 - **Wrapper-aware API contracts** shipped in 0.2.2: persistent/ad-hoc configuration,
   conservative discovery, cross-repository handler liveness and explicit unknown states. The next
   hosted increment joins privacy-safe contract identities across separately synced services.
-- **Hosted architecture workbench** is live at
-  [app.weavatrix.com](https://app.weavatrix.com): explicit source-free sync,
-  immutable history, Flow/DSM/Map, target architecture and bounded review
-  evidence. Hosted use remains optional and owner-authenticated.
+- **Hosted architecture workbench** at
+  [app.weavatrix.com](https://app.weavatrix.com) is an access-controlled preview for
+  owner-authenticated source-free evidence and revision history. Its UI and backend evolve
+  independently from the public MCP release; local use remains fully optional.
 - **Semantic precision bridge** shipped for TypeScript/JavaScript in 0.2.4: a bounded, revision-bound
   local overlay validates references with the bundled language server while the parser graph remains
   the fallback. Java and Rust providers are not bundled yet and stay explicitly `UNAVAILABLE`.
@@ -603,4 +656,6 @@ The public alignment note for the fixed cross-product release sequence is in
 
 ## License
 
-[MIT](LICENSE) © 2026 Sergii Ziborov
+The Weavatrix source in this repository is [MIT licensed](LICENSE) © 2026 Sergii Ziborov.
+Third-party dependencies retain their own licenses. See the public
+[license page](https://weavatrix.com/license) for the same notice.

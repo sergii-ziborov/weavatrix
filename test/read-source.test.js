@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSource } from "../src/mcp-source-tools.mjs";
+import { readSource, searchCode } from "../src/mcp-source-tools.mjs";
 
 function repoWithHundredLines() {
   const dir = mkdtempSync(join(tmpdir(), "wx-rs-"));
@@ -15,6 +15,25 @@ function repoWithHundredLines() {
 }
 
 const noGraph = { repoRoot: null, resolveNode: () => null, isSymbol: () => false };
+
+test("search_code: ripgrep path globs are evaluated relative to the repository root", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-search-glob-"));
+  try {
+    mkdirSync(join(dir, "services", "attack"), { recursive: true });
+    writeFileSync(join(dir, "services", "attack", "attack.router.js"), "router.post('/start', startMitigate)\n");
+    const result = searchCode({
+      repoRoot: dir,
+      resolveRg: () => "rg",
+      spawnRg: (_command, args, options) => {
+        assert.equal(options.cwd, dir);
+        assert.equal(args.at(-1), ".");
+        assert.ok(args.includes("services/attack/**"));
+        return {status: 0, stdout: "services/attack/attack.router.js:1:router.post('/start', startMitigate)\n"};
+      },
+    }, {query: "startMitigate", glob: "services/attack/**"});
+    assert.match(result.text, /services\/attack\/attack\.router\.js:1/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("read_source: path + start_line anchors the window instead of the file head", () => {
   const dir = repoWithHundredLines();

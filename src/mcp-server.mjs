@@ -270,6 +270,7 @@ async function main() {
             const graphSnapshot = graph
             const callCtx = mutatesTarget ? ctx : {...ctx}
             const execute = async () => {
+                const startedAt = performance.now()
                 try {
                     // A queued rebuild must see a preceding retarget's graph, while non-mutating calls stay
                     // pinned to the graph that was active when their request arrived.
@@ -302,12 +303,39 @@ async function main() {
                         if (schemaWarning) text += `\n\nWarning: ${schemaWarning.message}`
                         if (staleLine && staleNotices.shouldShow({line: staleLine, graphPath: callCtx.graphPath, force: tool.name === 'graph_stats'})) text += `\n\n${staleLine}`
                     }
-                    const response = {content: [{type: 'text', text}]}
+                    const structuredBytes = normalized.structured ? Buffer.byteLength(JSON.stringify(normalized.structured)) : 0
+                    const textBytes = Buffer.byteLength(text)
+                    const durationMs = Math.max(0, performance.now() - startedAt)
+                    const response = {
+                        content: [{type: 'text', text}],
+                        _meta: {
+                            'weavatrix/metrics': {
+                                schemaVersion: 'weavatrix.metrics.v1',
+                                durationMs: Math.round(durationMs * 10) / 10,
+                                textBytes,
+                                structuredBytes,
+                                estimatedOutputTokens: Math.ceil((textBytes + structuredBytes) / 4),
+                                graphFreshness: staleLine ? 'stale' : (refresh?.error ? 'stale' : 'fresh'),
+                                graphUpdate: refresh?.kind || 'none',
+                                graphRevision: refresh?.revision || callGraph?.graphRevision || null,
+                                cache: refreshesGraph ? (refresh?.kind === 'none' ? 'graph-hit' : 'graph-refreshed') : 'not-applicable',
+                            },
+                        },
+                    }
                     if (normalized.structured) response.structuredContent = normalized.structured
                     return reply(id, response)
                 } catch (e) {
                     log(`tool ${params?.name} threw: ${e.stack || e.message}`)
-                    return reply(id, {content: [{type: 'text', text: `Tool error: ${e.message}`}], isError: true})
+                    const text = `Tool error: ${e.message}`
+                    return reply(id, {
+                        content: [{type: 'text', text}], isError: true,
+                        _meta: {'weavatrix/metrics': {
+                            schemaVersion: 'weavatrix.metrics.v1', durationMs: Math.round(Math.max(0, performance.now() - startedAt) * 10) / 10,
+                            textBytes: Buffer.byteLength(text), structuredBytes: 0,
+                            estimatedOutputTokens: Math.ceil(Buffer.byteLength(text) / 4), graphFreshness: 'unknown',
+                            graphUpdate: 'none', graphRevision: graphSnapshot?.graphRevision || null, cache: 'not-applicable',
+                        }},
+                    })
                 }
             }
             if (!mutatesTarget && !refreshesGraph) return execute()

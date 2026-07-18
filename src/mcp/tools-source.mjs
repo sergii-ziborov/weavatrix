@@ -27,7 +27,7 @@ function candidateNodes(g, query, limit = 20) {
     }))
 }
 
-function excerpt(repoRoot, file, focusLine, contextLines) {
+export function sourceExcerpt(repoRoot, file, focusLine, contextLines) {
     const resolved = resolveRepoPath(repoRoot, file)
     if (!resolved.ok) return null
     let size
@@ -198,8 +198,8 @@ export async function tInspectSymbol(g, args = {}, ctx = {}) {
         ...(node.source_range ? {range: node.source_range} : {}),
         ...(node.complexity ? {complexity: node.complexity} : {}),
     }
-    const definitionSource = excerpt(ctx.repoRoot, definition.file, definition.line, contextLines)
-    const callerSources = grouped.shown.slice(0, 5).map((group) => excerpt(ctx.repoRoot, group.file, group.locations[0]?.line || 1, contextLines)).filter(Boolean)
+    const definitionSource = sourceExcerpt(ctx.repoRoot, definition.file, definition.line, contextLines)
+    const callerSources = grouped.shown.slice(0, 5).map((group) => sourceExcerpt(ctx.repoRoot, group.file, group.locations[0]?.line || 1, contextLines)).filter(Boolean)
     const result = {
         status: 'OK',
         definition,

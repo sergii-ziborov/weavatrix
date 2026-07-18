@@ -37,6 +37,13 @@ function groupPairs(data, settings) {
   }).sort((a, b) => b.tokens - a.tokens)
 }
 
+export function isFrameworkBoilerplateCloneGroup(group) {
+  const members = Array.isArray(group?.members) ? group.members : []
+  if (members.length < 2) return false
+  return members.every((member) => /(?:^|\/)\w[^/]*\.router\.[cm]?[jt]s$/i.test(String(member.file || '').replace(/\\/g, '/'))
+    && /^(?:router|routes)\(?\)?$/i.test(String(member.label || '').trim()))
+}
+
 export function analyzeDuplicateGroups(repoRoot, graphPath, args = {}) {
   const settings = {
     simMin: Math.min(100, Math.max(50, Number(args.min_similarity) || 80)),
@@ -44,11 +51,13 @@ export function analyzeDuplicateGroups(repoRoot, graphPath, args = {}) {
     mode: args.mode === 'strict' ? 'strict' : 'renamed',
     skipTests: args.include_tests !== true,
     includeClassified: args.include_classified === true || args.include_non_product === true,
+    includeBoilerplate: args.include_boilerplate === true,
   }
   const data = computeDuplicates(repoRoot, graphPath, {includeStrings: args.include_strings === true, minTokens: settings.tokMin})
-  const groups = groupPairs(data, settings)
+  const allGroups = groupPairs(data, settings)
+  const groups = settings.includeBoilerplate ? allGroups : allGroups.filter((group) => !isFrameworkBoilerplateCloneGroup(group))
   const suppressed = (data.frags || []).filter((fragment) => !eligible(fragment, settings)).length
-  return {settings, groups, suppressed}
+  return {settings, groups, suppressed, boilerplateSuppressed: allGroups.length - groups.length}
 }
 
 const digest = (value) => createHash('sha256').update(value).digest('hex').slice(0, 20)

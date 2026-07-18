@@ -16,7 +16,7 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
 (`claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot>`; Codex:
 `codex mcp add weavatrix -- npx -y weavatrix <repoRoot>`), then retry.
 
-If `refresh_advisories`, `pull_architecture_contract`, or `sync_graph` is missing, do not diagnose a
+If `refresh_advisories`, `preview_sync`, `pull_architecture_contract`, or `sync_graph` is missing, do not diagnose a
 broken installation: network tools are intentionally absent from `offline` and `pinned`.
 
 Profiles use the same npm package and binary:
@@ -24,7 +24,7 @@ Profiles use the same npm package and binary:
 - `offline` (default): all local analysis and explicit `open_repo`; no HTTP tools.
 - `pinned`: local analysis with no `open_repo`, no global/cross-repository graph access, and no HTTP tools.
 - `osv`: `offline` plus explicit `refresh_advisories`.
-- `hosted` / `full`: `osv` plus `pull_architecture_contract` and `sync_graph`.
+- `hosted` / `full`: `osv` plus local-only `preview_sync`, `pull_architecture_contract` and `sync_graph`.
 
 The legacy `online` capability remains a compatibility alias for `advisories,hosted`; prefer the
 named profiles for new registrations.
@@ -117,8 +117,8 @@ Start from the task, not from the complete tool list:
   ONLY network-touching tools live in the optional
   `advisories` / `hosted` capabilities and run solely when explicitly called:
   `refresh_advisories` (queries OSV.dev with
-  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (derives a
-  bounded evidence snapshot locally, then pushes only an allowlisted graph/evidence contract to a
+  package names + versions so `run_audit` has fresh vulnerability data) and `sync_graph` (pushes only
+  the exact allowlisted graph/evidence contract previously serialized by local-only `preview_sync` to a
   user-configured endpoint; analyzers may read local source, but the wire contract has no body,
   snippet, absolute-host-path or environment fields, and unknown fields are discarded; disabled until
   `WEAVATRIX_SYNC_URL` is set). `pull_architecture_contract` sends only the active repository's opaque
@@ -175,7 +175,9 @@ Start from the task, not from the complete tool list:
   `REVIEW_REQUIRED` and `autoDelete:false` are hard
   safety semantics, not boilerplate. Use `.weavatrix-deps.json` entrypoints/nonRuntimeRoots only for
   verified conventions.
-- **API inventory**: `list_endpoints` (including Next.js App Router, Rust axum and actix-web).
+- **API inventory**: `list_endpoints` (including mount provenance, Next.js App Router, Rust axum and
+  actix-web). When one exact route is known, use `trace_endpoint` for its composed mount chain,
+  handler and bounded production call graph instead of broad natural-language traversal.
 - **Cross-repository API impact**: ensure both repositories are in `list_known_repos`, then call
   `trace_api_contract backend=<uuid-or-label> clients=[<uuid-or-label>]`; narrow with `method`, `path`,
   or backend `changed_files`. `path` may be a segment-aligned fragment (`/query` can select
@@ -237,7 +239,10 @@ visible. `managedDependencies` documents modules provided outside the repo's Pyt
 
 ## Sync
 
-`sync_graph` defaults to payload v3: graph metadata plus deterministic architecture, health, stack,
+Call `preview_sync` first. It validates the configured destination and serializes payload v3 locally,
+returning the repository UUID, exact fields/sections, counts, bytes, hash and short-lived confirmation
+token without networking. After explicit approval, call `sync_graph dry_run=false` with that token.
+Payload v3 contains graph metadata plus deterministic architecture, health, stack,
 package-dependency and clone-review evidence. Read each section's `state`, `verdict` and completeness counts; `PARTIAL`,
 `NOT_CHECKED` and `ERROR` are unknown/incomplete, never a clean result. Architecture evidence
 contains concrete runtime versus compile-time cycles, declared boundary violations and separated
@@ -257,7 +262,7 @@ the working tree, must be rebuilt first. Sync remains unavailable until the user
 - `refresh_advisories` is unavailable → with the user's approval, re-register/reconfigure the MCP
   with the `osv` profile, reconnect it, and then invoke the tool. Do not enable network
   access merely to turn `NOT_CHECKED` into a cosmetic green state.
-- `pull_architecture_contract` / `sync_graph` is unavailable → use the `hosted` profile only after
+- `preview_sync` / `pull_architecture_contract` / `sync_graph` is unavailable → use the `hosted` profile only after
   the user chooses hosted integration; configure `WEAVATRIX_SYNC_URL` and a bearer token for contract
   pull. Profile selection alone never performs a request.
 - `No coverage report` → run the repo's own tests with coverage (`vitest run --coverage`,

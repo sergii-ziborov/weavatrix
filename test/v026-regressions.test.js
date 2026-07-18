@@ -98,3 +98,43 @@ test('context_bundle aggregates graph relations and exact re-export occurrences'
         assert.equal(privateBundle.result.reExports.total, 0, 'export-star must not expose a private declaration')
     } finally { rmSync(root, {recursive: true, force: true}) }
 })
+
+test('context_bundle reports outbound call-site files and excerpts instead of target-file/line hybrids', async () => {
+    const root = repository({
+        'src/service.ts': 'export function mitigate(id: string){ return id; }\n',
+        'src/controller.ts': [
+            "import {mitigate} from './service';",
+            'export async function startMitigate(id: string){',
+            '  /*',
+            '   * deliberately long controller documentation',
+            '   * line five',
+            '   * line six',
+            '   * line seven',
+            '   */',
+            '  return mitigate(id);',
+            '}',
+        ].join('\n'),
+    })
+    try {
+        const raw = await buildInternalGraph(root)
+        const graphPath = join(root, 'graph.json')
+        writeFileSync(graphPath, JSON.stringify(raw))
+        const graph = loadGraph(graphPath)
+        const controller = graph.nodes.find((node) => node.source_file === 'src/controller.ts' && node.label === 'startMitigate()')
+        const bundle = await tContextBundle(graph, {
+            label: controller.id,
+            precision: 'graph',
+            max_related: 5,
+            max_source_files: 4,
+            context_lines: 1,
+        }, {repoRoot: root, graphPath}, tInspectSymbol)
+        const call = bundle.result.outbound.shown.find((group) => group.label === 'mitigate()')
+        assert.equal(call.file, 'src/controller.ts', 'edge line is paired with its source/call-site file')
+        assert.equal(call.targetFile, 'src/service.ts')
+        assert.ok(call.lines.includes(9))
+        const excerpt = bundle.result.source.find((item) => item.role === 'Outbound call site')
+        assert.equal(excerpt.file, 'src/controller.ts')
+        assert.match(excerpt.text, /return mitigate\(id\)/)
+        assert.match(bundle.text, /call site src\/controller\.ts:9 → src\/service\.ts/)
+    } finally { rmSync(root, {recursive: true, force: true}) }
+})

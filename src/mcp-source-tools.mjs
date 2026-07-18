@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { extname, join, relative } from 'node:path'
+import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { resolveRepoPath } from './repo-path.js'
 import { childProcessEnv } from './child-env.js'
 import { toolResult } from './mcp/tool-result.mjs'
@@ -11,21 +11,24 @@ const MAX_SEARCH_FILE_BYTES = 1024 * 1024
 const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SOURCE_CONTEXT_LINES = 1000
 
-function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }) {
+function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }, spawnRg = spawnSync) {
     const rg = resolveRg()
     if (!rg) return null
     const args = ['--line-number', '--no-heading', '--color', 'never', '--hidden', '-g', '!.git/**', '-m', '100', '-i']
     if (!isRegex) args.push('--fixed-strings')
     if (glob) args.push('-g', glob)
-    args.push('--', query, repoRoot)
-    const res = spawnSync(rg, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15000, env: childProcessEnv() })
+    // Run from the repository root and search `.` so path globs such as `src/**` are evaluated
+    // against repository-relative paths on Windows too. Passing an absolute search root makes rg
+    // compare the glob with a drive-prefixed path and silently return no matches.
+    args.push('--', query, '.')
+    const res = spawnRg(rg, args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15000, env: childProcessEnv() })
     if (res.status !== 0 && res.status !== 1) return null
     const out = []
     for (const line of (res.stdout || '').split(/\r?\n/)) {
         const match = line.match(/^(.*?):(\d+):(.*)$/)
         if (!match) continue
         out.push({
-            file: relative(repoRoot, match[1]).replace(/\\/g, '/'),
+            file: relative(repoRoot, isAbsolute(match[1]) ? match[1] : resolve(repoRoot, match[1])).replace(/\\/g, '/'),
             line: Number(match[2]),
             text: match[3].trim().slice(0, 300),
         })
@@ -87,12 +90,12 @@ function nodeGrep(repoRoot, query, { isRegex, glob, maxResults }) {
     return out
 }
 
-export function searchCode({ repoRoot, resolveRg }, { query, is_regex = false, max_results = 40, glob } = {}) {
+export function searchCode({ repoRoot, resolveRg, spawnRg = spawnSync }, { query, is_regex = false, max_results = 40, glob } = {}) {
     if (!query) return 'Provide a "query" string.'
     if (!repoRoot || !existsSync(repoRoot)) return 'Source search unavailable: repo root not provided to this MCP server.'
     const max = Math.max(1, Math.min(200, Number(max_results) || 40))
     const opts = { isRegex: !!is_regex, glob: glob || null, maxResults: max }
-    let matches = rgSearch(repoRoot, resolveRg, query, opts)
+    let matches = rgSearch(repoRoot, resolveRg, query, opts, spawnRg)
     const engine = matches ? 'ripgrep' : 'node'
     if (!matches) matches = nodeGrep(repoRoot, query, opts)
     const what = is_regex ? `/${query}/i` : `"${query}"`

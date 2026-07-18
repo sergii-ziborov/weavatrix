@@ -9,7 +9,7 @@ import {classifyChangeImpact} from '../analysis/change-classification.js'
 import {compareAuditDebt, normalizeAuditScopeFiles, scopeAuditFindings} from '../analysis/audit-debt.js'
 import {summarizeFindings} from '../analysis/findings.js'
 import {summarizeCommunities, aggregateGraph} from '../analysis/graph-analysis.js'
-import {detectEndpoints} from '../analysis/endpoints.js'
+import {analyzeEndpointInventory} from '../analysis/endpoints.js'
 import {computeStaticTestReachability} from '../analysis/static-test-reachability.js'
 import {computeDeadCodeReview} from '../analysis/dead-code-review.js'
 import {computeHotPathReview} from '../analysis/hot-path-review.js'
@@ -86,7 +86,10 @@ export function tFindDuplicates(g, args, ctx) {
     const suppressionNote = suppressed && !includeClassified
         ? ` ${suppressed} fragment(s) classified as tests/e2e/generated/mock/story/docs/benchmark/temp or matched by .weavatrix.json exclude were suppressed; pass include_classified:true (and include_tests:true for tests) to inspect them explicitly.`
         : ''
-    if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.${smallPolicy}${suppressionNote}`
+    const boilerplateNote = analysis.boilerplateSuppressed
+        ? ` ${analysis.boilerplateSuppressed} all-router framework boilerplate group(s) were suppressed; pass include_boilerplate:true to inspect them.`
+        : ''
+    if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.${smallPolicy}${suppressionNote}${boilerplateNote}`
     const top = groups.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
     const lines = top.map((grp, k) => {
         const isStr = grp.members.some((f) => f.kind === 'string')
@@ -94,7 +97,7 @@ export function tFindDuplicates(g, args, ctx) {
         const sites = grp.members.slice(0, 8).map((f) => `     ${f.file}:${f.start}-${f.end}`)
         return [head, ...sites].join('\n')
     })
-    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.${smallPolicy}${suppressionNote}`
+    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.${smallPolicy}${suppressionNote}${boilerplateNote}`
 }
 
 // Focused dead-code review queue. Unlike the broad run_audit surface, this includes functions and
@@ -197,6 +200,7 @@ export function tFindDeadCode(g, args, ctx) {
 }
 
 const SEVERITY_RANK = {critical: 0, high: 1, medium: 2, low: 3, info: 4}
+const AUDIT_NON_PRODUCT_CLASSES = ['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
 
 export function formatAuditFinding(f) {
     const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''}${f.manifest ? `; ${f.manifest}` : ''})` : ''
@@ -206,12 +210,40 @@ export function formatAuditFinding(f) {
     return `  [${f.severity}/${f.confidence || '?'}] ${f.rule}: ${f.title}${where}${f.reason ? `\n      reason: ${f.reason}` : ''}${verification}${f.cycleRoute ? `\n      route: ${f.cycleRoute}` : ''}${f.fixHint ? `\n      fix: ${f.fixHint}` : ''}`
 }
 
-const auditFilter = (audit, args, findings = audit.findings) => {
+const auditFindingPaths = (finding) => {
+    const paths = []
+    if (finding?.file) paths.push(String(finding.file))
+    if (Array.isArray(finding?.files)) paths.push(...finding.files.map(String))
+    if (finding?.cycleRoute) paths.push(...String(finding.cycleRoute).split(/\s*(?:→|â†’|->)\s*/))
+    return [...new Set(paths.map((file) => file.replace(/\\/g, '/').trim()).filter(Boolean))]
+}
+
+export function auditFindingPathScope(findings, {includeClassified = false, repoRoot = null} = {}) {
+    const all = Array.isArray(findings) ? findings : []
+    if (includeClassified) return {findings: all, suppressed: 0}
+    const classifier = createPathClassifier(repoRoot)
+    const cache = new Map()
+    const classified = (file) => {
+        if (!cache.has(file)) cache.set(file, classifier.explain(file, {content: ''}))
+        const info = cache.get(file)
+        return info?.excluded || AUDIT_NON_PRODUCT_CLASSES.some((name) => hasPathClass(info, name))
+    }
+    const kept = all.filter((finding) => {
+        const paths = auditFindingPaths(finding)
+        return !paths.length || paths.some((file) => !classified(file))
+    })
+    return {findings: kept, suppressed: all.length - kept.length}
+}
+
+const DEPENDENCY_AUDIT_RULES = new Set(['unused-dep', 'missing-dep', 'duplicate-dep', 'unresolved-import', 'lockfile-drift'])
+export const isDependencyAuditFinding = (finding) => DEPENDENCY_AUDIT_RULES.has(String(finding?.rule || ''))
+
+const auditFilter = (audit, args, findings = audit.findings, repoRoot = null) => {
     const minSev = SEVERITY_RANK[args.min_severity] ?? 4
     const category = args.category ? String(args.category) : null
-    return findings
+    return auditFindingPathScope(findings, {includeClassified: args.include_classified === true, repoRoot}).findings
         .filter((finding) => (SEVERITY_RANK[finding.severity] ?? 4) <= minSev)
-        .filter((finding) => !category || finding.category === category)
+        .filter((finding) => !category || (category === 'dependencies' ? isDependencyAuditFinding(finding) : finding.category === category))
 }
 
 const auditChecksLine = (audit) => {
@@ -229,11 +261,12 @@ const auditConventionLines = (audit) => {
     ].filter((line) => line != null)
 }
 
-const formatOrdinaryAudit = (audit, args, findings = audit.findings, heading = null) => {
+const formatOrdinaryAudit = (audit, args, findings = audit.findings, heading = null, repoRoot = null) => {
     const max = Math.max(1, Math.min(100, Number(args.max_findings) || 30))
-    const filtered = auditFilter(audit, args, findings)
+    const pathScope = auditFindingPathScope(findings, {includeClassified: args.include_classified === true, repoRoot})
+    const filtered = auditFilter(audit, args, pathScope.findings, repoRoot)
     const shown = filtered.slice(0, max)
-    const summary = summarizeFindings(findings)
+    const summary = summarizeFindings(pathScope.findings)
     const sev = summary.bySeverity
     const bycat = summary.byCategory
     const deps = audit.dependencyReport || {}
@@ -241,8 +274,9 @@ const formatOrdinaryAudit = (audit, args, findings = audit.findings, heading = n
         heading,
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         ...auditConventionLines(audit),
-        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}. npm per-finding manifest/source/config verification: ${deps.perFindingVerification ? 'AVAILABLE' : 'UNAVAILABLE'}.`,
+        `Dependency manifests: ${deps.status || 'UNKNOWN'} — checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}. npm per-finding manifest/source/config verification: ${deps.perFindingVerification ? 'AVAILABLE' : 'UNAVAILABLE'}.`,
         `Scoped severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Scoped categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
+        pathScope.suppressed ? `Path policy: production-first; suppressed ${pathScope.suppressed} finding(s) whose evidence is entirely test/e2e/generated/mock/story/docs/benchmark/temp or explicitly excluded. Pass include_classified:true to include them.` : 'Path policy: production-first; no classified-only findings were suppressed.',
         `Repository-level ${auditChecksLine(audit)}`,
         '',
         `Showing ${shown.length} of ${filtered.length} finding(s)${args.category ? ` in category "${args.category}"` : ''}${args.min_severity ? ` at ≥${args.min_severity}` : ''}:`,
@@ -353,12 +387,12 @@ async function runAuditWithBaseline(args, ctx, currentGraph) {
     const comparison = compareAuditDebt(currentAudit, baseline.value, changedFiles, {completeChangeSet})
     const mode = ['new', 'existing', 'all'].includes(args.debt) ? args.debt : 'new'
     const selectedRaw = mode === 'new' ? comparison.new : mode === 'existing' ? comparison.existing : comparison.all
-    const selected = auditFilter(currentAudit, args, selectedRaw)
+    const selected = auditFilter(currentAudit, args, selectedRaw, ctx.repoRoot)
     const max = Math.max(1, Math.min(100, Number(args.max_findings) || 30))
     const shown = selected.slice(0, max)
     const optional = comparison.optional.checks.map((check) => `${check.name.toUpperCase()} UNCOMPARABLE (current ${check.current}; baseline ${check.baseline})`).join('; ')
     const stateOf = (finding) => mode === 'all' ? finding.debtState : mode
-    const fixedShown = auditFilter(baseline.value, args, comparison.fixed).slice(0, Math.min(10, max))
+    const fixedShown = auditFilter(baseline.value, args, comparison.fixed, ctx.repoRoot).slice(0, Math.min(10, max))
     const text = [
         `${mode.toUpperCase()} DEBT — deterministic internal audit vs ${resolved.ref} (${resolved.commit.slice(0, 12)})`,
         `Changed scope: ${changedFiles.length} file(s) from ${scopeSource}${changedFiles.length ? ` — ${changedFiles.slice(0, 12).join(', ')}${changedFiles.length > 12 ? ', …' : ''}` : ' — working tree matches the baseline'}.`,
@@ -411,38 +445,16 @@ export async function tRunAudit(g, args, ctx) {
         if (!normalized.ok) return `Changed-scope audit invalid: ${normalized.error}.`
         const scoped = scopeAuditFindings(audit.findings, normalized.files)
         const text = formatOrdinaryAudit(audit, args, scoped,
-            `CHANGED-SCOPE ONLY — ${normalized.files.length} explicitly supplied file(s); no baseline was provided, so these findings are not classified as new, existing, or fixed.`)
+            `CHANGED-SCOPE ONLY — ${normalized.files.length} explicitly supplied file(s); no baseline was provided, so these findings are not classified as new, existing, or fixed.`, ctx.repoRoot)
         return toolResult(text, {
             status: 'COMPLETE',
             mode: 'changed-scope',
             scope: {files: normalized.files, source: 'explicit changed_files'},
             comparison: {status: 'UNAVAILABLE', reason: 'base_ref was not provided; changed-scope is not a new-debt claim'},
-            findings: auditFilter(audit, args, scoped),
+            findings: auditFilter(audit, args, scoped, ctx.repoRoot),
         }, {completeness: {status: 'COMPLETE'}})
     }
-    const minSev = SEVERITY_RANK[args.min_severity] ?? 4
-    const cat = args.category ? String(args.category) : null
-    const max = Math.max(1, Math.min(100, Number(args.max_findings) || 30))
-    const filtered = audit.findings
-        .filter((f) => (SEVERITY_RANK[f.severity] ?? 4) <= minSev)
-        .filter((f) => !cat || f.category === cat)
-    const shown = filtered.slice(0, max)
-    const sev = audit.summary.bySeverity
-    const bycat = audit.summary.byCategory
-    const deps = audit.dependencyReport || {}
-    const check = (name, state) => `${name} ${state?.status || 'ERROR'}${state?.detail ? ` — ${state.detail}` : ''}`
-    return [
-        `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
-        `Severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
-        `Structure: ${audit.structureReport?.runtimeCycles ?? audit.structureReport?.cycles ?? 0} runtime cycle(s), ${audit.structureReport?.compileTimeCouplings ?? audit.structureReport?.typeCouplings ?? 0} compile-time coupling group(s), ${audit.structureReport?.orphans ?? 0} orphan(s); import edges: ${audit.structureReport?.runtimeImportEdges ?? audit.structureReport?.importEdges ?? 0} runtime + ${audit.structureReport?.typeOnlyImportEdges ?? 0} type-only + ${audit.structureReport?.compileOnlyImportEdges ?? 0} compile-only. Dead: ${audit.deadReport.deadFiles} file(s), ${audit.deadReport.unusedExports} unused export(s).`,
-        `Dependency manifests: ${deps.status || 'UNKNOWN'} â€” checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}. npm per-finding manifest/source/config verification: ${deps.perFindingVerification ? 'AVAILABLE' : 'UNAVAILABLE'}.`,
-        ...auditConventionLines(audit),
-        `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`,
-        ``,
-        `Showing ${shown.length} of ${filtered.length} finding(s)${cat ? ` in category "${cat}"` : ''}${args.min_severity ? ` at ≥${args.min_severity}` : ''}:`,
-        ...shown.map(formatAuditFinding),
-        filtered.length > shown.length ? `  … +${filtered.length - shown.length} more (raise max_findings or filter by category/min_severity)` : null,
-    ].filter((x) => x != null).join('\n')
+    return formatOrdinaryAudit(audit, args, audit.findings, null, ctx.repoRoot)
 }
 
 // Named module clusters: graph communities labeled by their dominant folder instead of bare numbers.
@@ -665,12 +677,29 @@ export function tListEndpoints(g, args, ctx) {
             .filter((n) => !String(n.id).includes('#') && n.source_file && n.file_type === 'code')
             .map((n) => n.source_file)
     )]
-    const eps = detectEndpoints(ctx.repoRoot, codeFiles)
+    const inventory = analyzeEndpointInventory(ctx.repoRoot, codeFiles)
+    let eps = inventory.endpoints
+    const method = args.method ? String(args.method).toUpperCase() : null
+    const path = args.path ? String(args.path) : null
+    if (method) eps = eps.filter((endpoint) => endpoint.method === method)
+    if (path) eps = eps.filter((endpoint) => endpoint.path === path || endpoint.path.endsWith(path))
     if (!eps.length) return 'No HTTP endpoints detected in the indexed code files.'
     const max = Math.max(1, Math.min(300, Number(args.max_results) || 100))
     const shown = eps.slice(0, max)
-    return [
-        `${eps.length} endpoint(s) detected${eps.length > shown.length ? `, showing ${shown.length}` : ''}:`,
-        ...shown.map((e) => `  ${e.method.toUpperCase().padEnd(6)} ${e.path}${e.handler ? `  → ${e.handler}` : ''}  (${e.file}${e.line ? `:${e.line}` : ''})`),
+    const stats = inventory.stats
+    const text = [
+        `${eps.length} endpoint(s) matched${eps.length > shown.length ? `, showing ${shown.length}` : ''}. Inventory: ${stats.declaredRoutes} declaration(s); ${stats.reachableStaticRoutes} statically reachable composed route(s); ${stats.localDeclarations} local/root declaration candidate(s); ${stats.staticMounts} static router mount(s)${stats.truncated ? `; TRUNCATED at ${stats.maxEndpoints}` : ''}.`,
+        ...shown.map((e) => {
+            const via = e.mountChain?.length
+                ? `\n           declared ${e.declaredPath} in ${e.file}${e.line ? `:${e.line}` : ''}; mount chain ${e.mountChain.map((mount) => `${mount.file}:${mount.line} ${mount.path}`).join(' → ')}`
+                : ''
+            return `  ${e.method.toUpperCase().padEnd(6)} ${e.path}${e.handler ? `  → ${e.handler}` : ''}  (${e.file}${e.line ? `:${e.line}` : ''}; ${e.mountState}/${e.confidence})${via}`
+        }),
     ].join('\n')
+    return toolResult(text, {
+        filters: {method, path},
+        stats,
+        endpoints: shown,
+        page: {shown: shown.length, total: eps.length, truncated: eps.length > shown.length || stats.truncated},
+    }, {completeness: {status: stats.truncated ? 'PARTIAL' : 'COMPLETE', reason: stats.truncated ? `endpoint cap ${stats.maxEndpoints} reached` : 'all indexed code files scanned'}})
 }

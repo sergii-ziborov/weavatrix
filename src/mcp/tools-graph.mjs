@@ -180,7 +180,7 @@ export function tQueryGraph(g, {
     // Callers can opt back into augmentation when they explicitly want both behaviors.
     const automatic = pinned.seeds.length && augment_seeds !== true
         ? []
-        : findSeeds(g, question, Math.max(0, 8 - pinned.seeds.length), {repoRoot: toolCtx.repoRoot || null})
+        : findSeeds(g, question, Math.max(0, 6 - pinned.seeds.length), {repoRoot: toolCtx.repoRoot || null})
     const seeds = [...pinned.seeds, ...automatic.filter((node) => !pinned.seeds.some((seed) => String(seed.id) === String(node.id)))]
     if (!seeds.length) return `No nodes matched "${question}".`
     const maxDepth = Math.max(1, Math.min(6, Number(depth) || 3))

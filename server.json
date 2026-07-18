@@ -6,14 +6,14 @@
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.8",
+  "version": "0.2.9",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.8",
+      "version": "0.2.9",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
@@ -41,13 +41,13 @@
         },
         {
           "name": "WEAVATRIX_SYNC_URL",
-          "description": "Optional endpoint used only by explicit hosted-profile sync_graph or pull_architecture_contract calls",
+          "description": "Optional endpoint used only by explicit hosted-profile calls; preview_sync is local-only and sync_graph requires dry_run:false plus its exact short-lived confirmation before sending",
           "format": "string",
           "isRequired": false
         },
         {
           "name": "WEAVATRIX_SYNC_TOKEN",
-          "description": "Optional bearer token for the configured hosted endpoint; required by pull_architecture_contract",
+          "description": "Optional bearer token for confirmed sync_graph requests to the configured hosted endpoint; required by pull_architecture_contract",
           "format": "string",
           "isSecret": true,
           "isRequired": false

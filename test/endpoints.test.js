@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractEndpointsFromText, detectEndpoints, nextRoutePath } from "../src/analysis/endpoints.js";
+import { analyzeEndpointInventory, extractEndpointsFromText, detectEndpoints, nextRoutePath } from "../src/analysis/endpoints.js";
 
 const find = (eps, method, path) => eps.find((e) => e.method === method && e.path === path);
 
@@ -196,6 +196,55 @@ test("detectEndpoints: {id} doc route and :id real route collapse to ONE, real h
     assert.equal(dash.length, 1, "the doc route and the real route are deduped to one");
     assert.equal(dash[0].path, "/edgeAnalytics/dashboard/:id", ":param display kept over {param}");
     assert.equal(dash[0].handler, "getDashboard", "the resolvable handler wins");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("detectEndpoints: composes nested Express router.use mount paths across imported files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eps-mounts-"));
+  try {
+    mkdirSync(join(dir, "router", "war_room"), { recursive: true });
+    mkdirSync(join(dir, "services", "attack"), { recursive: true });
+    writeFileSync(join(dir, "router", "index.js"), [
+      "import warRoom from './war_room/index.js'",
+      "router.use('/warRoom', warRoom)",
+    ].join("\n"));
+    writeFileSync(join(dir, "router", "war_room", "index.js"), [
+      "import attack from '../../services/attack/attack.router.js'",
+      "router.use('/attack', requireTenant, attack)",
+    ].join("\n"));
+    writeFileSync(join(dir, "services", "attack", "attack.router.js"),
+      "router.post('/:attackId/startMitigate', isAttackOnTenant, controller.startMitigate)\n");
+    const files = [
+      "router/index.js",
+      "router/war_room/index.js",
+      "services/attack/attack.router.js",
+    ];
+    const eps = detectEndpoints(dir, files);
+    const endpoint = find(eps, "POST", "/warRoom/attack/:attackId/startMitigate");
+    assert.ok(endpoint, "nested mount prefixes are composed into the public path");
+    assert.equal(endpoint.localPath, "/:attackId/startMitigate");
+    assert.equal(endpoint.declaredPath, "/:attackId/startMitigate");
+    assert.equal(endpoint.handler, "startMitigate");
+    assert.equal(endpoint.mountState, "COMPOSED_STATIC");
+    assert.equal(endpoint.confidence, "high");
+    assert.deepEqual(endpoint.mountChain.map((mount) => mount.path), ["/warRoom", "/attack"]);
+    const inventory = analyzeEndpointInventory(dir, files);
+    assert.deepEqual(inventory.stats, {
+      scannedFiles: 3,
+      declaredRoutes: 1,
+      emittedRoutes: 1,
+      reachableRoutes: 1,
+      reachableStaticRoutes: 1,
+      composedRoutes: 1,
+      localRoutes: 0,
+      localDeclarations: 0,
+      staticMounts: 2,
+      truncated: false,
+      maxEndpoints: 2000,
+    });
+    assert.equal(find(eps, "POST", "/:attackId/startMitigate"), undefined, "unmounted local path is not emitted as a second endpoint");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

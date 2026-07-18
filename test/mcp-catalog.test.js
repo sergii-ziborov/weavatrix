@@ -8,7 +8,7 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
   const api = await loadHotApi(0, undefined);
   const got = names(api);
   assert.deepEqual([...api.caps], [...DEFAULT_CAPS]);
-  assert.equal(api.tools.length, 33);
+  assert.equal(api.tools.length, 34);
   assert.ok(got.has("verified_change"));
   assert.ok(got.has("read_source"));
   assert.ok(got.has("inspect_symbol"));
@@ -19,6 +19,7 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
   assert.ok(got.has("list_known_repos"));
   assert.ok(got.has("verify_architecture"));
   assert.ok(got.has("trace_api_contract"));
+  assert.ok(got.has("trace_endpoint"));
   assert.ok(!got.has("refresh_advisories"));
   assert.ok(!got.has("pull_architecture_contract"));
   assert.ok(!got.has("sync_graph"));
@@ -27,12 +28,12 @@ test("MCP profiles: absent caps use the offline default with explicit local reta
 test("MCP profiles: offline is the named default and pinned removes retargeting", async () => {
   const offline = await loadHotApi(0, "offline");
   assert.deepEqual([...offline.caps], [...DEFAULT_CAPS]);
-  assert.equal(offline.tools.length, 33);
+  assert.equal(offline.tools.length, 34);
 
   const api = await loadHotApi(0, "pinned");
   const got = names(api);
   assert.deepEqual([...api.caps], ["graph", "search", "source", "health", "build"]);
-  assert.equal(api.tools.length, 30);
+  assert.equal(api.tools.length, 31);
   assert.ok(got.has("verified_change"));
   assert.ok(got.has("read_source"));
   assert.ok(!got.has("open_repo"));
@@ -46,7 +47,7 @@ test("MCP profiles: offline is the named default and pinned removes retargeting"
 test("MCP profiles: osv enables only advisory networking", async () => {
   const api = await loadHotApi(0, "osv");
   const got = names(api);
-  assert.equal(api.tools.length, 34);
+  assert.equal(api.tools.length, 35);
   assert.ok(got.has("open_repo"));
   assert.ok(got.has("refresh_advisories"));
   assert.ok(!got.has("pull_architecture_contract"));
@@ -57,9 +58,10 @@ test("MCP profiles: hosted and full expose the complete catalog", async () => {
   for (const profile of ["hosted", "full"]) {
     const api = await loadHotApi(0, profile);
     const got = names(api);
-    assert.equal(api.tools.length, 36, profile);
+    assert.equal(api.tools.length, 38, profile);
     assert.ok(got.has("refresh_advisories"), profile);
     assert.ok(got.has("pull_architecture_contract"), profile);
+    assert.ok(got.has("preview_sync"), profile);
     assert.ok(got.has("sync_graph"), profile);
   }
 });
@@ -68,7 +70,7 @@ test("MCP capabilities: explicit groups select only their tools", async () => {
   const api = await loadHotApi(0, "retarget,online");
   assert.deepEqual(
     [...names(api)].sort(),
-    ["list_known_repos", "open_repo", "pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()
+    ["list_known_repos", "open_repo", "preview_sync", "pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()
   );
 });
 
@@ -76,14 +78,14 @@ test("MCP capabilities: legacy online remains an alias for advisories plus hoste
   const api = await loadHotApi(0, "online");
   assert.deepEqual(
     [...names(api)].sort(),
-    ["pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()
+    ["preview_sync", "pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()
   );
   assert.deepEqual([...api.caps], ["advisories", "hosted"]);
 });
 
 test("MCP capabilities: an explicit full capability selection exposes all tools", async () => {
   const api = await loadHotApi(0, `${DEFAULT_CAPS.join(",")},advisories,hosted`);
-  assert.equal(api.tools.length, 36);
+  assert.equal(api.tools.length, 38);
 });
 
 test("MCP capabilities: an explicit empty selection exposes no tools", async () => {
@@ -136,6 +138,17 @@ test("run_audit schema distinguishes immutable baseline debt from changed-file s
   assert.equal(schema.properties.changed_files.maxItems, 500);
   assert.deepEqual(schema.properties.debt.enum, ["new", "existing", "all"]);
   assert.equal(schema.properties.debt.default, "new");
+  assert.ok(schema.properties.category.enum.includes("dependencies"));
+});
+
+test("endpoint tools expose mount-aware inventory and bounded graph tracing", async () => {
+  const api = await loadHotApi(0, "source");
+  const list = api.byName.get("list_endpoints");
+  const trace = api.byName.get("trace_endpoint");
+  assert.equal(list.inputSchema.properties.path.maxLength, 2048);
+  assert.deepEqual(trace.inputSchema.required, ["path"]);
+  assert.equal(trace.inputSchema.properties.max_depth.maximum, 4);
+  assert.equal(trace.inputSchema.properties.max_nodes.maximum, 40);
 });
 
 test("find_dead_code schema keeps risky surfaces opt-in and bounded", async () => {

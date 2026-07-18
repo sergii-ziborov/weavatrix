@@ -52,7 +52,10 @@ test("repository endpoint inventory reads Java files and recognizes fully-qualif
       "}",
     ].join("\n"));
     const found = detectEndpoints(repo, [file]);
-    assert.deepEqual(found, [{ method: "GET", path: "/status/ready", handler: "ready", file, line: 4 }]);
+    assert.deepEqual(found, [{
+      method: "GET", path: "/status/ready", declaredPath: "/status/ready", handler: "ready", file, line: 4,
+      mountState: "DECLARED_LOCAL", confidence: "medium", mountChain: [],
+    }]);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

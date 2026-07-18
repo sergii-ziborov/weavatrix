@@ -2,6 +2,7 @@ import {isStructuralRelation} from '../graph/relations.js'
 import {boundedInteger} from '../bounds.js'
 import {isSymbol, labelOf} from './graph-context.mjs'
 import {toolResult} from './tool-result.mjs'
+import {sourceExcerpt} from './tools-source.mjs'
 
 const MAX_LINE_SAMPLES = 5
 
@@ -10,7 +11,7 @@ const fileOf = (g, id) => {
     return String(node?.source_file || (isSymbol(id) ? String(id).split('#')[0] : id))
 }
 
-function aggregateEdges(g, edges, cap) {
+function aggregateEdges(g, edges, cap, {callsiteFile = null} = {}) {
     const groups = new Map()
     for (const edge of edges || []) {
         if (isStructuralRelation(edge.relation) || edge.barrelProxy === true) continue
@@ -19,7 +20,12 @@ function aggregateEdges(g, edges, cap) {
         const key = `${id}\0${relation}`
         let group = groups.get(key)
         if (!group) {
-            group = {id, label: labelOf(g, id), file: fileOf(g, id), relation, count: 0, lines: []}
+            const targetFile = fileOf(g, id)
+            group = {
+                id, label: labelOf(g, id), relation, count: 0, lines: [],
+                file: callsiteFile || targetFile,
+                ...(callsiteFile && callsiteFile !== targetFile ? {targetFile} : {}),
+            }
             groups.set(key, group)
         }
         group.count++
@@ -95,7 +101,8 @@ function linesForGroups(title, groups) {
     const lines = [`${title}: ${groups.total} container(s)${groups.capped ? ` (${groups.shown.length} shown)` : ''}`]
     for (const group of groups.shown) {
         const sites = group.lines.length ? `:${group.lines.join(',')}` : ''
-        lines.push(`  ${group.count}× ${group.relation}  ${group.label}  [${group.file}${sites}]`)
+        const destination = group.targetFile ? ` → ${group.targetFile}` : ''
+        lines.push(`  ${group.count}× ${group.relation}  ${group.label}  [call site ${group.file}${sites}${destination}]`)
     }
     return lines
 }
@@ -133,14 +140,24 @@ export async function tContextBundle(g, args = {}, ctx = {}, inspectSymbol) {
         name: String(g.byId.get(inspection.definition.id)?.label || '').replace(/\(\)$/, ''),
     }
     const inbound = aggregateEdges(g, g.inn.get(definition.id), maxRelated)
-    const outbound = aggregateEdges(g, g.out.get(definition.id), maxRelated)
+    const outbound = aggregateEdges(g, g.out.get(definition.id), maxRelated, {callsiteFile: definition.file})
     const reExports = exactReExportSites(g, definition, maxReExports)
     const source = []
-    if (inspection.source.definition) source.push({role: 'Definition', ...inspection.source.definition})
+    const append = (role, excerpt) => {
+        if (!excerpt || source.length >= maxSourceFiles) return
+        if (source.some((item) => item.file === excerpt.file && item.focusLine === excerpt.focusLine)) return
+        source.push({role, ...excerpt})
+    }
+    append('Definition', inspection.source.definition)
+    const contextLines = boundedInteger(args.context_lines, 4, 0, 12)
+    for (const group of outbound.shown) {
+        for (const line of group.lines) append('Outbound call site', sourceExcerpt(ctx.repoRoot, group.file, line, contextLines))
+    }
+    for (const group of inbound.shown) {
+        for (const line of group.lines) append('Inbound call site', sourceExcerpt(ctx.repoRoot, group.file, line, contextLines))
+    }
     for (const excerpt of inspection.source.callers || []) {
-        if (source.length >= maxSourceFiles) break
-        if (source.some((item) => item.file === excerpt.file && item.focusLine === excerpt.focusLine)) continue
-        source.push({role: 'Caller', ...excerpt})
+        append('Reference', excerpt)
     }
     const result = {
         status: 'OK', definition, evidence: inspection.evidence,

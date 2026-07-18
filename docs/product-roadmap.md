@@ -134,6 +134,24 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
   runtime trace ingestion and a blind end-to-end competitor benchmark. Parser evidence is not
   relabelled as semantic proof.
 
+### Public `0.2.9` — health/graph trust, REST correctness and explicit sync consent
+
+- Delivered: nested Express `router.use(...)` composition in endpoint inventory, including relative
+  ESM/CommonJS router imports, bounded multi-level mounts, declared/reachable counts and mount
+  provenance; `trace_endpoint` binds one route to its handler and bounded production call graph.
+- Delivered: edge-centered `context_bundle` provenance and source excerpts, plus repository-relative
+  ripgrep path globs on Windows.
+- Delivered: reduced natural-language seed noise for broad REST questions, production-first audit
+  evidence, a dedicated dependency-health audit projection, and default suppression of homogeneous
+  router clone boilerplate.
+- Delivered: separate local-only `preview_sync`, exact short-lived payload confirmation,
+  HTTPS/destination validation and actionable architecture-contract HTTP states.
+- Delivered: transient per-call timing/output/freshness/cache metrics in MCP response metadata,
+  without persistence, aggregation or egress.
+- Delivered: public site, privacy/security/license, README and package-metadata alignment. Hosted UI
+  and backend remain on their independent upgrade track; payload v3 stays wire-compatible and is
+  checked against the Hosted contract suite.
+
 ### Public `0.3.0` — precision expansion
 
 - Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and

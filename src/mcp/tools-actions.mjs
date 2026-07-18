@@ -3,6 +3,7 @@
 // Hot-reloadable (re-imported by catalog.mjs on change).
 import {readFileSync, writeFileSync, existsSync, statSync, realpathSync} from 'node:fs'
 import {dirname, join, isAbsolute} from 'node:path'
+import {createHash} from 'node:crypto'
 import {prevGraphPathFor, diffGraphs, formatGraphDiff, graphStaleness} from './graph-context.mjs'
 import {buildGraphForRepo, defaultPrecisionMode} from '../build-graph.js'
 import {graphHomeDir, graphOutDirForModule, graphOutDirForRepo} from '../graph/layout.js'
@@ -13,13 +14,91 @@ import {createSyncPayload, createSyncPayloadV3, MAX_SYNC_BODY_BYTES} from './syn
 import {createEvidenceSnapshot} from './evidence-snapshot.mjs'
 import {writeCachedArchitectureContract} from '../analysis/architecture-contract.js'
 import {precisionSemanticInputsMatch, readPrecisionOverlay} from '../precision/lsp-overlay.js'
+import {toolResult} from './tool-result.mjs'
 
 const MAX_SYNC_GRAPH_FILE_BYTES = 64 * 1024 * 1024
+const SYNC_PREVIEW_TTL_MS = 5 * 60 * 1000
+const MAX_SYNC_PREVIEWS = 4
+const syncPreviews = new Map()
 
 function syncRepoLabel(repoRoot) {
     const basename = String(repoRoot || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'repo'
     const safe = basename.normalize('NFKC').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '')
     return (safe || 'repo').slice(0, 128)
+}
+
+function syncDestination(raw) {
+    let url
+    try { url = new URL(raw) } catch { throw new Error('WEAVATRIX_SYNC_URL is invalid') }
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('WEAVATRIX_SYNC_URL must use HTTPS (or HTTP for loopback development)')
+    if (url.username || url.password) throw new Error('WEAVATRIX_SYNC_URL must not contain embedded credentials; use WEAVATRIX_SYNC_TOKEN')
+    if (url.hash) throw new Error('WEAVATRIX_SYNC_URL must not contain a fragment')
+    const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname.toLowerCase())
+    if (url.protocol !== 'https:' && !loopback) throw new Error('WEAVATRIX_SYNC_URL must use HTTPS unless the destination is loopback')
+    const display = `${url.origin}${url.pathname}${url.search ? ' (query redacted)' : ''}`
+    return {url: url.toString(), display}
+}
+
+function pruneSyncPreviews(now = Date.now()) {
+    for (const [token, preview] of syncPreviews) if (preview.expiresAt <= now) syncPreviews.delete(token)
+    while (syncPreviews.size >= MAX_SYNC_PREVIEWS) syncPreviews.delete(syncPreviews.keys().next().value)
+}
+
+function confirmationToken({url, repositoryId, payloadVersion, bodyHash}) {
+    return createHash('sha256')
+        .update(`weavatrix-sync-preview-v1\0${url}\0${repositoryId}\0${payloadVersion}\0${bodyHash}`)
+        .digest('hex').slice(0, 24)
+}
+
+function syncSectionSummary(payload) {
+    if (payload.syncPayloadV !== 3) return 'graph topology only (explicit V2 compatibility mode)'
+    const sections = payload.evidence?.sections || {}
+    const names = Object.entries(sections).map(([name, section]) => `${name}:${section?.state || section?.verdict || 'included'}`)
+    return names.join(', ') || 'bounded architecture/health/stack/package/duplicate evidence'
+}
+
+function syncPreviewText(preview, {expired = false} = {}) {
+    return [
+        `SYNC PREVIEW${expired ? ' (the supplied confirmation was missing, expired, or did not match)' : ''} — no network request was made.`,
+        `Destination: ${preview.destinationDisplay}.`,
+        `Repository: ${preview.repoName}; opaque repository UUID: ${preview.repositoryId}.`,
+        `Payload V${preview.payload.syncPayloadV}: ${preview.payload.nodes.length} nodes / ${preview.payload.links.length} edges, ${Math.round(preview.bodyBytes / 1024)} KB; body SHA-256 ${preview.bodyHash.slice(0, 12)}.`,
+        `Payload fields: ${Object.keys(preview.payload).sort().join(', ')}.`,
+        `Included sections: ${syncSectionSummary(preview.payload)}.`,
+        'Excluded by the wire allowlist: source bodies, snippets, absolute host paths, environment values, credentials, Git remotes, and unknown fields.',
+        `After the user approves this exact destination and summary, call sync_graph again within 5 minutes with dry_run:false and confirm_token: "${preview.token}".`,
+    ].join('\n')
+}
+
+async function sendSyncPreview(preview, timeoutMs) {
+    try {
+        const res = await fetch(preview.url, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'x-weavatrix-payload-version': String(preview.payload.syncPayloadV),
+                'x-weavatrix-repo': preview.repoName,
+                'x-weavatrix-repository-id': preview.repositoryId,
+                ...(process.env.WEAVATRIX_SYNC_TOKEN ? {authorization: `Bearer ${process.env.WEAVATRIX_SYNC_TOKEN}`} : {}),
+            },
+            body: preview.body,
+            signal: AbortSignal.timeout(timeoutMs),
+        })
+        if (!res.ok) {
+            const accepted = res.headers?.get?.('x-weavatrix-accept-payload-versions')
+            const compatibility = (res.status === 415 || res.status === 422) && accepted
+                ? ` Endpoint accepts payload version(s) ${accepted}; create and approve a new V2 preview only if graph-only sync is intentional.`
+                : ''
+            return `Sync endpoint ${preview.destinationDisplay} answered HTTP ${res.status} — graph NOT accepted.${compatibility}`
+        }
+        syncPreviews.delete(preview.token)
+        const evidenceNote = preview.payload.syncPayloadV === 3
+            ? ` + evidence ${preview.payload.evidence?.snapshotHash?.slice(0, 12) || 'unknown'}`
+            : ''
+        return `Graph for ${preview.repoName} (${preview.payload.nodes.length} nodes / ${preview.payload.links.length} edges${evidenceNote}, ${Math.round(preview.bodyBytes / 1024)} KB) pushed to approved destination ${preview.destinationDisplay}.`
+    } catch (error) {
+        return `Sync failed: ${error.message} — the graph stays local; the approved preview remains retryable until it expires.`
+    }
 }
 
 export async function tRebuildGraph(g, args, ctx) {
@@ -188,8 +267,10 @@ export async function tPullArchitectureContract(g, args, ctx) {
     const token = process.env.WEAVATRIX_SYNC_TOKEN
     if (!syncUrl || !token) return 'Hosted architecture pull is not configured. Use the hosted profile with WEAVATRIX_SYNC_URL and WEAVATRIX_SYNC_TOKEN, or keep .weavatrix/architecture.json locally.'
     let url
-    try { url = process.env.WEAVATRIX_ARCHITECTURE_URL || new URL('/api/v1/architecture-contract', syncUrl).toString() }
-    catch { return 'WEAVATRIX_SYNC_URL is invalid.' }
+    try {
+        const configured = process.env.WEAVATRIX_ARCHITECTURE_URL || new URL('/api/v1/architecture-contract', syncUrl).toString()
+        url = syncDestination(configured).url
+    } catch (error) { return `Hosted architecture pull is not configured safely: ${error.message}.` }
     const registry = repositoryRecord(ctx.repoRoot, graphHomeDir())
         || registerRepository({repoPath: ctx.repoRoot, graphDir: graphOutDirForRepo(ctx.repoRoot), graphHome: graphHomeDir()})
     const timeoutMs = Math.min(120000, Math.max(1000, Number(args.timeout_ms) || 30000))
@@ -199,8 +280,31 @@ export async function tPullArchitectureContract(g, args, ctx) {
             signal: AbortSignal.timeout(timeoutMs),
         })
         const body = await res.json().catch(() => null)
-        if (!res.ok) return `Hosted architecture endpoint answered HTTP ${res.status}; the local contract cache was not changed.`
-        if (body?.state === 'NOT_CONFIGURED' || !body?.contract) return 'Hosted target architecture is NOT_CONFIGURED. Define and save it in the Architecture editor first.'
+        if (!res.ok) {
+            const serverCode = String(body?.error?.code || body?.state || '').toUpperCase()
+            const state = res.status === 401 ? 'AUTH_REQUIRED'
+                : res.status === 403 ? 'FORBIDDEN'
+                    : res.status === 404 && ['REPOSITORY_NOT_FOUND', 'NOT_FOUND'].includes(serverCode) ? 'REPOSITORY_NOT_REGISTERED'
+                        : res.status === 404 ? 'ENDPOINT_NOT_FOUND'
+                        : res.status === 409 ? 'REPOSITORY_NOT_READY'
+                            : 'HTTP_ERROR'
+            const next = state === 'REPOSITORY_NOT_REGISTERED'
+                ? 'The Hosted endpoint is reachable, but this UUID has not completed a preview-confirmed repository sync.'
+                : state === 'ENDPOINT_NOT_FOUND'
+                    ? 'The configured architecture endpoint does not exist; verify WEAVATRIX_ARCHITECTURE_URL or the URL derived from WEAVATRIX_SYNC_URL.'
+                : res.status === 401 || res.status === 403
+                    ? 'Check the hosted token and repository access; no local cache entry was changed.'
+                    : res.status === 409
+                        ? 'Sync/register this repository first, then create or pull its target contract.'
+                        : 'Check the hosted service status and configured endpoint before retrying.'
+            return toolResult(`Hosted architecture pull: ${state} (HTTP ${res.status}). ${next} The previous local contract cache remains unchanged.`, {
+                state, httpStatus: res.status, serverCode: serverCode || null, cacheChanged: false,
+            })
+        }
+        if (body?.state === 'NOT_CONFIGURED' || !body?.contract) return toolResult(
+            'Hosted target architecture is NOT_CONFIGURED. Repository sync and authentication succeeded; define and save a target in the Architecture editor first.',
+            {state: 'NOT_CONFIGURED', repositoryId: registry.repositoryId, cacheChanged: false},
+        )
         const stored = writeCachedArchitectureContract(ctx.graphPath, body.contract)
         return `Pulled target architecture ${stored.contract.name} (${stored.contract.style}, ${stored.contract.enforcement}) into the local graph cache. get_architecture_contract and verify_architecture now use it.`
     } catch (error) {
@@ -208,14 +312,15 @@ export async function tPullArchitectureContract(g, args, ctx) {
     }
 }
 
-// Push the current graph.json to a user-configured endpoint. Off until WEAVATRIX_SYNC_URL is set.
-// The payload is graph metadata (paths, symbols/ranges, imports, edges, metrics), never file contents.
-export async function tSyncGraph(g, args, ctx) {
-    const url = process.env.WEAVATRIX_SYNC_URL
-    if (!url) {
+async function buildSyncPreview(g, args, ctx) {
+    const configuredUrl = process.env.WEAVATRIX_SYNC_URL
+    if (!configuredUrl) {
         return 'Graph sync is not configured (optional feature). Set WEAVATRIX_SYNC_URL to the upload endpoint'
             + ' (and WEAVATRIX_SYNC_TOKEN for bearer auth) in the MCP registration env, then call again.'
     }
+    let destination
+    try { destination = syncDestination(configuredUrl) }
+    catch (error) { return `Graph sync is not configured safely: ${error.message}.` }
     if (!g) return 'No graph loaded — build one first (open_repo / rebuild_graph).'
     let raw
     try {
@@ -249,32 +354,61 @@ export async function tSyncGraph(g, args, ctx) {
     const repoName = syncRepoLabel(ctx.repoRoot)
     const registry = repositoryRecord(ctx.repoRoot, graphHomeDir())
         || registerRepository({repoPath: ctx.repoRoot, graphDir: graphOutDirForRepo(ctx.repoRoot), graphHome: graphHomeDir()})
-    const timeoutMs = Math.min(120000, Math.max(1000, Number(args.timeout_ms) || 30000))
-    try {
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-                'x-weavatrix-payload-version': String(payload.syncPayloadV),
-                'x-weavatrix-repo': repoName,
-                'x-weavatrix-repository-id': registry.repositoryId,
-                ...(process.env.WEAVATRIX_SYNC_TOKEN ? {authorization: `Bearer ${process.env.WEAVATRIX_SYNC_TOKEN}`} : {}),
-            },
-            body,
-            signal: AbortSignal.timeout(timeoutMs),
-        })
-        if (!res.ok) {
-            const accepted = res.headers?.get?.('x-weavatrix-accept-payload-versions')
-            const compatibility = (res.status === 415 || res.status === 422) && accepted
-                ? ` Endpoint accepts payload version(s) ${accepted}; retry with payload_version:2 only if you intentionally want graph-only sync.`
-                : ''
-            return `Sync endpoint answered HTTP ${res.status} — graph NOT accepted.${compatibility}`
-        }
-        const evidenceNote = payload.syncPayloadV === 3
-            ? ` + evidence ${payload.evidence?.snapshotHash?.slice(0, 12) || 'unknown'}`
-            : ''
-        return `Graph for ${repoName} (${payload.nodes.length} nodes / ${payload.links.length} edges${evidenceNote}, ${Math.round(bodyBytes / 1024)} KB) pushed to ${url}.`
-    } catch (e) {
-        return `Sync failed: ${e.message} — the graph stays local.`
+    const bodyHash = createHash('sha256').update(body).digest('hex')
+    const token = confirmationToken({url: destination.url, repositoryId: registry.repositoryId, payloadVersion: payload.syncPayloadV, bodyHash})
+    const preview = {
+        token, url: destination.url, destinationDisplay: destination.display,
+        graphPath: ctx.graphPath, repoName, repositoryId: registry.repositoryId,
+        payload, body, bodyBytes, bodyHash, expiresAt: Date.now() + SYNC_PREVIEW_TTL_MS,
     }
+    syncPreviews.set(token, preview)
+    return preview
+}
+
+function previewResult(preview, {expired = false} = {}) {
+    if (typeof preview === 'string') return preview
+    return toolResult(syncPreviewText(preview, {expired}), {
+        status: 'PREVIEW_READY', networkRequestMade: false,
+        destination: preview.destinationDisplay, repository: preview.repoName,
+        repositoryId: preview.repositoryId, payloadVersion: preview.payload.syncPayloadV,
+        nodes: preview.payload.nodes.length, links: preview.payload.links.length,
+        bodyBytes: preview.bodyBytes, bodyHash: preview.bodyHash,
+        payloadFields: Object.keys(preview.payload).sort(), sections: syncSectionSummary(preview.payload),
+        expiresAt: new Date(preview.expiresAt).toISOString(), confirmToken: preview.token,
+    }, {completeness: {status: 'COMPLETE', reason: 'exact allowlisted payload serialized locally; no network request made'}})
+}
+
+// Build the exact upload body and approval token without any network request. Kept separate from the
+// mutating tool so safety layers and humans can approve a local preview without authorizing egress.
+export async function tPreviewSyncGraph(g, args, ctx) {
+    pruneSyncPreviews()
+    return previewResult(await buildSyncPreview(g, args, ctx))
+}
+
+// Push the exact payload previously approved through preview_sync. The old dry_run form remains a
+// compatibility alias for one release, but can never send unless dry_run:false and the token matches.
+export async function tSyncGraph(g, args, ctx) {
+    if (args.dry_run !== false) {
+        pruneSyncPreviews()
+        const preview = await buildSyncPreview(g, args, ctx)
+        if (typeof preview === 'string') return preview
+        const suppliedToken = String(args.confirm_token || '').trim()
+        const exact = suppliedToken && suppliedToken === preview.token
+        return `${syncPreviewText(preview, {expired: !!suppliedToken && !exact})}${exact ? '\nConfirmation token recognized, but dry_run is still true; no network request was made.' : ''}`
+    }
+    const configuredUrl = process.env.WEAVATRIX_SYNC_URL
+    if (!configuredUrl) return 'Graph sync is not configured (optional feature). Set WEAVATRIX_SYNC_URL first.'
+    let destination
+    try { destination = syncDestination(configuredUrl) }
+    catch (error) { return `Graph sync is not configured safely: ${error.message}.` }
+    pruneSyncPreviews()
+    const suppliedToken = String(args.confirm_token || '').trim()
+    const approved = suppliedToken ? syncPreviews.get(suppliedToken) : null
+    if (approved && approved.expiresAt > Date.now()
+        && approved.url === destination.url && approved.graphPath === ctx.graphPath) {
+        const timeoutMs = Math.min(120000, Math.max(1000, Number(args.timeout_ms) || 30000))
+        return sendSyncPreview(approved, timeoutMs)
+    }
+    const preview = await buildSyncPreview(g, args, ctx)
+    return typeof preview === 'string' ? preview : syncPreviewText(preview, {expired: true})
 }

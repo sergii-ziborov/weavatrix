@@ -133,7 +133,10 @@ export function ambiguityNote(query, info) {
 const bestByDegree = (g, list) =>
     list.reduce((best, n) => (degreeOf(g, n.id) > degreeOf(g, best.id) ? n : best), list[0])
 
-const QUERY_STOP = new Set('a an and are around architecture code do does explain find for from how in is me of or project repository show the through to trace what where which with'.split(' '))
+// Instructional words describe the requested answer, not repository concepts. Letting them become
+// fuzzy seeds made broad prompts select symbols such as `jest.config.cjs#path` for an HTTP request
+// path. Exact file/symbol questions still have seed_files / inspect_symbol as explicit controls.
+const QUERY_STOP = new Set('a an and are around architecture best code do does exact explain find focus focused for from how identify in inspect inspection is logic me of or path production project repository request requests rest show symbol symbols the through to trace what where which with'.split(' '))
 const QUERY_INTENTS = [
     ['bootstrap', ['bootstrap', 'startup', 'entrypoint', 'entry', 'main', 'root', 'app', 'application', 'applications', 'index', 'server', 'cli']],
     ['tool-execution', ['tool', 'tools', 'tooling', 'mcp', 'execution', 'execute', 'invocation', 'invoke', 'dispatch', 'dispatcher', 'handler', 'catalog', 'registry']],
@@ -275,6 +278,36 @@ function queryConcepts(query) {
     return concepts
 }
 
+// A code-shaped identifier in prose is stronger evidence than surrounding architecture words.
+// For example, `startMitigate` should seed its exact controller/service/messaging declarations,
+// not one arbitrary file for each of "controller", "service", and "flow". This remains bounded
+// label matching rather than semantic search; ambiguous identifiers are deliberately all retained.
+function exactIdentifierSeeds(g, query, limit, {repoRoot = null} = {}) {
+    const identifiers = [...new Set((String(query || '').match(/[A-Za-z_$][A-Za-z0-9_$]*/g) || [])
+        .filter((token) => /(?:[a-z0-9][A-Z]|_)/.test(token))
+        .map((token) => token.toLowerCase()))]
+    if (!identifiers.length) return []
+    const requestedClasses = requestedPathClasses(query)
+    const languageExtensions = requestedLanguages(query)
+    const classifier = createPathClassifier(repoRoot)
+    const classificationCache = new Map()
+    const matches = []
+    for (const identifier of identifiers) {
+        const candidates = g.nodes.filter((node) => {
+            const label = String(node.label || '').replace(/\(\)$/, '').toLowerCase()
+            return label === identifier
+                && matchesLanguage(node, languageExtensions)
+                && isQueryEligible(node, requestedClasses, classificationCache, classifier)
+        }).sort((left, right) => degreeOf(g, right.id) - degreeOf(g, left.id)
+            || String(left.id).localeCompare(String(right.id)))
+        for (const node of candidates) {
+            if (!matches.some((existing) => String(existing.id) === String(node.id))) matches.push(node)
+            if (matches.length >= limit) return matches
+        }
+    }
+    return matches
+}
+
 function conceptScore(g, node, concept, queryContext) {
     const id = normPath(node.id)
     const label = String(node.label ?? '').toLowerCase()
@@ -317,6 +350,8 @@ function conceptScore(g, node, concept, queryContext) {
 // Natural-language graph search keeps one strong candidate per concept before filling by aggregate
 // score. This prevents a broad architecture question from spending every seed on one dense API area.
 export function findSeeds(g, query, limit = 8, {repoRoot = null} = {}) {
+    const exact = exactIdentifierSeeds(g, query, limit, {repoRoot})
+    if (exact.length) return exact
     const concepts = queryConcepts(query)
     if (!concepts.length || limit <= 0) return []
     const requestedClasses = requestedPathClasses(query)
