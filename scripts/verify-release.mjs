@@ -47,6 +47,9 @@ for (const requiredFile of ["scripts/run-agent-task-benchmark.mjs", "docs/agent-
 }
 
 if (pkg.mcpName !== server.name) throw new Error("package mcpName and server.json name differ");
+if (typeof server.description !== "string" || !server.description.trim() || server.description.length > 100) {
+  throw new Error(`MCP Registry description must contain 1-100 characters (received ${server.description?.length ?? 0})`);
+}
 if (manifest.tools_generated !== true) throw new Error("MCPB manifest must declare tools_generated");
 const defaultCaps = "offline";
 if (manifest.user_config?.capabilities?.default !== defaultCaps) throw new Error("MCPB default capabilities drifted");

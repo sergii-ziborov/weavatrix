@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sergii-ziborov/weavatrix",
-  "description": "Local repository intelligence for AI agents: reusable code graph, fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
+  "description": "Local graph for fast app understanding, Health, dead code, clones, history and architecture safety.",
   "repository": {
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.10",
+  "version": "0.2.11",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.10",
+      "version": "0.2.11",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
