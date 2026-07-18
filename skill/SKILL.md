@@ -59,16 +59,21 @@ projection; expand only when the answer requires it.
 - **Trace one endpoint through the application**: `trace_endpoint` for route -> handler -> bounded
   downstream call flow with edge-centered excerpts.
 - **Trace an API contract across repositories**: `list_known_repos` -> `trace_api_contract` with an
-  explicit backend/client set; inspect each graph reconciliation state before using the verdict.
+  explicit backend/client set; prefer this over separate per-repository endpoint/search passes when
+  a backend change may affect registered clients, and inspect each graph reconciliation state before
+  using the verdict.
 - **Measure one symbol's transitive blast radius**: `get_dependents`.
-- **Review the current branch, diff, or external patch**: `change_impact`.
+- **Review the current branch, diff, or external patch**: `change_impact`; it distinguishes additive
+  exports from signature/body/removal risk and separates runtime/type-only radius plus available
+  measured coverage or explicitly static reachability.
 - **Compare structural graph revisions**: `graph_diff base_ref=<merge-base>` for module edges, cycles,
   orphans and lost callers; without `base_ref`, compare the last rebuild snapshots.
 - **Use behavioral history**: `git_history` for churn x connectivity, hidden co-change and expected
   test/source coupling from bounded local Git numstat evidence.
 - **Plan and verify a serious change or pre-commit gate**: `verified_change phase=plan` -> edit ->
   `verified_change phase=verify base_ref=<same-ref>`. It composes exact context, impact, graph,
-  architecture, duplicate, optional API and test proof into one PASS/BLOCKED/UNKNOWN envelope.
+  architecture, duplicate, optional API and test proof into one PASS/BLOCKED/UNKNOWN envelope. It is
+  a proof layer around an agent's edit, not a source editor or hidden auto-fix.
 
 ### Health, debt and testing scenarios
 
@@ -110,6 +115,9 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
 
 ## Ground rules
 
+- **No hidden source mutation**: Weavatrix builds derived graph/cache artifacts and can run explicitly
+  authorized tests, but it does not edit repository source, auto-delete debt, merge clones, or rewrite
+  architecture policy. The coding agent remains responsible for the change and its tests.
 - **Evidence, not verdicts**: treat audit, hub, orphan and duplicate output as hypotheses. Confirm a
   finding in source and check framework/runtime conventions before deleting, merging or redesigning
   code. A same-name/different-body pair is a divergence candidate, not proof of duplication.
@@ -195,8 +203,9 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
 - **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`. Hub ranking
   is production-only by default; use `include_classified:true` only when tests/generated/build
   surfaces are deliberately part of the question.
-- **Refactor safety for one symbol**: `inspect_symbol` → `get_dependents` → `coverage_map` (low coverage × many
-  dependents ⇒ write tests first) → `read_source`.
+- **Refactor safety for one symbol**: `inspect_symbol` → `context_bundle` → `get_dependents` →
+  `coverage_map` (low coverage × many dependents ⇒ write tests first) → edit →
+  `verified_change phase=verify base_ref=<merge-base>`.
 - **Performance review**: `hot_path_review` → inspect its local evidence with `read_source` → use
   `get_dependents` for change risk → confirm with the repository's profiler/benchmark before editing.
 - **Pre-PR review of your current changes**: `change_impact` (auto merge-base; includes uncommitted
