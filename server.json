@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sergii-ziborov/weavatrix",
-  "description": "Code graph & blast-radius MCP for AI agents: change impact, dependents, health audit, clones.",
+  "description": "Local repository intelligence for AI agents: reusable code graph, fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "repository": {
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.9",
+  "version": "0.2.10",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [

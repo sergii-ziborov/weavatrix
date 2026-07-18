@@ -1,6 +1,6 @@
 ---
 name: weavatrix
-description: Drive the weavatrix MCP — code graph, blast-radius (get_dependents/change_impact), dead-code review, health audit, duplicates, coverage, endpoints — over any local repo. Use when analyzing code structure, refactor risk, dead code, dependency health, or before opening a PR.
+description: "Use the Weavatrix MCP as a reusable local repository-intelligence layer: understand unfamiliar applications with a bounded code graph, reduce repeated context, review Health, dead code, duplicates and history, trace endpoints and blast radius, enforce target architecture, and verify changes before a PR."
 ---
 
 # weavatrix MCP
@@ -31,31 +31,82 @@ named profiles for new registrations.
 
 ## Intent router
 
-Start from the task, not from the complete tool list:
+Weavatrix is not one report or three fixed workflows. Its 38 methods expose different bounded views
+and analyses over the same reusable graph. Start from the task and choose the smallest sufficient
+projection; expand only when the answer requires it.
 
-- **Orient in a repository**: `graph_stats` -> verify `Repo`, `Graph`, and `Build mode`; if the target
-  is wrong, call `open_repo`, then `graph_stats` again -> `module_map` (production-only by default).
-- **Review a branch/diff**: `change_impact` for changed-file blast radius; add
-  `graph_diff base_ref=<merge-base>` for structural drift, then drill into exact candidates with
-  `get_dependents` and `read_source`.
-- **Plan or verify a serious change**: call `verified_change phase=plan` with the natural-language
-  task and current diff/files. After editing, call it again with `phase=verify` and an immutable
-  `base_ref`. Treat `UNKNOWN` as missing proof, not success; inspect its blockers and unknowns instead
-  of manually orchestrating the lower-level graph, context, impact, ratchet, and test tools.
-- **Trace an API across repositories**: `list_known_repos` -> `trace_api_contract` with an explicit
-  backend and client list; inspect each `graphReconciliation.buildMode` before using the verdict.
-- **Inspect exact symbol references**: start with `graph_stats`, then call `context_bundle` with an
-  exact node ID (or an unambiguous label) for a compact definition, grouped relations, exact
-  re-export sites and source workset. Use `inspect_symbol` when the raw bounded point query is needed;
-  it spends evidence beyond the broad overlay cap. Use `get_dependents` for transitive
-  graph impact and `find_dead_code` for bounded zero-reference
-  candidates. Treat `PARTIAL`, `UNAVAILABLE`, `OFF`, or zero exact edges as incomplete evidence, not
-  a compiler-exact result; `OFF` means the caller explicitly selected static-only mode. Java and Rust
-  providers are not bundled in 0.2.7, so their edges never become `EXACT_LSP` even when a mixed
-  repository has a complete TypeScript/JavaScript overlay.
-- **Explore an architectural question**: use broad `query_graph` when entry points are unknown; its
-  bootstrap/tool-execution ranking prefers production executables over docs, sites and fixtures.
-  Pass exact `seed_files` when the intended entry points are already known.
+### Graph views and application understanding
+
+- **Confirm repository, graph freshness and build mode**: `graph_stats`; use `rebuild_graph` only for
+  a reported fallback/error or an intentional mode/precision change.
+- **Switch or inventory local repositories**: `list_known_repos` -> `open_repo` -> `graph_stats`.
+- **See production module topology**: `module_map`; use this first for a large unfamiliar application.
+- **See discovered communities and their members**: `list_communities` -> `get_community`.
+- **Find high-coupling hubs**: `god_nodes`; repeated call sites do not inflate unique connectivity.
+- **Inspect one graph entity**: `get_node`; pass an exact node ID when labels are ambiguous.
+- **Inspect direct one-hop relations**: `get_neighbors`; do not confuse it with transitive impact.
+- **Prove a path between two concepts**: `shortest_path`.
+- **Explore an unknown entry point or architectural question**: `query_graph`; pin `seed_files` when
+  known, and keep its broad result as orientation evidence.
+- **Inspect one exact symbol deeply**: `context_bundle` for the bounded edit workset;
+  `inspect_symbol` for the raw point query and on-demand JS/TS reference evidence.
+- **Confirm graph evidence in source**: `read_source`; use `search_code` only for a narrow regex/glob
+  check. Search is supporting evidence, not the repository-intelligence layer.
+
+### Runtime, API and change scenarios
+
+- **Inventory HTTP routes**: `list_endpoints` for declared/reachable composed paths and mount proof.
+- **Trace one endpoint through the application**: `trace_endpoint` for route -> handler -> bounded
+  downstream call flow with edge-centered excerpts.
+- **Trace an API contract across repositories**: `list_known_repos` -> `trace_api_contract` with an
+  explicit backend/client set; inspect each graph reconciliation state before using the verdict.
+- **Measure one symbol's transitive blast radius**: `get_dependents`.
+- **Review the current branch, diff, or external patch**: `change_impact`.
+- **Compare structural graph revisions**: `graph_diff base_ref=<merge-base>` for module edges, cycles,
+  orphans and lost callers; without `base_ref`, compare the last rebuild snapshots.
+- **Use behavioral history**: `git_history` for churn x connectivity, hidden co-change and expected
+  test/source coupling from bounded local Git numstat evidence.
+- **Plan and verify a serious change or pre-commit gate**: `verified_change phase=plan` -> edit ->
+  `verified_change phase=verify base_ref=<same-ref>`. It composes exact context, impact, graph,
+  architecture, duplicate, optional API and test proof into one PASS/BLOCKED/UNKNOWN envelope.
+
+### Health, debt and testing scenarios
+
+- **Run a whole-repository Health review**: `run_audit debt=all`.
+- **Gate only newly introduced branch debt**: `run_audit base_ref=<merge-base> debt=new`; old debt in
+  a changed file remains existing.
+- **Review dependency declarations/imports**: `run_audit category=dependencies`; it includes missing,
+  unused, duplicate, unresolved-import and lockfile-drift evidence without relabelling identities.
+- **Refresh vulnerability evidence when explicitly authorized**: `refresh_advisories`, then
+  `run_audit category=vulnerability`. `NOT_CHECKED` is unknown, never clean.
+- **Review dead files, functions, methods and symbols**: `find_dead_code`; every result remains a
+  review candidate with framework/dynamic/public-API caveats, never an auto-delete verdict.
+- **Review clone families or same-name divergence**: `find_duplicates`; framework router boilerplate
+  is suppressed unless explicitly requested.
+- **Map measured coverage or honest static test reachability**: `coverage_map`; unavailable measured
+  coverage is not 0%.
+- **Prioritize local performance-review candidates**: `hot_path_review`; confirm with a profiler or
+  benchmark before changing runtime behavior.
+
+### Intended architecture and Hosted governance
+
+- **Read or establish intended architecture**: `get_architecture_contract`. A returned starter is a
+  product-code-only territory proposal (not tests, docs, benchmarks, generated output or repository
+  configs), not automatically approved policy.
+- **Select rules before editing**: `prepare_change`; **enforce the ratchet after editing**:
+  `verify_architecture`.
+- **Understand or request an exception**: `explain_architecture_violation` ->
+  `propose_architecture_exception`; proposals never mutate policy automatically.
+- **Pull an owner-approved Hosted target**: `pull_architecture_contract` only in an explicitly enabled
+  Hosted profile.
+- **Review exactly what Hosted sync would send**: `preview_sync`; only an approved
+  `sync_graph dry_run=false confirm_token=...` may send that exact bounded payload.
+
+Across every scenario, treat `PARTIAL`, `UNAVAILABLE`, `OFF`, `NOT_CHECKED`, `ERROR`, or capped
+evidence as incomplete rather than success. Java and Rust exact language-server providers are not
+bundled, so their edges never become `EXACT_LSP` even when a mixed repository has a complete
+TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved and explicitly
+`INFERRED`; they improve cross-file flow without claiming compiler-exact overload or dynamic dispatch.
 
 ## Ground rules
 

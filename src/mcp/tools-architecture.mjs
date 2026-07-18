@@ -15,6 +15,12 @@ const PROVISIONAL_BUDGETS = Object.freeze({
     maxModuleBoundaryRatio: .65,
 })
 
+const SOURCE_ROOTS = new Set(['src', 'app', 'lib', 'packages', 'services'])
+const PRODUCT_CODE_EXTENSIONS = new Set([
+    '.cjs', '.cs', '.css', '.go', '.htm', '.html', '.java', '.js', '.jsx', '.less', '.mjs', '.py', '.pyi',
+    '.rs', '.scss', '.ts', '.tsx',
+])
+
 const remediation = () => ({
     offlinePath: '.weavatrix/architecture.json',
     hostedAction: 'Open Architecture -> choose intended style -> Save target & baseline',
@@ -35,24 +41,51 @@ function activeContract(ctx) {
     return loadArchitectureContract(ctx.repoRoot, ctx.graphPath)
 }
 
-function starterContract(g) {
+const codeExtension = (file) => {
+    const name = String(file || '').split('/').at(-1) || ''
+    const dot = name.lastIndexOf('.')
+    return dot >= 0 ? name.slice(dot).toLowerCase() : ''
+}
+
+function starterContract(g, repoRoot) {
+    const classifier = createPathClassifier(repoRoot)
     const files = [...new Set((g?.nodes || [])
         .filter((node) => !String(node.id).includes('#'))
         .map((node) => String(node.source_file || node.id || '').replace(/\\/g, '/'))
-        .filter(Boolean))]
+        .filter((file) => file && PRODUCT_CODE_EXTENSIONS.has(codeExtension(file))))]
+        .filter((file) => {
+            const explanation = classifier.explain(file)
+            return !explanation.excluded && !hasPathClass(
+                explanation, 'test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp',
+            )
+        })
     const groups = new Map()
     for (const file of files) {
         const parts = file.split('/').filter(Boolean)
-        const depth = ['src', 'app', 'lib', 'packages', 'services'].includes(parts[0]) ? 2 : 1
-        const path = parts.slice(0, Math.max(1, Math.min(depth, parts.length - 1))).join('/') || '(root)'
-        groups.set(path, (groups.get(path) || 0) + 1)
+        let key, name, path
+        if (parts.length === 1) {
+            key = 'root-code'
+            name = 'root code'
+            path = file
+        } else if (SOURCE_ROOTS.has(parts[0]) && parts.length === 2) {
+            key = `${parts[0]}-root`
+            name = `${parts[0]} (root files)`
+            path = file
+        } else {
+            path = parts.slice(0, SOURCE_ROOTS.has(parts[0]) ? 2 : 1).join('/')
+            key = path
+            name = path
+        }
+        const group = groups.get(key) || {name, paths: new Set(), files: 0}
+        group.paths.add(path)
+        group.files += 1
+        groups.set(key, group)
     }
-    const components = [...groups].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 80)
-        .filter(([path]) => path !== '(root)')
-        .map(([path], index) => ({
-            id: path.toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100) || `component-${index + 1}`,
-            name: path,
-            paths: [path],
+    const components = [...groups].sort((a, b) => b[1].files - a[1].files || a[0].localeCompare(b[0])).slice(0, 80)
+        .map(([key, group], index) => ({
+            id: key.toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100) || `component-${index + 1}`,
+            name: group.name,
+            paths: [...group.paths].sort((a, b) => a.localeCompare(b)),
         }))
     return normalizeArchitectureContract({
         name: 'Proposed no-regressions baseline', style: 'custom', enforcement: 'ratchet', components,
@@ -62,10 +95,10 @@ function starterContract(g) {
     })
 }
 
-function notConfiguredResult(g, action, {includeStarter = false} = {}) {
-    const starter = includeStarter ? starterContract(g) : null
+function notConfiguredResult(g, action, {includeStarter = false, repoRoot = null} = {}) {
+    const starter = includeStarter ? starterContract(g, repoRoot) : null
     const starterText = starter
-        ? ` A source-free starter with ${starter.components.length} path territories is available in JSON output from this lookup.`
+        ? ` A source-free starter with ${starter.components.length} product-code territories is available in JSON output from this lookup.`
         : ''
     return toolResult([
         `Architecture ${action} is NOT_CONFIGURED — no target contract is active.${starterText}`,
@@ -122,7 +155,7 @@ export function tGetArchitectureContract(g, args, ctx) {
         const text = loaded.error
             ? `Architecture contract is invalid (${loaded.source || 'unknown'}): ${loaded.error}`
             : 'No target architecture contract is active.'
-        if (!loaded.error) return notConfiguredResult(g, 'lookup', {includeStarter: true})
+        if (!loaded.error) return notConfiguredResult(g, 'lookup', {includeStarter: true, repoRoot: ctx?.repoRoot})
         return toolResult(text, {state: 'ERROR', source: loaded.source, error: loaded.error})
     }
     const contract = loaded.contract

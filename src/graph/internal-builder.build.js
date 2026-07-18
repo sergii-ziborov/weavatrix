@@ -143,7 +143,8 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         ...(extra && extra.symbolKind ? { symbol_kind: extra.symbolKind } : {}),
         ...(extra && extra.symbolSpace ? { symbol_space: extra.symbolSpace } : {}),
         ...(extra && extra.memberOf ? { member_of: extra.memberOf } : {}),
-        ...(extra && extra.visibility ? { visibility: extra.visibility } : {})
+        ...(extra && extra.visibility ? { visibility: extra.visibility } : {}),
+        ...(Number.isInteger(extra?.parameterCount) ? { parameter_count: extra.parameterCount } : {})
       });
       links.push({ source: fileRel, target: id, relation: "contains", confidence: "EXTRACTED" });
       syms.push({
@@ -154,6 +155,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         ...(extra?.memberOf ? {memberOf: extra.memberOf} : {}),
         ...(extra?.symbolKind ? {symbolKind: extra.symbolKind} : {}),
         ...(extra?.symbolSpace ? {symbolSpace: extra.symbolSpace} : {}),
+        ...(Number.isInteger(extra?.parameterCount) ? {parameterCount: extra.parameterCount} : {}),
       });
       if (!nameToId.has(name)) nameToId.set(name, id);
       const ids = nameToIds.get(name) || [];
@@ -290,7 +292,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       try {
         lang.pass2({
           grammar, tree, fileRel, code, caps, field, enclosing, links, nodeById,
-          perFileSymbols, symByFileName, importedLocals, resolveCall,
+          perFileSymbols, symByFileName, symIdsByFileName, importedLocals, resolveCall, resolveJavaType,
         });
       } catch (e) { /* one language-specific resolver never sinks the graph */ void e; }
     }

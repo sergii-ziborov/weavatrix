@@ -1,17 +1,28 @@
 # Weavatrix
 
-**Code graph & blast-radius MCP server for AI coding agents.**
+**Local repository intelligence for AI coding agents — understand the application quickly, then change it with evidence.**
 
-Weavatrix builds and compares the living architecture of any local repository: files, symbols,
-imports, calls, inheritance, health findings, clone families and Git-history coupling. It serves that
-evidence to Claude Code, Codex, or any MCP client for change impact, transitive dependents, health
-audit, clone detection and coverage mapping. Text search is included as a convenience, not the product
-core. **38 tools available; 34 enabled by the default offline profile. Local-first: with
+Weavatrix builds a reusable living graph of any local repository: files, symbols, imports, calls,
+inheritance, health findings, clone families and Git-history coupling. It gives Claude Code, Codex,
+or any MCP client a bounded map for fast application understanding and lower repeated context, then
+reuses the same graph for change impact, Health, dead-code review, duplicates, history and intended-
+architecture safeguards. Text search is included as a supporting source check, not the product core.
+**38 tools available; 34 enabled by the default offline profile. Local-first: with
 the defaults, no repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
 - Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
 - npm: [`weavatrix`](https://www.npmjs.com/package/weavatrix) — `npx -y weavatrix <repoRoot>`
+
+## One graph, many views
+
+The 38 MCP methods are not one linear workflow. They project the same reusable graph into the
+smallest view needed for a task: repository and build state; modules, communities, hubs, neighbors
+and paths; exact symbols and bounded source context; endpoint and cross-repository API flow; symbol
+and change-set blast radius; graph revision and behavioral Git history; Health, dependencies,
+vulnerabilities, dead code, clones, coverage and hot paths; proof-carrying change verification;
+intended-architecture contracts and ratchets; local multi-repository work; and explicit,
+preview-confirmed Hosted exchange.
 
 ## Why
 
@@ -443,9 +454,11 @@ Java graphs:
 - Java class/interface/enum/record/annotation declarations retain their symbol kind; methods and
   constructors are linked to their declaring type with visibility metadata. Internal
   `extends`/`implements` relationships and resolvable type references link to real declarations.
-  Imports are compile-only; call/reference/heritage edges contribute impact. Maven/Gradle Java
-  trees use package-aware communities instead of one giant `src` bucket. External or synthetic
-  placeholder types are not created merely to inflate graph counts.
+  Field, parameter, local and static receiver types resolve project-internal cross-file calls;
+  overloads are selected by arity and ambiguous/external targets fail closed. Imports are
+  compile-only; call/reference/heritage edges contribute impact. Maven/Gradle Java trees use
+  package-aware communities instead of one giant `src` bucket. External or synthetic placeholder
+  types are not created merely to inflate graph counts.
 - Dependency checks resolve the nearest workspace manifest and `tsconfig`/`jsconfig` aliases,
   account for framework-owned runtime peers such as Next.js + `react-dom`, and recognize Next.js
   App Router route exports as endpoints.

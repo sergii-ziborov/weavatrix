@@ -49,12 +49,13 @@ export const GOLDEN_CASES = Object.freeze([
     },
     {
         id: 'java', language: 'Java', root: fixture('java'),
-        symbols: ['UserReader', 'User', 'BaseService', 'UserService', 'cached', 'load'],
+        symbols: ['UserReader', 'User', 'UserStore', 'save', 'BaseService', 'UserService', 'cached', 'load'],
         edges: [
             {relation: 'inherits', source: 'UserService.java#UserService@', target: 'BaseService.java#BaseService@', provenance: 'INFERRED'},
             {relation: 'implements', source: 'UserService.java#UserService@', target: 'UserReader.java#UserReader@', provenance: 'INFERRED'},
             {relation: 'references', source: 'UserService.java#load@', target: 'User.java#User@', provenance: 'INFERRED'},
             {relation: 'method', source: 'UserService.java#UserService@', target: 'UserService.java#load@', provenance: 'EXTRACTED'},
+            {relation: 'calls', source: 'UserService.java#load@', target: 'UserStore.java#save@', provenance: 'INFERRED'},
         ],
     },
     {

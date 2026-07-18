@@ -1,6 +1,8 @@
 // Java extractor. Keeps file-level imports/calls while modelling the Java ownership and type system:
 // classes/interfaces/enums/records own their methods, heritage distinguishes extends from implements,
 // and project-local type references resolve to the declaration node (never to synthetic type-name nodes).
+import { addJavaCalls } from "./lang-java-calls.js";
+
 const TYPE_CORE = `
   (class_declaration name: (identifier) @class)
   (interface_declaration name: (identifier) @interface)
@@ -39,6 +41,13 @@ const visibilityOf = (declaration, owner) => {
 };
 
 const lineOf = (node) => node.startPosition.row + 1;
+const parameterCountOf = (declaration) => {
+  const parameters = declaration?.childForFieldName?.("parameters");
+  if (!parameters) return null;
+  return (parameters.namedChildren || []).filter((node) => [
+    "formal_parameter", "spread_parameter", "receiver_parameter",
+  ].includes(node.type)).length;
+};
 const symbolBaseId = (fileRel, nameNode) => `${fileRel}#${nameNode.text}@${lineOf(nameNode)}`;
 const declarationKey = (node) => `${node?.startIndex ?? -1}:${node?.endIndex ?? -1}`;
 const exactJavaTarget = (resolveJavaImport, parts) => {
@@ -52,6 +61,7 @@ export default {
   grammars: ["java"],
   exts: { ".java": "java" },
   isWeb: false,
+  customCalls: true,
   calls: `(method_invocation name: (identifier) @callee)`,
   // Capturing the base type_identifier (rather than the whole generic/scoped type) gives the shared
   // resolver the imported/local declaration name. Each query is deliberately non-overlapping.
@@ -110,6 +120,7 @@ export default {
       const memberId = addJavaSym(cap.node, cap.name !== "field", {
         sourceNode: declaration,
         symbolKind: memberKind,
+        ...(["method", "constructor"].includes(memberKind) ? { parameterCount: parameterCountOf(declaration) } : {}),
         ...(ownerNameNode ? { memberOf: ownerNameNode.text } : {}),
         visibility: visibilityOf(declaration, owner),
       });
@@ -190,4 +201,6 @@ export default {
       }
     }
   },
+
+  pass2: addJavaCalls,
 };

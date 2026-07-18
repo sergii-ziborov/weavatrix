@@ -117,11 +117,11 @@ test("java graph: overloaded and nested methods keep the nearest declaring type 
 
 test("java graph: an external import cannot bind to a same-basename project class", async () => {
   const root = fixture({
-    "src/test/KafkaConsumer.java": "package test; public class KafkaConsumer {}\n",
+    "src/test/KafkaConsumer.java": "package test; public class KafkaConsumer { public void poll() {} }\n",
     "src/app/UsesExternal.java": [
       "package app;",
       "import org.apache.kafka.clients.consumer.KafkaConsumer;",
-      "public class UsesExternal { private KafkaConsumer consumer; }",
+      "public class UsesExternal { private KafkaConsumer consumer; void run() { consumer.poll(); } }",
       "",
     ].join("\n"),
   });
@@ -130,6 +130,7 @@ test("java graph: an external import cannot bind to a same-basename project clas
     const local = graph.nodes.find((node) => node.source_file === "src/test/KafkaConsumer.java" && node.label === "KafkaConsumer");
     assert.ok(local);
     assert.ok(!graph.links.some((link) => endpoint(link.target) === local.id && ["imports", "references"].includes(link.relation)), "package mismatch prevents basename fallback from inventing a dependency");
+    assert.ok(!graph.links.some((link) => link.relation === "calls" && endpoint(link.target).startsWith("src/test/KafkaConsumer.java#poll@")), "external receiver calls cannot bind to an unrelated same-basename project class");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -151,6 +152,60 @@ test("java graph: compact same-line constructors and overloads keep unique owned
     assert.equal(ownership.length, 4);
     assert.ok(ownership.every((link) => endpoint(link.source) !== endpoint(link.target)), "ownership never becomes a self-edge");
     assert.deepEqual(new Set(ownership.map((link) => endpoint(link.target))), new Set(members.map((node) => node.id)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("java graph: resolves cross-file calls through field, parameter, local and static receiver types", async () => {
+  const root = fixture({
+    "src/dep/Worker.java": [
+      "package dep;",
+      "public class Worker {",
+      "  public void work() {}",
+      "  public void work(int value) {}",
+      "  public static void staticWork() {}",
+      "}",
+      "",
+    ].join("\n"),
+    "src/app/Caller.java": [
+      "package app;",
+      "import dep.Worker;",
+      "public class Caller {",
+      "  private Worker field;",
+      "  public void run(Worker parameter) {",
+      "    Worker local = new Worker();",
+      "    field.work();",
+      "    parameter.work();",
+      "    local.work();",
+      "    Worker.staticWork();",
+      "    field.work(1);",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  });
+  try {
+    const graph = await buildInternalGraph(root);
+    const caller = graph.nodes.find((node) => node.source_file === "src/app/Caller.java" && node.label === "run()");
+    const workWithArgument = graph.nodes.find((node) => node.source_file === "src/dep/Worker.java" && node.label === "work()" && node.parameter_count === 1);
+    const staticWork = graph.nodes.find((node) => node.source_file === "src/dep/Worker.java" && node.label === "staticWork()");
+    assert.ok(caller && workWithArgument && staticWork);
+    const calls = graph.links.filter((link) => link.relation === "calls" && endpoint(link.source) === caller.id);
+    const noArgumentWork = graph.nodes.find((node) => node.source_file === "src/dep/Worker.java" && node.label === "work()" && node.parameter_count === 0);
+    assert.ok(noArgumentWork);
+    assert.equal(calls.filter((link) => endpoint(link.target) === noArgumentWork.id).length, 3);
+    assert.equal(calls.filter((link) => endpoint(link.target) === workWithArgument.id).length, 1);
+    assert.equal(calls.filter((link) => endpoint(link.target) === staticWork.id).length, 1);
+    assert.ok(calls.every((link) => ["receiver-declared-type", "static-type"].includes(link.javaResolution)));
+
+    const incremental = await buildInternalGraph(root, {
+      includeFiles: ["src/app/Caller.java"],
+      baseGraph: graph,
+    });
+    assert.ok(incremental.links.some((link) =>
+      link.relation === "calls" && endpoint(link.target) === workWithArgument.id),
+    "a changed Java caller still resolves methods declared in an unchanged base-graph file");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

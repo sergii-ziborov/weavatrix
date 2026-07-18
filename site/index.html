@@ -3,22 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Weavatrix — code graph &amp; blast-radius MCP server for AI coding agents</title>
-<meta name="description" content="Open-source MCP server that gives Claude Code, Codex and any AI coding agent a dependency graph of your local repository: change impact, transitive dependents, health audit, clone detection, coverage mapping. JavaScript, TypeScript, Python, Go, Java, C#, Rust. Local-first and offline by default. npx -y weavatrix.">
+<title>Weavatrix — local repository intelligence for AI coding agents</title>
+<meta name="description" content="Open-source MCP server that builds one reusable local code graph for fast application understanding, lower repeated context, Health, dead code, clone detection, graph history, blast radius and intended-architecture safeguards. JavaScript, TypeScript, Python, Go, Java, C#, Rust. Offline by default.">
 <meta name="keywords" content="MCP server, Model Context Protocol, code graph, blast radius, change impact analysis, AI coding agent, Claude Code, Codex, dependency graph, dead code, clone detection, static analysis, tree-sitter, Rust, C#">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://weavatrix.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Weavatrix">
-<meta property="og:title" content="Weavatrix — give your AI agent blast-radius vision">
-<meta property="og:description" content="Open-source architecture graph, health, clone and history MCP server for AI coding agents. 38 tools available, 34 offline by default, local-first, MIT.">
+<meta property="og:title" content="Weavatrix — one reusable application graph for your AI agent">
+<meta property="og:description" content="Understand an unfamiliar application quickly, then reuse the same local graph for Health, safe changes, duplicates, history and architecture safeguards. Offline by default, MIT.">
 <meta property="og:url" content="https://weavatrix.com/">
 <meta property="og:image" content="https://weavatrix.com/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Weavatrix — code graph &amp; blast-radius MCP for AI coding agents">
-<meta name="twitter:description" content="Change impact, dependents, health audit, clone detection over any local repo. Local-first, MIT.">
+<meta name="twitter:title" content="Weavatrix — local repository intelligence for AI coding agents">
+<meta name="twitter:description" content="Fast application understanding, Health, safe changes, duplicates, history and architecture safeguards from one reusable local graph.">
 <meta name="twitter:image" content="https://weavatrix.com/og-image.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
@@ -30,10 +30,10 @@
   "name": "Weavatrix",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Windows, macOS, Linux",
-  "description": "Code graph & blast-radius MCP server for AI coding agents: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository.",
+  "description": "Local repository intelligence MCP for AI coding agents: one reusable graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "url": "https://weavatrix.com",
   "downloadUrl": "https://www.npmjs.com/package/weavatrix",
-  "softwareVersion": "0.2.9",
+  "softwareVersion": "0.2.10",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Sergii Ziborov", "url": "https://github.com/sergii-ziborov" },
@@ -111,7 +111,7 @@
   <header>
     <div class="mark">
       <svg width="26" height="26" viewBox="0 0 100 100"><circle cx="30" cy="30" r="12" fill="#7c6cff"/><circle cx="72" cy="44" r="9" fill="#40e0c8"/><circle cx="44" cy="74" r="9" fill="#f0f2f8"/><line x1="30" y1="30" x2="72" y2="44" stroke="#7c6cff" stroke-width="4"/><line x1="30" y1="30" x2="44" y2="74" stroke="#40e0c8" stroke-width="4"/></svg>
-      WEAVATRIX <span class="badge">0.2.9</span>
+      WEAVATRIX <span class="badge">0.2.10</span>
     </div>
     <nav>
       <a href="#features">Tools</a>
@@ -124,11 +124,11 @@
   <div class="hero">
     <canvas id="net"></canvas>
     <div class="hero-inner">
-      <h1>Give your AI agent <em>blast-radius vision</em>.</h1>
-      <p class="sub">Weavatrix builds a code graph of any local repository and serves it to Claude Code
-        &amp; Codex over MCP — change impact, transitive dependents, health audit, clone detection,
-        graph history and coverage mapping. 38 tools available, with 34 offline by default. Text search
-        is a convenience; architecture and health evidence are the core.</p>
+      <h1>Give your AI agent a <em>reusable map of the application</em>.</h1>
+      <p class="sub">Weavatrix builds one local code graph for fast application understanding with
+        less repeated context, then reuses it for Health, dead code, duplicate review, graph history,
+        blast radius and intended-architecture safeguards. 38 tools are available, with 34 offline by
+        default. Text search is a convenience; graph intelligence is the core.</p>
       <a class="cta" href="#install">Get started</a>
       <a class="cta2" href="#features">Explore the tools ↓</a>
     </div>
@@ -148,11 +148,15 @@
 
   <section id="features">
     <h2>The graph your agent is missing</h2>
-    <p class="lead">Grep sees text. Weavatrix sees structure: files, symbols, runtime edges and
-      compile-time coupling — including Rust module paths and Java OOP relationships. Parser-backed
+    <p class="lead">This is not one report or three fixed workflows: 38 methods project the same
+      reusable graph into the smallest view needed for each task. Grep sees text; Weavatrix sees structure: files, symbols, runtime edges and
+      compile-time coupling — including Rust module paths, Java OOP relationships and project-internal
+      Java receiver call flow. Parser-backed
       graphs cover every supported language; a bounded, package-pinned TypeScript/JavaScript LSP
       overlay verifies ambiguous references locally without a native compiler or network request.</p>
     <div class="grid">
+      <div class="card"><h3><span class="dot"></span>Fast application understanding</h3><p><code>module_map</code>, communities, endpoints and focused graph/context views turn a large unfamiliar repository into a bounded workset before the agent starts reading files.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Proof-carrying change safeguard</h3><p><code>verified_change</code> plans and verifies one change through exact context, blast radius, graph drift, architecture, duplicate, API and optional test ratchets, returning one PASS, BLOCKED or honest UNKNOWN verdict.</p></div>
       <div class="card"><h3><span class="dot"></span>Change impact</h3><p><code>change_impact</code> diffs your branch (staged, unstaged, untracked included) and lists everything that depends on what you touched — with test coverage attached and untested hotspots called out.</p></div>
       <div class="card"><h3><span class="dot t"></span>Blast radius per symbol</h3><p><code>get_dependents</code> walks reverse edges transitively: every caller, importer and subclass that can feel your refactor, ranked by proximity and connectivity.</p></div>
       <div class="card"><h3><span class="dot"></span>Signal-aware health audit</h3><p><code>run_audit</code> finds dead code, dependency mistakes and orphans, separates runtime cycles from type-only/compile-only coupling, and makes incomplete OSV coverage explicit instead of reporting a clean zero.</p></div>
@@ -160,6 +164,7 @@
       <div class="card"><h3><span class="dot"></span>Clone detection, three lenses</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies and embedded strings. It ranks near-clones and same-name divergence as review evidence while suppressing homogeneous router boilerplate by default.</p></div>
       <div class="card"><h3><span class="dot t"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: runtime versus compile-time dependencies, changed cycle membership, and symbols that lost their last caller.</p></div>
       <div class="card"><h3><span class="dot"></span>History-backed architecture</h3><p><code>git_history</code> combines bounded local churn with graph connectivity, hidden co-change coupling and expected test/source movement. It reads numstat evidence, not commit messages, authors or source bodies.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Intended architecture ratchet</h3><p><code>get_architecture_contract</code>, <code>prepare_change</code> and <code>verify_architecture</code> turn an owner-approved target into an executable no-regression policy with new, existing, fixed and excepted debt.</p></div>
       <div class="card"><h3><span class="dot"></span>One-call multi-repo mode</h3><p><code>open_repo</code> switches the active local repository and builds missing graphs through an explicit offline tool call. It also upgrades legacy graphs to edge metadata v2; omit <code>retarget</code> to pin one repository.</p></div>
     </div>
     <div class="langs">
@@ -193,7 +198,7 @@
     <h2>Roadmap</h2>
     <p class="lead">The MCP server is free and MIT — forever. The hosted layer is now an access-controlled preview.</p>
     <div class="road">
-      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server 0.2.9</h3><p>38 available tools over your local code graph; 34 offline tools enabled by default, including health/dependency review, clone families, graph history, exact endpoint tracing, one-call repository switching and bounded LSP precision. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server 0.2.10</h3><p>38 available tools over your local code graph; 34 offline tools enabled by default, including fast repository orientation, Health and dependency review, proof-carrying change verification, clone families, graph history, exact endpoint tracing and architecture ratchets. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
       <div class="step next"><span class="tag">ACCESS-CONTROLLED PREVIEW</span><h3>Architecture workbench</h3><p><a href="https://app.weavatrix.com">app.weavatrix.com</a> is the optional owner-authenticated workbench for source-free evidence, revision history and target-architecture review. Availability and surfaces evolve independently from the public MCP. Sync remains explicit, preview-confirmed and opt-in.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
       <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>

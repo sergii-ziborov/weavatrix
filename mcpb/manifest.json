@@ -2,8 +2,8 @@
   "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.2.9",
-  "description": "Code graph & blast-radius MCP server: change impact, transitive dependents, health audit, clone detection, coverage mapping over any local repository. Local-first.",
+  "version": "0.2.10",
+  "description": "Local repository intelligence MCP: reusable code graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards. Local-first.",
   "long_description": "Weavatrix builds dependency graphs of local repositories (tree-sitter WASM, no native toolchain) and serves 38 MCP tools, including proof-carrying verified_change, health/dependency audit, clone families, graph history/diff, exact endpoint tracing, architecture contracts and cross-repository API tracing. The default offline profile enables 34 local tools and no HTTP tools; pinned, osv, and hosted/full profiles tighten or explicitly expand that boundary. Hosted profiles add a separate local-only preview_sync approval step before any graph upload.",
   "author": {
     "name": "Sergii Ziborov",
