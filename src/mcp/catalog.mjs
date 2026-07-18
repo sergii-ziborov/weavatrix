@@ -169,6 +169,7 @@ export async function loadHotApi(version, capsArg) {
         import(new URL(`./tools-verified-change.mjs${v}`, import.meta.url).href),
     ])
     const raw = capsArg == null ? 'offline' : String(capsArg).trim()
+    const profile = Object.hasOwn(PROFILE_CAPS, raw) ? raw : 'custom'
     const selected = PROFILE_CAPS[raw] || raw.split(',').map((s) => s.trim()).filter(Boolean)
         .flatMap((cap) => cap === 'online' ? ['advisories', 'hosted'] : [cap])
     const caps = new Set(selected)
@@ -178,6 +179,7 @@ export async function loadHotApi(version, capsArg) {
         tools,
         byName: new Map(tools.map((t) => [t.name, t])),
         caps,
+        profile,
         stalenessLine,
         resetStalenessCache,
     }

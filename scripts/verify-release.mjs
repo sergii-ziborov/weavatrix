@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { verifyPackedNpmRuntime } from "./mcp-runtime-smoke.mjs";
 
 const readJson = (path) => JSON.parse(readFileSync(resolve(path), "utf8"));
 const pkg = readJson("package.json");
@@ -82,4 +83,5 @@ if (process.env.GITHUB_REF_TYPE === "tag" && tag !== `v${expected}`) {
   throw new Error(`tag ${tag || "(missing)"} does not match package v${expected}`);
 }
 
-process.stdout.write(`Release metadata is consistent for ${expected}.\n`);
+await verifyPackedNpmRuntime(resolve("."));
+process.stdout.write(`Release metadata and packed MCP runtime are consistent for ${expected}.\n`);

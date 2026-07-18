@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { childProcessEnv } from "../src/child-env.js";
+import { createRuntimeFixture, verifyMcpRuntime } from "./mcp-runtime-smoke.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist-mcpb");
@@ -134,6 +135,21 @@ const supportedGrammars = new Set([
 ]);
 for (const file of readdirSync(grammarDir)) {
   if (file.endsWith(".wasm") && !supportedGrammars.has(file)) unlinkSync(join(grammarDir, file));
+}
+
+// Start the staged portable runtime itself before it is packed. Static manifest/file checks cannot
+// detect a stale catalog, a wrong capability argument, or a client-visible tools/list regression.
+const runtimeSmoke = join(dist, "runtime-smoke");
+try {
+  mkdirSync(runtimeSmoke, { recursive: true });
+  await verifyMcpRuntime({
+    entryPoint: join(stage, "bin", "weavatrix-mcp.mjs"),
+    repoRoot: createRuntimeFixture(runtimeSmoke),
+    graphHome: join(runtimeSmoke, "graphs"),
+    version: JSON.parse(readFileSync(join(stage, "package.json"), "utf8")).version,
+  });
+} finally {
+  rmSync(runtimeSmoke, { recursive: true, force: true });
 }
 
 run(process.execPath, [mcpbCli, "validate", stage]);

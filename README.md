@@ -194,6 +194,13 @@ Advanced registrations may still pass an exact comma-separated capability set:
 a compatibility alias for `advisories,hosted`; new registrations should use the named profiles or
 the narrower capability names.
 
+After an upgrade, reconnect the MCP server or start a new agent task before checking its tool list:
+many clients snapshot `tools/list` and input schemas for the lifetime of one connection. The expected
+counts are 31 for `pinned`, 34 for `offline`, 35 for `osv`, and all 38 for `hosted` / `full`. A custom
+capability list must include `crossrepo` to expose `trace_api_contract`; `online` alone adds only the
+legacy advisory/Hosted groups. `graph_stats` reports the running package version, enabled capabilities
+and registered-tool count so a cached process can be distinguished from the installed package.
+
 Or clone it:
 
 ```sh
@@ -341,6 +348,24 @@ modules and catalog** when those files change — other MCP helpers and analysis
 reconnect. Every MCP response also carries local, transient `_meta["weavatrix/metrics"]` with elapsed
 time, output bytes/token estimate, graph freshness/revision/update and graph-cache status. These
 metrics are not persisted or transmitted by Weavatrix.
+
+### 0.2.13 runtime-integrity and cross-language verification patch
+
+- `verified_change` no longer requires `package.json` when no package tests can run. Python, Go,
+  Java, Rust and other non-Node repositories now receive `NOT_REQUESTED` or `DISABLED` test evidence
+  instead of a false `BLOCKED`; actual package-script execution keeps the same double opt-in and
+  allowlist.
+- Release verification starts the packed npm artifact and portable MCPB stage over stdio. It asserts
+  the exact profile counts and required 38-tool `full` surface, including `trace_endpoint`,
+  `trace_api_contract` and `preview_sync`, so source/package drift cannot publish silently.
+- Runtime diagnostics expose the package version, selected capability groups and registered tool
+  count. The documentation now distinguishes an old client connection from an intentional profile
+  omission and explains that custom capabilities need `crossrepo` for contract tracing.
+- The bundled skill documents practical CLI/worker/event flows, local target-architecture adoption,
+  repository classification, undirected path semantics and the correct release and proof-carrying
+  change recipes without reducing Weavatrix to text search.
+
+Full patch notes: [docs/releases/v0.2.13.md](docs/releases/v0.2.13.md).
 
 ### 0.2.9 correctness, signal, and consent patch
 

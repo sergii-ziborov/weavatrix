@@ -126,10 +126,18 @@ export async function tVerifiedChange(g, args = {}, ctx = {}, tools = {}, permis
     })
     : {model: 'bounded call-argument-to-parameter evidence (not CFG or taint analysis)', status: 'UNAVAILABLE', reason: 'source capability is not enabled', edges: [], unsupportedEdges: 0, capped: false}
   const suggestedTests = targetTests(impact)
-  const checkedTests = validateTestRequests(ctx.repoRoot, args.tests || [])
-  const testProof = phase === 'verify'
-    ? await runAllowedTests(ctx.repoRoot, args.tests || [], {enabled: args.run_tests === true, timeoutMs: args.test_timeout_ms})
-    : {state: checkedTests.ok ? 'PLANNED' : 'BLOCKED', reason: checkedTests.reason, plan: checkedTests.tests || [], results: []}
+  const requestedTests = Array.isArray(args.tests) ? args.tests : []
+  let testProof
+  if (!requestedTests.length) {
+    testProof = {state: 'NOT_REQUESTED', reason: 'no package scripts were requested', plan: [], results: []}
+  } else if (args.run_tests !== true) {
+    testProof = await runAllowedTests(ctx.repoRoot, requestedTests, {enabled: false, timeoutMs: args.test_timeout_ms})
+  } else if (phase === 'verify') {
+    testProof = await runAllowedTests(ctx.repoRoot, requestedTests, {enabled: true, timeoutMs: args.test_timeout_ms})
+  } else {
+    const checkedTests = validateTestRequests(ctx.repoRoot, requestedTests)
+    testProof = {state: checkedTests.ok ? 'PLANNED' : 'BLOCKED', reason: checkedTests.reason, plan: checkedTests.tests || [], results: []}
+  }
   const testCoverageState = testCoverage(testProof, args.tests || [], suggestedTests)
 
   const architectureValue = phase === 'verify'

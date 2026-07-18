@@ -6,6 +6,7 @@ const names = (api) => new Set(api.tools.map((tool) => tool.name));
 
 test("MCP profiles: absent caps use the offline default with explicit local retargeting", async () => {
   const api = await loadHotApi(0, undefined);
+  assert.equal(api.profile, "offline");
   const got = names(api);
   assert.deepEqual([...api.caps], [...DEFAULT_CAPS]);
   assert.equal(api.tools.length, 34);
@@ -57,6 +58,7 @@ test("MCP profiles: osv enables only advisory networking", async () => {
 test("MCP profiles: hosted and full expose the complete catalog", async () => {
   for (const profile of ["hosted", "full"]) {
     const api = await loadHotApi(0, profile);
+    assert.equal(api.profile, profile);
     const got = names(api);
     assert.equal(api.tools.length, 38, profile);
     assert.ok(got.has("refresh_advisories"), profile);
@@ -68,6 +70,7 @@ test("MCP profiles: hosted and full expose the complete catalog", async () => {
 
 test("MCP capabilities: explicit groups select only their tools", async () => {
   const api = await loadHotApi(0, "retarget,online");
+  assert.equal(api.profile, "custom");
   assert.deepEqual(
     [...names(api)].sort(),
     ["list_known_repos", "open_repo", "preview_sync", "pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()

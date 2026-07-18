@@ -16,15 +16,20 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
 (`claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot>`; Codex:
 `codex mcp add weavatrix -- npx -y weavatrix <repoRoot>`), then retry.
 
-If `refresh_advisories`, `preview_sync`, `pull_architecture_contract`, or `sync_graph` is missing, do not diagnose a
-broken installation: network tools are intentionally absent from `offline` and `pinned`.
+First compare the selected profile with the `graph_stats` runtime line. Expected catalogs are 31
+tools for `pinned`, 34 for `offline`, 35 for `osv`, and 38 for `hosted` / `full`. If the running
+version/count differs from the installed package, or local tools such as `trace_endpoint` are missing,
+reconnect/start a new agent task because clients commonly cache `tools/list` for one connection. A
+custom capability list needs `crossrepo` for `trace_api_contract`; legacy `online` adds only
+`advisories,hosted`. Missing HTTP tools are intentional only when the selected profile excludes them.
 
 Profiles use the same npm package and binary:
 
 - `offline` (default): all local analysis and explicit `open_repo`; no HTTP tools.
 - `pinned`: local analysis with no `open_repo`, no global/cross-repository graph access, and no HTTP tools.
 - `osv`: `offline` plus explicit `refresh_advisories`.
-- `hosted` / `full`: `osv` plus local-only `preview_sync`, `pull_architecture_contract` and `sync_graph`.
+- `hosted` / `full`: `osv` plus local-only `preview_sync` and the explicitly invoked network tools
+  `pull_architecture_contract` and confirmed `sync_graph`.
 
 The legacy `online` capability remains a compatibility alias for `advisories,hosted`; prefer the
 named profiles for new registrations.
@@ -45,7 +50,9 @@ projection; expand only when the answer requires it.
 - **Find high-coupling hubs**: `god_nodes`; repeated call sites do not inflate unique connectivity.
 - **Inspect one graph entity**: `get_node`; pass an exact node ID when labels are ambiguous.
 - **Inspect direct one-hop relations**: `get_neighbors`; do not confuse it with transitive impact.
-- **Prove a path between two concepts**: `shortest_path`.
+- **Find a connectivity path between two concepts**: `shortest_path`. It traverses the graph as
+  undirected reachability, so it is not proof of call/dependency direction; confirm direction with
+  `get_neighbors` and `read_source`.
 - **Explore an unknown entry point or architectural question**: `query_graph`; pin `seed_files` when
   known, and keep its broad result as orientation evidence.
 - **Inspect one exact symbol deeply**: `context_bundle` for the bounded edit workset;
@@ -63,15 +70,17 @@ projection; expand only when the answer requires it.
   a backend change may affect registered clients, and inspect each graph reconciliation state before
   using the verdict.
 - **Measure one symbol's transitive blast radius**: `get_dependents`.
-- **Review the current branch, diff, or external patch**: `change_impact`; it distinguishes additive
-  exports from signature/body/removal risk and separates runtime/type-only radius plus available
-  measured coverage or explicitly static reachability.
+- **Review the current branch, diff, or external patch**: `change_impact`; its explicit baseline
+  parameter is `base`, not the `base_ref` used by audit/diff/verification tools. It distinguishes
+  additive exports from signature/body/removal risk and separates runtime/type-only radius plus
+  available measured coverage or explicitly static reachability.
 - **Compare structural graph revisions**: `graph_diff base_ref=<merge-base>` for module edges, cycles,
   orphans and lost callers; without `base_ref`, compare the last rebuild snapshots.
 - **Use behavioral history**: `git_history` for churn x connectivity, hidden co-change and expected
   test/source coupling from bounded local Git numstat evidence.
-- **Plan and verify a serious change or pre-commit gate**: `verified_change phase=plan` -> edit ->
-  `verified_change phase=verify base_ref=<same-ref>`. It composes exact context, impact, graph,
+- **Plan and verify a serious change or pre-commit gate**:
+  `verified_change task=<same-task> phase=plan base_ref=<merge-base>` -> edit ->
+  `verified_change task=<same-task> phase=verify base_ref=<same-ref>`. It composes exact context, impact, graph,
   architecture, duplicate, optional API and test proof into one PASS/BLOCKED/UNKNOWN envelope. It is
   a proof layer around an agent's edit, not a source editor or hidden auto-fix.
 
@@ -101,7 +110,8 @@ projection; expand only when the answer requires it.
 - **Select rules before editing**: `prepare_change`; **enforce the ratchet after editing**:
   `verify_architecture`.
 - **Understand or request an exception**: `explain_architecture_violation` ->
-  `propose_architecture_exception`; proposals never mutate policy automatically.
+  `propose_architecture_exception`; proposals never mutate policy automatically. After human approval,
+  the owner must add the returned proposal to the local contract's `exceptions` or approve it in Hosted.
 - **Pull an owner-approved Hosted target**: `pull_architecture_contract` only in an explicitly enabled
   Hosted profile.
 - **Review exactly what Hosted sync would send**: `preview_sync`; only an approved
@@ -195,17 +205,19 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
 
 ## Recipes
 
-- **Proof-carrying refactor**: `verified_change task="..." phase=plan base_ref=<merge-base>` -> edit ->
-  `verified_change task="..." phase=verify base_ref=<same-ref> tests=[{"script":"test","args":[...]}]`.
+- **Proof-carrying refactor**: `verified_change task=<same-task> phase=plan base_ref=<merge-base>` -> edit ->
+  `verified_change task=<same-task> phase=verify base_ref=<same-ref> tests=[{"script":"test","args":[...]}]`.
+  Repeat `task` on both calls; it is required and is not retained between invocations.
   Add `run_tests:true` only when test execution was authorized. `BLOCKED` means an evidenced ratchet
   or test failure; `UNKNOWN` means at least one required proof is incomplete.
 
 - **Orient in the configured repo**: `module_map` → `list_communities` → `god_nodes`. Hub ranking
   is production-only by default; use `include_classified:true` only when tests/generated/build
   surfaces are deliberately part of the question.
-- **Refactor safety for one symbol**: `inspect_symbol` → `context_bundle` → `get_dependents` →
+- **Refactor safety for one symbol**: `context_bundle` → optional `inspect_symbol` when raw LSP
+  occurrences, ambiguity details or the larger source window are needed → `get_dependents` →
   `coverage_map` (low coverage × many dependents ⇒ write tests first) → edit →
-  `verified_change phase=verify base_ref=<merge-base>`.
+  `verified_change task=<task> phase=verify base_ref=<merge-base>`.
 - **Performance review**: `hot_path_review` → inspect its local evidence with `read_source` → use
   `get_dependents` for change risk → confirm with the repository's profiler/benchmark before editing.
 - **Pre-PR review of your current changes**: `change_impact` (auto merge-base; includes uncommitted
@@ -238,6 +250,10 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
 - **API inventory**: `list_endpoints` (including mount provenance, Next.js App Router, Rust axum and
   actix-web). When one exact route is known, use `trace_endpoint` for its composed mount chain,
   handler and bounded production call graph instead of broad natural-language traversal.
+- **CLI, worker, queue, cron or event flow**: locate the manifest/registration literal with
+  `search_code`, then pin the discovered entry file with `query_graph seed_files=[...]`; use
+  `context_bundle` on its exact handler plus `get_neighbors` / `get_dependents`, and confirm the
+  registration and call sites with `read_source`. Do not force a non-HTTP flow through endpoint tools.
 - **Cross-repository API impact**: ensure both repositories are in `list_known_repos`, then call
   `trace_api_contract backend=<uuid-or-label> clients=[<uuid-or-label>]`; narrow with `method`, `path`,
   or backend `changed_files`. `path` may be a segment-aligned fragment (`/query` can select
@@ -248,8 +264,9 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
   confidence; only an unambiguously resolved handler node can suppress a dead-method candidate.
   `POSSIBLE_EXTERNAL_USE`, `UNKNOWN`, and remaining unresolved/dynamic URLs are incomplete evidence,
   never proof that a method is dead.
-- **Release regression gate**: for a Weavatrix source checkout, use `npm test` for the quick
-  six-language golden corpus and `npm run benchmark` before release for the real MCP
+- **Release regression gate**: for a Weavatrix source checkout, use `npm test` for the full
+  unit/integration suite, `npm run benchmark:quick` for the quick six-language golden corpus, and
+  `npm run benchmark` before release for the golden corpus plus the real MCP
   `full -> incremental -> none -> reconnect/none` lifecycle, bounded output and active-target checks.
   Use `npm run benchmark:real` for available manifest repositories and
   `npm run benchmark:real:release` only when all six source checkouts are present; `MISSING`,
@@ -259,16 +276,25 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
 - **Target architecture before editing**: `get_architecture_contract` → `prepare_change` with the
   intended files → edit and rebuild → `verify_architecture`. A missing contract returns a starter
   proposal from `get_architecture_contract output_format:"json"`, not an automatically approved
-  architecture. Without a contract, `prepare_change` still returns provisional no-regression
-  budgets, but they are guidance rather than enforceable policy. Pull an owner-approved hosted
-  contract only when the user selected `hosted` and explicitly asks for it.
+  architecture. For offline adoption, have the owner review/edit `starterContract`, save it as
+  `.weavatrix/architecture.json`, and rerun the lookup. To establish a ratchet over accepted current
+  debt, run `verify_architecture output_format:"json"`; only after explicit owner approval, copy the
+  accepted `verification.new[*].fingerprint` values into `ratchet.baseline.fingerprints`, save, and
+  verify again so accepted debt is `existing` while later debt is `new`. The v1 verifier classifies
+  ratchet debt by fingerprints; `ratchet.baseline.metrics` is metadata, not a replacement. An approved local exception
+  is applied by adding the exact returned `proposal` to `exceptions`; rerun verification afterward.
+  Without a contract, `prepare_change` still returns provisional no-regression budgets, but they are
+  guidance rather than enforceable policy. Pull an owner-approved hosted contract only when the user
+  selected `hosted` and explicitly asks for it. No Weavatrix tool silently writes either policy.
 - **Behavioral architecture**: `git_history` ranks churn × connectivity hotspots and hidden
   co-change coupling from bounded local numstat history. Always set `top_n`; it is enforced across
   every returned structured collection and JSON reports per-collection truncation. Use it as review
   evidence, not proof that two files must be merged.
 - **Machine output**: keep the default `output_format:"text"` for concise agent conversations; opt
   into `output_format:"json"` only when a workflow consumes the full `weavatrix.tool.v1` envelope.
-- **Find code**: `search_code` (regex + glob) → `get_node` → `read_source`.
+- **Find code**: `search_code` (regex + glob) →
+  `read_source path=<match-path> start_line=<match-line>`; add `get_node` / `get_neighbors` only after
+  identifying an exact graph symbol.
 - **Another repo**: `list_known_repos` → `open_repo <path>`
   (builds or upgrades the graph when needed; `build:false` probes without building).
 
@@ -276,9 +302,29 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
 
 Weavatrix understands nearest workspace manifests, nested `tsconfig`/`jsconfig` aliases,
 framework-owned runtime peers such as Next.js + `react-dom`, generated NAPI-RS platform loaders,
-and Next.js App Router route exports. For project-specific entry points, reusable template catalogs,
-or Python dependencies supplied by an external runtime, add `.weavatrix-deps.json` at the repository
-root:
+and Next.js App Router route exports. Use repository-root `.weavatrix.json` to correct ambiguous
+production classification without deleting graph evidence:
+
+```json
+{
+  "classify": {
+    "generated": ["src/generated/**"],
+    "test": ["qa/**"],
+    "product": ["benchmarks/core/**"]
+  },
+  "exclude": ["resources/snapshots/**"]
+}
+```
+
+Use `generated` / `test` (or `e2e`, `mock`, `story`, `docs`, `benchmark`, `temp`) for non-production
+code, top-level `exclude` for resource/catalog roots that should stay visible in the graph but not
+drive production-first Health/query ranking, and `product` only to opt a verified benchmark/temp path
+back into production review. `product` does not override an explicit generated/test classification or
+`exclude`. Use `.weavatrixignore` instead only when a path must be removed consistently from graph,
+audit and duplicate scans.
+
+For project-specific entry points, reusable template catalogs, or Python dependencies supplied by an
+external runtime, add `.weavatrix-deps.json` at the repository root:
 
 ```json
 {

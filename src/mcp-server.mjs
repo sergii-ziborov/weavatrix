@@ -85,11 +85,21 @@ function hotVersion(hotFiles) {
 async function main() {
     let catalog = await loadCatalog()
     let api = await catalog.loadHotApi(0, CAPS_ARG)
+    const runtimeInfo = () => ({
+        version: PKG_VERSION,
+        profile: api.profile || 'custom',
+        capabilities: [...api.caps],
+        toolCount: api.tools.length,
+    })
+    const runtimeInstructions = () => {
+        const runtime = runtimeInfo()
+        return `Weavatrix ${runtime.version}; profile=${runtime.profile}; tools=${runtime.toolCount}; capabilities=${runtime.capabilities.join(',') || '(none)'}. If this differs from the client-visible tool list, reconnect the MCP client to discard its cached schema.`
+    }
     let graph = null
     let graphError = null
     // ctx owns the CURRENT target: rebuild_graph reloads it, open_repo retargets graphPath/repoRoot
     // at runtime. loadInto always reads ctx.graphPath so both paths share one loader.
-    const ctx = {graphPath: GRAPH_PATH, repoRoot: REPO_ROOT, reload: null}
+    const ctx = {graphPath: GRAPH_PATH, repoRoot: REPO_ROOT, reload: null, runtime: runtimeInfo()}
     const loadInto = () => { graph = loadGraph(ctx.graphPath, {repoRoot: ctx.repoRoot}); graphError = null; return graph }
     ctx.reload = () => { api.resetStalenessCache(); try { return loadInto() } catch (e) { graphError = e.message; return null } }
     try {
@@ -229,6 +239,7 @@ async function main() {
             const nextApi = await nextCatalog.loadHotApi(v, CAPS_ARG)
             catalog = nextCatalog
             api = nextApi
+            ctx.runtime = runtimeInfo()
             loadedVersion = v
             log(`hot-reloaded tool implementations from changed source (${api.tools.length} tools)`)
             send({jsonrpc: '2.0', method: 'notifications/tools/list_changed'})
@@ -247,14 +258,17 @@ async function main() {
         }
         if (method === 'initialize') {
             if (params?.protocolVersion) protocolVersion = String(params.protocolVersion)
-            return reply(id, {protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo: SERVER_INFO})
+            return reply(id, {protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo: SERVER_INFO, instructions: runtimeInstructions()})
         }
         if (method === 'notifications/initialized' || method === 'initialized') return
         if (method === 'ping') return reply(id, {})
         if (method === 'tools/list') {
             await maybeHotReload()
             if (shuttingDown) return
-            return reply(id, {tools: api.tools.map(({name, description, inputSchema, outputSchema}) => ({name, description, inputSchema, outputSchema}))})
+            return reply(id, {
+                tools: api.tools.map(({name, description, inputSchema, outputSchema}) => ({name, description, inputSchema, outputSchema})),
+                _meta: {'weavatrix/runtime': runtimeInfo()},
+            })
         }
         if (method === 'tools/call') {
             await maybeHotReload()

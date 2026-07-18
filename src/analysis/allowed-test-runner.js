@@ -19,29 +19,40 @@ function packageManager(repoRoot) {
   return 'npm'
 }
 
-export function validateTestRequests(repoRoot, requests = []) {
-  const manifest = manifestAt(repoRoot)
-  if (!manifest) return {ok: false, reason: 'package.json is missing or unreadable', tests: []}
+function normalizeTestRequests(requests = []) {
   const tests = []
-  for (const request of requests.slice(0, 5)) {
+  for (const request of (Array.isArray(requests) ? requests : []).slice(0, 5)) {
     const script = String(request?.script || '')
     const args = Array.isArray(request?.args) ? request.args.slice(0, 40).map(String) : []
     if (!SAFE_SCRIPT.test(script)) return {ok: false, reason: `script ${script || '(missing)'} is outside the test/check/verify allowlist`, tests}
-    if (!Object.hasOwn(manifest.scripts || {}, script)) return {ok: false, reason: `package.json has no script named ${script}`, tests}
     if (args.some((arg) => arg.length > 300 || UNSAFE_SHELL_ARG.test(arg))) return {ok: false, reason: `script ${script} has an invalid or shell-sensitive argument`, tests}
     tests.push({script, args})
   }
+  return {ok: true, tests}
+}
+
+export function validateTestRequests(repoRoot, requests = []) {
+  const normalized = normalizeTestRequests(requests)
+  if (!normalized.ok || !normalized.tests.length) return normalized
+  const manifest = manifestAt(repoRoot)
+  if (!manifest) return {ok: false, reason: 'package.json is missing or unreadable', tests: []}
+  for (const test of normalized.tests) {
+    if (!Object.hasOwn(manifest.scripts || {}, test.script)) return {ok: false, reason: `package.json has no script named ${test.script}`, tests: []}
+  }
+  const tests = normalized.tests
   return {ok: true, tests, packageManager: packageManager(repoRoot)}
 }
 
 export async function runAllowedTests(repoRoot, requests = [], {enabled = false, timeoutMs = 60_000} = {}) {
-  const checked = validateTestRequests(repoRoot, requests)
-  if (!checked.ok) return {state: 'BLOCKED', reason: checked.reason, results: []}
-  if (!checked.tests.length) return {state: 'NOT_REQUESTED', reason: 'no package scripts were requested', results: []}
+  const normalized = normalizeTestRequests(requests)
+  if (!normalized.ok) return {state: 'BLOCKED', reason: normalized.reason, results: []}
+  if (!normalized.tests.length) return {state: 'NOT_REQUESTED', reason: 'no package scripts were requested', plan: [], results: []}
   if (!enabled || process.env.WEAVATRIX_ALLOW_TEST_RUNS !== '1') return {
     state: 'DISABLED', reason: 'set WEAVATRIX_ALLOW_TEST_RUNS=1 and pass run_tests:true to execute allowlisted package scripts',
-    plan: checked.tests, results: [],
+    plan: normalized.tests, results: [],
   }
+  const checked = validateTestRequests(repoRoot, normalized.tests)
+  if (!checked.ok) return {state: 'BLOCKED', reason: checked.reason, results: []}
   const results = []
   const timeout = Math.max(1000, Math.min(300_000, Number(timeoutMs) || 60_000))
   for (const test of checked.tests) {

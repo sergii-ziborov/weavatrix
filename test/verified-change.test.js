@@ -95,6 +95,79 @@ test('targeted test runner rejects arbitrary package scripts and stays disabled 
   }
 })
 
+test('test evidence does not require package.json when nothing can run', async (t) => {
+  const pythonRoot = mkdtempSync(join(tmpdir(), 'weavatrix-verified-change-python-'))
+  t.after(() => rmSync(pythonRoot, {recursive: true, force: true}))
+  writeFileSync(join(pythonRoot, 'app.py'), 'def greet(name):\n    return f"Hello {name}"\n')
+
+  assert.deepEqual(validateTestRequests(pythonRoot, []), {ok: true, tests: []})
+  const notRequested = await runAllowedTests(pythonRoot, [], {enabled: false})
+  assert.equal(notRequested.state, 'NOT_REQUESTED')
+  assert.doesNotMatch(notRequested.reason, /package\.json/i)
+
+  const disabled = await runAllowedTests(pythonRoot, [{script: 'test'}], {enabled: false})
+  assert.equal(disabled.state, 'DISABLED')
+  assert.deepEqual(disabled.plan, [{script: 'test', args: []}])
+  assert.doesNotMatch(disabled.reason, /package\.json/i)
+})
+
+test('verified_change plan and verify keep Python-only repositories out of package-script blockers', async (t) => {
+  const pythonRoot = mkdtempSync(join(tmpdir(), 'weavatrix-verified-change-python-repo-'))
+  t.after(() => rmSync(pythonRoot, {recursive: true, force: true}))
+  writeFileSync(join(pythonRoot, 'app.py'), 'def greet(name):\n    return f"Hello {name}"\n')
+  const pythonGraphPath = join(pythonRoot, 'graph.json')
+  writeFileSync(pythonGraphPath, JSON.stringify({
+    graphBuildMode: 'full',
+    nodes: [
+      {id: 'app.py', label: 'app.py', source_file: 'app.py'},
+      {id: 'app.py#greet@1', label: 'greet()', source_file: 'app.py', source_location: 'L1-L2', symbol_kind: 'function'},
+    ],
+    links: [{source: 'app.py', target: 'app.py#greet@1', relation: 'contains'}],
+  }))
+  const pythonGraph = loadGraph(pythonGraphPath, {repoRoot: pythonRoot})
+  const pythonTools = {
+    impact: async () => toolResult('impact', {
+      status: 'COMPLETE', verdict: 'LOW', changes: [{path: 'app.py'}],
+      seeds: {ids: ['app.py#greet@1'], unmappedIds: []}, blastRadius: {impacted: 0, nodes: []},
+    }),
+    context: async () => null,
+    inspect: async () => null,
+    prepareChange: () => toolResult('architecture', {state: 'READY'}),
+    verifyArchitecture: () => toolResult('architecture', {state: 'PASS', verification: {status: 'PASS', new: []}}),
+    traceApi: async () => null,
+  }
+  const context = {repoRoot: pythonRoot, graphPath: pythonGraphPath}
+  const permissions = {source: false, health: false, crossrepo: false}
+
+  const plan = await tVerifiedChange(pythonGraph, {
+    task: 'change greet behavior', phase: 'plan', files: ['app.py'], run_tests: false,
+  }, context, pythonTools, permissions)
+  assert.equal(plan.result.tests.state, 'NOT_REQUESTED')
+  assert.ok(!plan.result.blockers.some((item) => /package|test/i.test(item)))
+
+  const disabledPlan = await tVerifiedChange(pythonGraph, {
+    task: 'change greet behavior', phase: 'plan', files: ['app.py'], tests: [{script: 'test'}], run_tests: false,
+  }, context, pythonTools, permissions)
+  assert.equal(disabledPlan.result.tests.state, 'DISABLED')
+  assert.ok(!disabledPlan.result.blockers.some((item) => /package|test/i.test(item)))
+
+  const verifyNotRequested = await tVerifiedChange(pythonGraph, {
+    task: 'change greet behavior', phase: 'verify', files: ['app.py'], run_tests: false,
+    duplicate_ratchet: false,
+  }, context, pythonTools, permissions)
+  assert.equal(verifyNotRequested.result.tests.state, 'NOT_REQUESTED')
+  assert.notEqual(verifyNotRequested.result.verdict, 'BLOCKED')
+  assert.ok(!verifyNotRequested.result.blockers.some((item) => /package|test/i.test(item)))
+
+  const verify = await tVerifiedChange(pythonGraph, {
+    task: 'change greet behavior', phase: 'verify', files: ['app.py'], tests: [{script: 'test'}],
+    run_tests: false, duplicate_ratchet: false,
+  }, context, pythonTools, permissions)
+  assert.equal(verify.result.tests.state, 'DISABLED')
+  assert.notEqual(verify.result.verdict, 'BLOCKED')
+  assert.ok(!verify.result.blockers.some((item) => /package|test/i.test(item)))
+})
+
 test('verified_change plan returns one proof envelope instead of requiring manual orchestration', async () => {
   const tools = {
     impact: async () => toolResult('impact', {

@@ -12,8 +12,8 @@ import {PRECISION_OVERLAY_V} from '../src/precision/lsp-overlay.js'
 const SERVER = fileURLToPath(new URL('../src/mcp-server.mjs', import.meta.url))
 const PROJECT_ROOT = dirname(dirname(SERVER))
 
-function startServer(graphPath, repoRoot, graphHome, extraEnv = {}) {
-    const child = spawn(process.execPath, [SERVER, graphPath, repoRoot], {
+function startServer(graphPath, repoRoot, graphHome, extraEnv = {}, capsArg) {
+    const child = spawn(process.execPath, [SERVER, graphPath, repoRoot, ...(capsArg == null ? [] : [capsArg])], {
         cwd: PROJECT_ROOT,
         env: {...process.env, WEAVATRIX_GRAPH_HOME: graphHome, WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS: '0', ...extraEnv},
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -102,6 +102,38 @@ function startServer(graphPath, repoRoot, graphHome, extraEnv = {}) {
     }
     return {request, notify, endInput, closeOutput, waitForExit, stop, stderr: () => stderr}
 }
+
+test('MCP stdio identifies its runtime profile and exact registered catalog', {timeout: 120_000}, async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-runtime-profile-'))
+    const repo = join(parent, 'repo')
+    const graphPath = join(parent, 'graph', 'graph.json')
+    mkdirSync(join(repo, 'src'), {recursive: true})
+    writeFileSync(join(repo, 'src', 'main.js'), 'export const value = 1\n')
+    const server = startServer(graphPath, repo, join(parent, 'graph-home'), {WEAVATRIX_PRECISION: 'off'}, 'full')
+    try {
+        const initialized = await server.request('initialize', {
+            protocolVersion: '2024-11-05', capabilities: {},
+            clientInfo: {name: 'weavatrix-test', version: '1.0.0'},
+        })
+        assert.match(initialized.instructions, new RegExp(`^Weavatrix ${initialized.serverInfo.version}; profile=full; tools=38;`))
+        const listed = await server.request('tools/list')
+        assert.equal(listed.tools.length, 38)
+        assert.deepEqual(listed._meta['weavatrix/runtime'], {
+            version: initialized.serverInfo.version,
+            profile: 'full',
+            capabilities: ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo', 'advisories', 'hosted'],
+            toolCount: 38,
+        })
+        for (const name of ['trace_endpoint', 'trace_api_contract', 'preview_sync']) {
+            assert.ok(listed.tools.some((tool) => tool.name === name), name)
+        }
+        const stats = await server.request('tools/call', {name: 'graph_stats', arguments: {}}, 90_000)
+        assert.match(stats.content[0].text, /profile full; 38 registered tools/)
+    } finally {
+        await server.stop()
+        rmSync(parent, {recursive: true, force: true})
+    }
+})
 
 test('MCP startup precision setting applies before the first build and legacy overlays refresh strictly', {timeout: 120_000}, async () => {
     const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-precision-default-'))

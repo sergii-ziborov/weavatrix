@@ -40,6 +40,7 @@ export function tGraphStats(g, ctx) {
     const precision = g.precision || {state: 'UNAVAILABLE', verifiedEdges: 0, candidates: 0, queried: 0, reason: 'no revision-matched precision overlay'}
     return [
         `Graph summary`,
+        ctx?.runtime ? `- Weavatrix runtime: v${ctx.runtime.version}; profile ${ctx.runtime.profile}; ${ctx.runtime.toolCount} registered tools; capabilities: ${ctx.runtime.capabilities.join(',') || '(none)'}` : null,
         ctx?.repoRoot ? `- Repo: ${ctx.repoRoot}` : null,
         ctx?.graphPath ? `- Graph: ${ctx.graphPath}` : null,
         `- Build mode: ${g.graphBuildMode || 'full'}`,
