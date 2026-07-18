@@ -90,6 +90,41 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); flex: none; }
   .dot.t { background: var(--accent2); box-shadow: 0 0 10px var(--accent2); }
 
+  .proof-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 4px 0 28px; }
+  .proof-flow li { min-width: 0; position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 16px 14px 14px; background: #101426; }
+  .proof-flow li::before { content: ""; display: block; width: 7px; height: 7px; margin-bottom: 10px; border-radius: 50%; background: var(--accent); animation: proof-pulse 5s ease-in-out infinite; }
+  .proof-flow li:nth-child(2)::before { animation-delay: 1s; }
+  .proof-flow li:nth-child(3)::before { animation-delay: 2s; }
+  .proof-flow li:nth-child(4)::before { animation-delay: 3s; }
+  .proof-flow li:nth-child(5)::before { animation-delay: 4s; background: var(--accent2); }
+  .proof-flow li:not(:last-child)::after { content: "→"; position: absolute; z-index: 2; right: -12px; top: 31px; color: #696f9e; font: 15px var(--mono); }
+  .proof-flow b { display: block; font: 12px var(--mono); color: var(--text); }
+  .proof-flow span { display: block; margin-top: 5px; color: var(--muted); font-size: 12.5px; }
+  @keyframes proof-pulse { 0%, 15%, 100% { opacity: .32; box-shadow: 0 0 0 transparent; } 7% { opacity: 1; box-shadow: 0 0 14px var(--accent); } }
+
+  .scenario-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .scenario { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .scenario-head { padding: 18px 20px 15px; border-bottom: 1px solid var(--line); }
+  .scenario-head small { color: var(--accent2); font: 10.5px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+  .scenario-head h3 { margin-top: 5px; font-size: 16px; }
+  .scenario pre { min-height: 205px; padding: 17px 20px 19px; overflow-x: auto; color: #bdc1db; background: #0d1020; font: 12.5px/1.65 var(--mono); white-space: pre-wrap; }
+  .scenario .prompt { color: #b7aaff; }
+  .scenario .result { color: var(--accent2); }
+
+  .bench-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  .metric { border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: var(--panel); }
+  .metric strong { display: block; color: var(--accent2); font: 22px var(--mono); }
+  .metric span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+  .bench-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+  .bench-table { width: 100%; min-width: 720px; border-collapse: collapse; background: #101426; font-size: 13px; }
+  .bench-table th, .bench-table td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: right; }
+  .bench-table th:first-child, .bench-table td:first-child { text-align: left; }
+  .bench-table th { color: #858caf; font: 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .bench-table td { color: #c7cae0; font-family: var(--mono); }
+  .bench-table tr:last-child td { border-bottom: 0; }
+  .pass { color: var(--accent2); }
+  .method-note { margin-top: 16px; color: var(--muted); font-size: 13px; }
+
   .langs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
   .langs span { font: 12.5px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; }
 
@@ -103,7 +138,15 @@
   .step p { color: var(--muted); font-size: 14.5px; }
 
   footer { margin-top: 80px; border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 13.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
-  @media (max-width: 640px) { nav { display: none; } .cta2 { display: block; margin: 12px 0 0; } }
+  @media (max-width: 760px) {
+    nav { display: none; }
+    .cta2 { display: block; margin: 12px 0 0; }
+    .proof-flow { grid-template-columns: 1fr; }
+    .proof-flow li:not(:last-child)::after { content: "↓"; right: 18px; top: auto; bottom: -14px; }
+    .scenario-grid { grid-template-columns: 1fr; }
+    .bench-summary { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .proof-flow li::before { animation: none; opacity: 1; } }
 </style>
 </head>
 <body>
@@ -115,6 +158,8 @@
     </div>
     <nav>
       <a href="#features">Tools</a>
+      <a href="#examples">Examples</a>
+      <a href="#benchmarks">Benchmarks</a>
       <a href="#privacy">Privacy</a>
       <a href="#roadmap">Roadmap</a>
       <a href="https://github.com/sergii-ziborov/weavatrix">GitHub</a>
@@ -171,6 +216,109 @@
     <div class="langs">
       <span>JavaScript</span><span>TypeScript</span><span>TSX</span><span>Python</span><span>Go</span><span>Java</span><span>C#</span><span>Rust</span><span>HTML</span><span>CSS</span>
     </div>
+  </section>
+
+  <section id="examples">
+    <h2>What the agent actually gets</h2>
+    <p class="lead">Four real task shapes from local dogfooding. The output stays bounded, exposes
+      uncertainty, and carries the same graph evidence from orientation through verification.</p>
+
+    <ol class="proof-flow" aria-label="Proof-carrying change pipeline">
+      <li><b>Graph</b><span>modules, symbols, routes</span></li>
+      <li><b>Context</b><span>exact source workset</span></li>
+      <li><b>Impact</b><span>runtime and type radius</span></li>
+      <li><b>Ratchets</b><span>Health, clones, architecture</span></li>
+      <li><b>Verdict</b><span>PASS, BLOCKED or UNKNOWN</span></li>
+    </ol>
+
+    <div class="scenario-grid">
+      <article class="scenario">
+        <div class="scenario-head"><small>Unfamiliar backend</small><h3>From 1,076 files to one request flow</h3></div>
+        <pre><span class="prompt">› Where does attack mitigation start?</span>
+
+module_map       → product territories
+list_endpoints   → 462 observed routes
+trace_endpoint  → mount → controller
+                  → service → task/messaging
+
+<span class="result">Result: one bounded call path with
+call-site excerpts, not a repository dump.</span></pre>
+      </article>
+
+      <article class="scenario">
+        <div class="scenario-head"><small>Cross-repository API</small><h3>Prove backend use outside its own graph</h3></div>
+        <pre><span class="prompt">› Can this handler be removed?</span>
+
+trace_api_contract
+  3 registered repository graphs
+  163 backend endpoints observed
+  267 client callsites joined
+
+<span class="result">NOT_DEAD_EXTERNAL_USE</span>
+dynamic URLs remain POSSIBLE / UNKNOWN</pre>
+      </article>
+
+      <article class="scenario">
+        <div class="scenario-head"><small>Branch review</small><h3>Classify a method change before editing blind</h3></div>
+        <pre><span class="prompt">› What breaks in this BranchPilot diff?</span>
+
+change_impact
+  removed methods / signatures separated
+  additive exports kept low-risk
+  98 impacted nodes observed
+  runtime vs type-only radius retained
+
+<span class="result">Then: context_bundle → edit →
+verified_change phase=verify</span></pre>
+      </article>
+
+      <article class="scenario">
+        <div class="scenario-head"><small>Health and repetition</small><h3>Turn a large repository into a review queue</h3></div>
+        <pre><span class="prompt">› Show actionable debt, not boilerplate.</span>
+
+run_audit
+  missing direct dependency: mongodb
+  runtime cycle evidence + lockfile drift
+find_duplicates
+  repeated nudge() family observed
+  router boilerplate suppressed by default
+
+<span class="result">Every item stays review-required;
+no auto-delete or cosmetic green score.</span></pre>
+      </article>
+    </div>
+  </section>
+
+  <section id="benchmarks">
+    <h2>Reproducible gates, then real repositories</h2>
+    <p class="lead">The fixture suite checks exact symbols, relations, provenance, endpoint and
+      cross-repository behavior. A separate revision-pinned run guards six available application
+      snapshots against unexplained graph regressions.</p>
+
+    <div class="bench-summary">
+      <div class="metric"><strong>6 / 6</strong><span>language fixtures PASS</span></div>
+      <div class="metric"><strong>1.31 s</strong><span>total fixture cold build</span></div>
+      <div class="metric"><strong>431.79 ms</strong><span>cross-repo fixture cold run</span></div>
+      <div class="metric"><strong>6 / 6</strong><span>real baselines PASS</span></div>
+    </div>
+
+    <div class="bench-table-wrap">
+      <table class="bench-table">
+        <thead><tr><th>Snapshot</th><th>Files</th><th>Nodes</th><th>Edges</th><th>Cold graph</th><th>Gate</th></tr></thead>
+        <tbody>
+          <tr><td>TypeScript application</td><td>1,703</td><td>8,192</td><td>21,814</td><td>9.44 s</td><td><span class="pass">PASS</span></td></tr>
+          <tr><td>JavaScript service</td><td>360</td><td>2,896</td><td>8,876</td><td>2.42 s</td><td><span class="pass">PASS</span></td></tr>
+          <tr><td>Python platform</td><td>1,670</td><td>7,381</td><td>23,441</td><td>4.31 s</td><td><span class="pass">PASS</span></td></tr>
+          <tr><td>Go service</td><td>30</td><td>473</td><td>1,165</td><td>0.22 s</td><td><span class="pass">PASS</span></td></tr>
+          <tr><td>Java service</td><td>789</td><td>7,143</td><td>23,708</td><td>2.61 s</td><td><span class="pass">PASS</span></td></tr>
+          <tr><td>Rust system</td><td>503</td><td>2,376</td><td>4,732</td><td>2.57 s</td><td><span class="pass">PASS</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="method-note">Measured locally on Windows x64 with Node 24.15.0 on July 18, 2026.
+      Cold parser-graph times are machine- and snapshot-dependent; this is a Weavatrix regression
+      gate, not a claimed competitor benchmark. Reproduce with <code>npm run benchmark</code> and
+      <code>npm run benchmark:real</code>.</p>
   </section>
 
   <section id="privacy">

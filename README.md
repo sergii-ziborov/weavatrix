@@ -49,6 +49,100 @@ Weavatrix answers questions a text index cannot:
   impact, bounded call-argument flow, Git graph drift, architecture/duplicate/API ratchets, and
   affected-test evidence.
 
+## Worked examples
+
+These are representative sequences from local dogfooding, not fabricated chat transcripts. Counts
+describe the observed repository snapshots and will move with the code.
+
+### Understand an unfamiliar backend without reading it linearly
+
+```text
+Question: Where does an attack-mitigation request go?
+
+module_map
+  -> production territories and strongest module dependencies
+list_endpoints
+  -> 462 routes observed in a 1,076-file backend snapshot
+trace_endpoint
+  -> composed router mount -> controller -> service -> task/messaging
+  -> bounded call-site excerpts around decisive edges
+```
+
+Use `module_map` for the initial application shape, then switch to the exact endpoint or symbol. Do
+not lead with a broad natural-language `query_graph` when the route or identifier is already known.
+
+### Check whether a backend handler is used by another repository
+
+```text
+Question: Can this handler be removed?
+
+list_known_repos -> trace_api_contract
+  backend endpoints observed: 163
+  client callsites joined:     267 across two registered clients
+  handler liveness:            NOT_DEAD_EXTERNAL_USE
+  unresolved dynamic URLs:     POSSIBLE_EXTERNAL_USE / UNKNOWN
+```
+
+This joins separately cached local graphs; it does not upload source. Medium/high-confidence
+external use can keep a handler out of the dead-code queue, while dynamic or ambiguous calls remain
+explicitly incomplete evidence.
+
+### Change one method with an evidence trail
+
+```text
+inspect_symbol -> context_bundle -> get_dependents -> coverage_map
+  -> edit the bounded workset
+  -> verified_change phase=verify base_ref=<merge-base>
+```
+
+On an observed BranchPilot diff, `change_impact` separated removed methods/signatures from additive
+exports and ranked a 98-node radius without collapsing runtime and type-only coupling. If measured
+coverage, the architecture contract, or requested tests are missing, the final state is `UNKNOWN`,
+not a cosmetic pass.
+
+### Review Health and clone debt without auto-deleting code
+
+```text
+run_audit category=dependencies debt=all
+  -> missing direct dependency (observed: mongodb)
+  -> lockfile drift and unresolved imports
+run_audit debt=all
+  -> runtime cycles separated from compile/type-only coupling
+find_duplicates
+  -> clone families and same-name divergence
+  -> homogeneous router boilerplate suppressed by default
+```
+
+Every dead-code, orphan, dependency and duplicate item remains review evidence. Confirm framework
+conventions and source use before editing; Weavatrix does not auto-delete or merge findings.
+
+## Benchmarks
+
+Two different gates ship in the repository:
+
+- `npm run benchmark` is a reproducible golden suite for TypeScript, JavaScript, Python, Go, Java
+  and Rust, plus cross-repository HTTP matching, framework conventions and the MCP graph lifecycle.
+- `npm run benchmark:real` compares revision-pinned local application snapshots with the checked-in
+  0.2.1 relation baseline. It fails on unexplained signal loss; `MISSING`, `STALE` and `UNBASELINED`
+  remain incomplete, not green.
+
+Latest local release run (Windows x64, Node 24.15.0, July 18, 2026):
+
+| Gate | Result | Selected evidence |
+|---|---:|---|
+| Six language fixtures | 6/6 PASS | exact symbols/edges and complete edge provenance |
+| Cross-repo fixture | PASS, 431.79 ms cold | endpoint match, typed wrapper, external use, affected screen |
+| Lifecycle | PASS | `full -> incremental -> none -> reconnect/none`; 1,376-byte text response |
+| Total fixture cold build | 1.31 s | all six language graphs; 6.4 KB bounded report |
+| Real-repository baseline | 6/6 PASS | TS, JS, Python, Go, Java and Rust snapshots |
+
+Real snapshots ranged from 473 nodes / 1,165 edges in 0.22 s (Go) to 8,192 nodes / 21,814 edges
+in 9.44 s (TypeScript). The Java snapshot built 7,143 nodes / 23,708 edges in 2.61 s, including
+receiver-aware cross-file calls. These are regression measurements on one machine, not competitor
+benchmarks or universal latency claims. See [benchmark/cases.mjs](benchmark/cases.mjs),
+[benchmark/real-repositories.json](benchmark/real-repositories.json), and run the commands above to
+reproduce them on your own repositories.
+
 ## Quick start
 
 Requires Node ≥ 18. One command:
