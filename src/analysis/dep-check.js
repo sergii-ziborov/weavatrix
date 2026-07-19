@@ -7,47 +7,37 @@
 // script/config-text mention scanning + a config-ecosystem prefix rule, and we NEVER say "safe to
 // auto-remove", only "review".
 import { makeFinding } from "./findings.js";
+import {createScopedDepFindings} from './dependency/scoped-dependencies.js'
 
 // Packages referenced by config CONVENTION, not imports (eslint extends "airbnb" → eslint-config-airbnb).
 // Flagged only at low confidence when nothing mentions them anywhere.
-const CONFIG_ECOSYSTEM_RE =
-  /^(eslint-(config|plugin)-|@typescript-eslint\/|@eslint\/|prettier-plugin-|postcss-|autoprefixer$|tailwindcss$|babel-(plugin|preset)-|@babel\/(plugin|preset)-|stylelint-|@commitlint\/|commitlint-|remark-|rehype-|@semantic-release\/|karma-|grunt-|gulp-)/;
+const CONFIG_ECOSYSTEM_RE = /^(eslint-(config|plugin)-|@typescript-eslint\/|@eslint\/|prettier-plugin-|postcss-|autoprefixer$|tailwindcss$|babel-(plugin|preset)-|@babel\/(plugin|preset)-|stylelint-|@commitlint\/|commitlint-|remark-|rehype-|@semantic-release\/|karma-|grunt-|gulp-)/;
 
 // CLI name → package name, for script commands whose binary doesn't equal the package
 // (`tsc` comes from typescript, `depcruise` from dependency-cruiser, …).
 const BIN_PKG = {
-  tsc: "typescript",
-  depcruise: "dependency-cruiser",
-  "vue-cli-service": "@vue/cli-service",
-  ng: "@angular/cli",
-  nest: "@nestjs/cli",
-  sb: "storybook",
-  "electron-rebuild": "@electron/rebuild",
-  playwright: "@playwright/test",
+  tsc: "typescript", depcruise: "dependency-cruiser", "vue-cli-service": "@vue/cli-service",
+  ng: "@angular/cli", nest: "@nestjs/cli", sb: "storybook",
+  "electron-rebuild": "@electron/rebuild", playwright: "@playwright/test",
 };
 
 // Required peers consumed inside a framework/build tool rather than imported by application source.
 // These contracts are package-scope local and deliberately narrow; declaring the provider is required
 // for suppression, so an unrelated app still gets the normal unused-dependency finding.
 const FRAMEWORK_RUNTIME_PEERS = new Map([
-  ["next", ["react-dom"]],
-  ["vinext", ["@vitejs/plugin-react", "@vitejs/plugin-rsc", "react-server-dom-webpack", "vite"]],
-  ["electron-vite", ["vite"]],
-  ["@cloudflare/vite-plugin", ["vite", "wrangler"]],
+  ["next", ["react-dom"]], ["vinext", ["@vitejs/plugin-react", "@vitejs/plugin-rsc", "react-server-dom-webpack", "vite"]],
+  ["electron-vite", ["vite"]], ["@cloudflare/vite-plugin", ["vite", "wrangler"]],
 ]);
 
 // Style preprocessors are compiler inputs rather than JavaScript imports. Their presence is proven by
 // source extensions in the same package scope, so do not report them as unused merely because Vite,
 // webpack, etc. load them internally. Keep this list to exact compiler/package contracts.
 const IMPLICIT_STYLE_COMPILERS = new Map([
-  ["sass", /\.(?:scss|sass)$/i],
-  ["sass-embedded", /\.(?:scss|sass)$/i],
-  ["less", /\.less$/i],
-  ["stylus", /\.styl(?:us)?$/i],
+  ["sass", /\.(?:scss|sass)$/i], ["sass-embedded", /\.(?:scss|sass)$/i],
+  ["less", /\.less$/i], ["stylus", /\.styl(?:us)?$/i],
 ]);
 
 const isStylesheetSpecifier = (spec) => /\.(?:css|scss|sass|less|styl(?:us)?)(?:[?#].*)?$/i.test(String(spec || ""));
-
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // word-ish mention: the name not embedded inside a longer identifier/path segment
 const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\w.-])`).test(blob);
@@ -305,43 +295,6 @@ export function computeDepFindings({
   return { findings, usedPackages, declared: allDeclared };
 }
 
-const normScope = (root) => String(root || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
-const ownsFile = (scope, file) => !scope || file === scope || String(file || "").startsWith(`${scope}/`);
-
-// Judge every import against its nearest ancestor package.json. This is the dependency equivalent of
-// Node's package scope and prevents nested Next/Vite apps from inheriting the root manifest by accident.
-export function computeScopedDepFindings({
-  externalImports = [], packageScopes = [], workspacePkgNames = new Set(), configTexts = new Map(),
-  nonRuntimeRoots = [], sourceFiles = [],
-} = {}) {
-  const scopes = packageScopes.length
-    ? packageScopes.map((s) => ({ ...s, root: normScope(s.root) })).sort((a, b) => b.root.length - a.root.length)
-    : [{ root: "", manifest: "package.json", pkg: {}, aliases: [] }];
-  const importsByScope = new Map(scopes.map((s) => [s, []]));
-  const sourceFilesByScope = new Map(scopes.map((s) => [s, []]));
-  for (const e of externalImports) {
-    const owner = scopes.find((s) => ownsFile(s.root, e.file)) || scopes[scopes.length - 1];
-    importsByScope.get(owner).push(e);
-  }
-  for (const file of sourceFiles) {
-    const owner = scopes.find((s) => ownsFile(s.root, file)) || scopes[scopes.length - 1];
-    sourceFilesByScope.get(owner).push(file);
-  }
-  const configOwner = new Map();
-  for (const [file] of configTexts) configOwner.set(file, scopes.find((scope) => ownsFile(scope.root, file)) || scopes[scopes.length - 1]);
-  const findings = [], usedPackages = new Map(), declared = new Set();
-  for (const s of scopes) {
-    const scopeConfig = new Map([...configTexts].filter(([f]) => configOwner.get(f) === s));
-    const r = computeDepFindings({
-      externalImports: importsByScope.get(s), pkg: s.pkg || {}, workspacePkgNames, configTexts: scopeConfig,
-      aliases: s.aliases || [], scope: s.root, manifest: s.manifest || (s.root ? `${s.root}/package.json` : "package.json"),
-      nonRuntimeRoots, sourceFiles: sourceFilesByScope.get(s),
-    });
-    findings.push(...r.findings);
-    for (const [name, use] of r.usedPackages) usedPackages.set(`${s.root || "."}:${name}`, use);
-    for (const name of r.declared) declared.add(`${s.root || "."}:${name}`);
-  }
-  return { findings, usedPackages, declared };
-}
+export const computeScopedDepFindings = createScopedDepFindings(computeDepFindings)
 
 export { computeGoDepFindings, computePyDepFindings } from "./dep-check-ecosystems.js";

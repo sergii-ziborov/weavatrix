@@ -8,7 +8,8 @@ coverage/
 .wrangler/
 dist-mcpb/
 weavatrix-graphs/
-.weavatrix/
+.weavatrix/*
+!.weavatrix/architecture.json
 
 graph.json
 graph.prev.json

@@ -5,21 +5,14 @@ import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {detectRepoStack} from '../scan/discover.js'
 import {toolResult} from './tool-result.mjs'
 
-const PROVISIONAL_BUDGETS = Object.freeze({
-    runtimeCycles: 0,
-    maxFileLoc: 300,
-    maxFunctionLoc: 120,
-    maxCyclomatic: 15,
-    maxModuleFiles: 80,
-    minModuleCohesion: .5,
-    maxModuleBoundaryRatio: .65,
-})
-
-const SOURCE_ROOTS = new Set(['src', 'app', 'lib', 'packages', 'services'])
-const PRODUCT_CODE_EXTENSIONS = new Set([
-    '.cjs', '.cs', '.css', '.go', '.htm', '.html', '.java', '.js', '.jsx', '.less', '.mjs', '.py', '.pyi',
-    '.rs', '.scss', '.ts', '.tsx',
+const version = new URL(import.meta.url).search
+const load = (path) => import(new URL(`${path}${version}`, import.meta.url).href)
+const [starter, bootstrap] = await Promise.all([
+    load('./architecture-starter.mjs'),
+    load('./architecture-bootstrap.mjs'),
 ])
+const {createArchitectureStarter, PROVISIONAL_BUDGETS} = starter
+export const tBootstrapArchitecture = bootstrap.tBootstrapArchitecture
 
 const remediation = () => ({
     offlinePath: '.weavatrix/architecture.json',
@@ -41,62 +34,9 @@ function activeContract(ctx) {
     return loadArchitectureContract(ctx.repoRoot, ctx.graphPath)
 }
 
-const codeExtension = (file) => {
-    const name = String(file || '').split('/').at(-1) || ''
-    const dot = name.lastIndexOf('.')
-    return dot >= 0 ? name.slice(dot).toLowerCase() : ''
-}
-
-function starterContract(g, repoRoot) {
-    const classifier = createPathClassifier(repoRoot)
-    const files = [...new Set((g?.nodes || [])
-        .filter((node) => !String(node.id).includes('#'))
-        .map((node) => String(node.source_file || node.id || '').replace(/\\/g, '/'))
-        .filter((file) => file && PRODUCT_CODE_EXTENSIONS.has(codeExtension(file))))]
-        .filter((file) => {
-            const explanation = classifier.explain(file)
-            return !explanation.excluded && !hasPathClass(
-                explanation, 'test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp',
-            )
-        })
-    const groups = new Map()
-    for (const file of files) {
-        const parts = file.split('/').filter(Boolean)
-        let key, name, path
-        if (parts.length === 1) {
-            key = 'root-code'
-            name = 'root code'
-            path = file
-        } else if (SOURCE_ROOTS.has(parts[0]) && parts.length === 2) {
-            key = `${parts[0]}-root`
-            name = `${parts[0]} (root files)`
-            path = file
-        } else {
-            path = parts.slice(0, SOURCE_ROOTS.has(parts[0]) ? 2 : 1).join('/')
-            key = path
-            name = path
-        }
-        const group = groups.get(key) || {name, paths: new Set(), files: 0}
-        group.paths.add(path)
-        group.files += 1
-        groups.set(key, group)
-    }
-    const components = [...groups].sort((a, b) => b[1].files - a[1].files || a[0].localeCompare(b[0])).slice(0, 80)
-        .map(([key, group], index) => ({
-            id: key.toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100) || `component-${index + 1}`,
-            name: group.name,
-            paths: [...group.paths].sort((a, b) => a.localeCompare(b)),
-        }))
-    return normalizeArchitectureContract({
-        name: 'Proposed no-regressions baseline', style: 'custom', enforcement: 'ratchet', components,
-        dependencyRules: [],
-        budgets: PROVISIONAL_BUDGETS,
-        technologies: {required: [], forbidden: []}, exceptions: [], ratchet: {baseline: {fingerprints: [], metrics: {}}},
-    })
-}
-
 function notConfiguredResult(g, action, {includeStarter = false, repoRoot = null} = {}) {
-    const starter = includeStarter ? starterContract(g, repoRoot) : null
+    const proposal = includeStarter ? createArchitectureStarter(g, repoRoot) : null
+    const starter = proposal?.contract || null
     const starterText = starter
         ? ` A source-free starter with ${starter.components.length} product-code territories is available in JSON output from this lookup.`
         : ''
@@ -107,8 +47,15 @@ function notConfiguredResult(g, action, {includeStarter = false, repoRoot = null
         state: 'NOT_CONFIGURED',
         remediation: remediation(),
         ...(starter ? {
-            starterSummary: {components: starter.components.length, budgets: starter.budgets},
+            starterSummary: {
+                components: starter.components.length, budgets: starter.budgets,
+                observedDependencyDirections: proposal.observedDependencyProposals.length,
+                candidateBudgetsNotEnforced: proposal.budgetProposals.length,
+            },
             starterContract: starter,
+            observedDependencyProposals: proposal.observedDependencyProposals,
+            budgetProposals: proposal.budgetProposals,
+            starterMethodology: proposal.methodology,
         } : {}),
     })
 }
@@ -150,6 +97,7 @@ function provisionalPreflight(g, args, ctx) {
 }
 
 export function tGetArchitectureContract(g, args, ctx) {
+    if (args?.action === 'preview' || args?.action === 'approve') return tBootstrapArchitecture(g, args, ctx)
     const loaded = activeContract(ctx)
     if (!loaded.contract) {
         const text = loaded.error

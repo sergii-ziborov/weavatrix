@@ -8,11 +8,17 @@ import { specToPkg } from "./builder/spec-pkg.js";
 import { analyzeSyntaxComplexity } from "../analysis/source-complexity.js";
 import { Parser, Query, GRAMMARS, LANGS, EXT_LANG, FAMILY, isDataFile, isDocFile, MAX_PARSE_BYTES, ensureParser, walk } from "./internal-builder.langs.js";
 import { buildResolvers } from "./internal-builder.resolvers.js";
-import { addJavaReferences } from "./internal-builder.java.js";
 import { assignDeterministicCommunities } from "./community.js";
-import { resolveJsBarrels } from "./internal-builder.barrels.js";
 import { snapshotRepository } from "./incremental-refresh.js";
 import { EDGE_PROVENANCE_V, stampEdgeProvenance } from "./edge-provenance.js";
+import {runInternalGraphPass2} from './internal-builder.pass2.js'
+
+function physicalLineCount(text) {
+  if (!text.length) return 0;
+  let lines = 1;
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) lines++;
+  return text.endsWith("\n") ? lines - 1 : lines;
+}
 
 // Parse a repo directory into a graph-builder-compatible { nodes, links } graph.
 export async function buildInternalGraph(repoDir, opts = {}) {
@@ -78,10 +84,13 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   let _parsed = 0;
   for (const abs of files) {
     const fileRel = rel(abs); const ext = extname(abs);
-    addNode({ id: fileRel, label: fileRel.split("/").pop(), file_type: "code", source_file: fileRel, source_location: "L1" });
-    if (isDataFile(fileRel) || isDocFile(fileRel)) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); symIdsByFileName.set(fileRel, new Map()); continue; }  // config/infra/docs file-only node
+    const fileNode = { id: fileRel, label: fileRel.split("/").pop(), file_type: "code", source_file: fileRel, source_location: "L1" };
+    if (isDataFile(fileRel) || isDocFile(fileRel)) {
+      addNode(fileNode); perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); symIdsByFileName.set(fileRel, new Map()); continue;
+    }  // config/infra/docs file-only node
+    let code; try { code = readFileSync(abs, "utf8"); } catch { addNode(fileNode); continue; }
+    addNode({ ...fileNode, physical_loc: physicalLineCount(code) });
     const grammar = EXT_LANG[ext]; const lang = LANGS[FAMILY[grammar]]; if (!lang || !langs[grammar]) continue;
-    let code; try { code = readFileSync(abs, "utf8"); } catch { continue; }
     // giant / generated / minified file → keep the file NODE but don't parse symbols (avoids a wedged parse)
     if (code.length > MAX_PARSE_BYTES) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); symIdsByFileName.set(fileRel, new Map()); continue; }
     if ((++_parsed % 24) === 0) await new Promise((r) => setImmediate(r)); // breathe: let the UI paint between chunks
@@ -144,7 +153,10 @@ export async function buildInternalGraph(repoDir, opts = {}) {
         ...(extra && extra.symbolSpace ? { symbol_space: extra.symbolSpace } : {}),
         ...(extra && extra.memberOf ? { member_of: extra.memberOf } : {}),
         ...(extra && extra.visibility ? { visibility: extra.visibility } : {}),
-        ...(Number.isInteger(extra?.parameterCount) ? { parameter_count: extra.parameterCount } : {})
+        ...(Number.isInteger(extra?.parameterCount) ? { parameter_count: extra.parameterCount } : {}),
+        ...(extra?.receiverType ? { receiver_type: extra.receiverType } : {}),
+        ...(extra?.returnType ? { return_type: extra.returnType } : {}),
+        ...(extra?.fieldTypes && Object.keys(extra.fieldTypes).length ? { field_types: extra.fieldTypes } : {})
       });
       links.push({ source: fileRel, target: id, relation: "contains", confidence: "EXTRACTED" });
       syms.push({
@@ -216,184 +228,10 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   // ---- pass 2: scope-aware calls + inheritance (Go package = whole dir → same-dir symbols share scope;
   // C# gets the same treatment: one folder ≈ one namespace by convention, and `using` names namespaces,
   // not files, so the folder map is the only reliable cross-file resolver) ----
-  const goDirSymbols = new Map();
-  const sharesDirScope = (fr) => fr.endsWith(".go") || fr.endsWith(".cs") || fr.endsWith(".rs");
-  for (const [fr, m] of symByFileName) {
-    if (!sharesDirScope(fr)) continue;
-    const d = fr.includes("/") ? fr.slice(0, fr.lastIndexOf("/")) : "";
-    let dm = goDirSymbols.get(d); if (!dm) goDirSymbols.set(d, (dm = new Map()));
-    for (const [n, id] of m) if (!dm.has(n)) dm.set(n, id);
-  }
-  const inferredSymbolSpace = (node) => {
-    const explicit = String(node?.symbol_space || "");
-    if (["value", "type", "both"].includes(explicit)) return explicit;
-    const kind = String(node?.symbol_kind || "").toLowerCase();
-    if (["interface", "type"].includes(kind)) return "type";
-    if (["class", "enum"].includes(kind)) return "both";
-    return "value";
-  };
-  const resolveNamedSymbol = (file, name, space = "value") => {
-    const ids = symIdsByFileName.get(file)?.get(name) || [];
-    const accepts = (id) => {
-      const symbolSpace = inferredSymbolSpace(nodeById.get(id));
-      return symbolSpace === "both" || symbolSpace === space;
-    };
-    const exact = ids.find((id) => inferredSymbolSpace(nodeById.get(id)) === space);
-    return exact || ids.find(accepts) || null;
-  };
-  const { resolveNamespaceMember, reExportOccurrences } = resolveJsBarrels({
-    jsExports, importedLocals, links,
-    resolveSymbol: (file, name, typeOnly) => resolveNamedSymbol(file, name, typeOnly ? "type" : "value"),
+  const {reExportOccurrences} = runInternalGraphPass2({
+    files, rel, langs, caps, field, links, nodeById, perFileSymbols, symByFileName,
+    symIdsByFileName, importedLocals, jsExports,
   });
-  // Exact source ranges can overlap (a named function nested inside another function). Attribute a call
-  // to the innermost matching symbol, not whichever outer declaration happened to be added first.
-  const enclosing = (fileRel, line) => {
-    let best = null;
-    for (const s of perFileSymbols.get(fileRel) || []) {
-      if (line < s.start || line > s.end) continue;
-      if (!best || s.start > best.start || (s.start === best.start && s.end < best.end)) best = s;
-    }
-    return best;
-  };
-  const resolveCall = (name, fileRel) => {
-    const local = resolveNamedSymbol(fileRel, name, "value"); if (local) return local;
-    if (sharesDirScope(fileRel)) { const d = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : ""; const dm = goDirSymbols.get(d); if (dm && dm.has(name)) return dm.get(name); }
-    const imp = importedLocals.get(fileRel) && importedLocals.get(fileRel).get(name);
-    if (imp && imp.targetFile) {
-      const targetFile = imp.originFile || imp.targetFile;
-      const importedName = imp.originName || imp.imported;
-      return resolveNamedSymbol(targetFile, importedName, "value");
-    }
-    return null;
-  };
-  const javaTypeKinds = new Set(["class", "interface", "enum", "record", "annotation"]);
-  const resolveJavaType = (name, fileRel) => {
-    const imp = importedLocals.get(fileRel)?.get(name);
-    if (imp?.targetFile) {
-      const symbols = symByFileName.get(imp.targetFile);
-      const target = symbols?.get(imp.imported) || symbols?.get(name);
-      if (target && javaTypeKinds.has(nodeById.get(target)?.symbol_kind)) return target;
-    }
-    const target = symByFileName.get(fileRel)?.get(name);
-    return target && javaTypeKinds.has(nodeById.get(target)?.symbol_kind) ? target : null;
-  };
-  for (const abs of files) {
-    const fileRel = rel(abs); const grammar = EXT_LANG[extname(abs)]; if (!grammar) continue;
-    const lang = LANGS[FAMILY[grammar]]; if (!lang || lang.isWeb || !langs[grammar]) continue;
-    let code; try { code = readFileSync(abs, "utf8"); } catch { continue; }
-    const parser = new Parser(); parser.setLanguage(langs[grammar]);
-    let tree; try { tree = parser.parse(code); } catch { continue; }
-    if (!lang.customCalls) for (const cap of caps(grammar, lang.calls, tree.rootNode)) {
-      const caller = enclosing(fileRel, cap.node.startPosition.row + 1); if (!caller) continue;
-      const target = resolveCall(cap.node.text, fileRel); if (!target || target === caller.id) continue;
-      links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
-    }
-    if (typeof lang.pass2 === "function") {
-      try {
-        lang.pass2({
-          grammar, tree, fileRel, code, caps, field, enclosing, links, nodeById,
-          perFileSymbols, symByFileName, symIdsByFileName, importedLocals, resolveCall, resolveJavaType,
-        });
-      } catch (e) { /* one language-specific resolver never sinks the graph */ void e; }
-    }
-    // qualified/selector calls (Go): `pkg.Func()` → the imported package's dir; else `receiver.Method()` → the
-    // SAME package (heuristic by method name — connects lifecycle methods like peer.Enable() that need type info).
-    if (lang.selectorCall) for (const cap of caps(grammar, lang.selectorCall, tree.rootNode)) {
-      const sel = cap.node; const operand = field(sel, "operand"), fld = field(sel, "field");
-      if (!operand || operand.type !== "identifier" || !fld) continue;
-      const caller = enclosing(fileRel, sel.startPosition.row + 1); if (!caller) continue;
-      const imp = importedLocals.get(fileRel) && importedLocals.get(fileRel).get(operand.text);
-      const dir = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : "";
-      const dm = goDirSymbols.get(imp && imp.targetDir ? imp.targetDir : dir);
-      const target = dm && dm.get(fld.text);
-      if (target && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
-    }
-    for (const heritageSpec of lang.heritage || []) {
-      const query = typeof heritageSpec === "string" ? heritageSpec : heritageSpec.query;
-      const relation = typeof heritageSpec === "string" ? "inherits" : (heritageSpec.relation || "inherits");
-      for (const cap of caps(grammar, query, tree.rootNode)) {
-        const cls = enclosing(fileRel, cap.node.startPosition.row + 1); if (!cls) continue;
-        const target = FAMILY[grammar] === "java" ? resolveJavaType(cap.node.text, fileRel) : resolveCall(cap.node.text, fileRel);
-        if (target && target !== cls.id) links.push({ source: cls.id, target, relation, confidence: "INFERRED" });
-      }
-    }
-    // JSX is a real symbol use even though it is not a call_expression. Resolve imported components to their
-    // declaration so component fan-in and unused-export checks do not claim `<SettingsView />` is unreferenced.
-    if (FAMILY[grammar] === "js") {
-      // Namespace calls (`ui.run()`) need the member name before an export-star facade can be resolved.
-      for (const cap of caps(grammar, `(call_expression function: (member_expression) @memberCall)`, tree.rootNode)) {
-        const object = field(cap.node, "object"), property = field(cap.node, "property");
-        if (!object || object.type !== "identifier" || !property) continue;
-        const imp = importedLocals.get(fileRel)?.get(object.text);
-        if (!imp || !["*", "default"].includes(imp.imported) || imp.typeOnly) continue;
-        const origin = resolveNamespaceMember(fileRel, imp, property.text, "call");
-        if (origin.status !== "resolved") continue;
-        const target = resolveNamedSymbol(origin.origin.file, origin.origin.name, "value");
-        const caller = enclosing(fileRel, cap.node.startPosition.row + 1);
-        if (target && caller && target !== caller.id) links.push({ source: caller.id, target, relation: "calls", confidence: "INFERRED", line: cap.node.startPosition.row + 1 });
-      }
-      for (const cap of caps(grammar, `[
-        (jsx_opening_element name: (_) @jsx)
-        (jsx_self_closing_element name: (_) @jsx)
-      ]`, tree.rootNode)) {
-        const jsxName = cap.node.text;
-        const parts = jsxName.split(".");
-        const localName = parts[0];
-        if (parts.length === 1 && !/^[A-Z_$]/.test(localName)) continue; // undotted lowercase tags are platform/intrinsic elements
-        const imp = importedLocals.get(fileRel)?.get(localName);
-        if (!imp || !imp.targetFile || imp.typeOnly) continue;
-        let targetFile = imp.originFile || imp.targetFile;
-        let importedName = imp.originName || imp.imported;
-        if (imp.imported === "*" && parts.length > 1) {
-          const origin = resolveNamespaceMember(fileRel, imp, parts[parts.length - 1], "jsx");
-          if (origin.status === "resolved") { targetFile = origin.origin.file; importedName = origin.origin.name; }
-        }
-        const target = resolveNamedSymbol(targetFile, importedName, "value") || resolveNamedSymbol(targetFile, localName, "value");
-        if (!target) continue;
-        const owner = enclosing(fileRel, cap.node.startPosition.row + 1);
-        links.push({ source: owner?.id || fileRel, target, relation: "references", confidence: "INFERRED", usage: "jsx", line: cap.node.startPosition.row + 1 });
-      }
-      // Type identifiers are a separate namespace in TypeScript. Resolve them to type/both-space
-      // declarations without creating runtime calls or keeping a same-named value symbol alive.
-      if (grammar !== "javascript") for (const cap of caps(grammar, `(type_identifier) @typeRef`, tree.rootNode)) {
-        const name = cap.node.text;
-        const imp = importedLocals.get(fileRel)?.get(name);
-        const targetFile = imp?.originFile || imp?.targetFile || fileRel;
-        const targetName = imp?.originName || imp?.imported || name;
-        const target = resolveNamedSymbol(targetFile, targetName, "type");
-        if (!target || String(target).startsWith(`${fileRel}#${name}@${cap.node.startPosition.row + 1}`)) continue;
-        const owner = enclosing(fileRel, cap.node.startPosition.row + 1);
-        const source = owner?.id || fileRel;
-        if (source === target) continue;
-        links.push({source, target, relation: "references", confidence: "EXTRACTED", provenance: "RESOLVED", typeOnly: true, line: cap.node.startPosition.row + 1, usage: "type"});
-      }
-    }
-    // Go value references: a top-level const/var/type/func used BY NAME (bare `X`, or cross-package `pkg.X`) in
-    // another file/scope → a `references` edge, so used-but-never-called symbols (message-type consts, etc.) are
-    // not falsely DEAD. (Same-file usage is already covered by graph-builder-analysis localRefs.) Go-only for now.
-    if (FAMILY[grammar] === "go") {
-      const refSeen = new Set();
-      const emitRef = (src, target) => { if (!target || target === src) return; const k = src + ">" + target; if (refSeen.has(k)) return; refSeen.add(k); links.push({ source: src, target, relation: "references", confidence: "INFERRED" }); };
-      const dir = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : "";
-      const dm = goDirSymbols.get(dir);
-      for (const cap of caps(grammar, `[(identifier) (type_identifier)] @id`, tree.rootNode)) {   // type_identifier → struct/type usage
-        const target = dm && dm.get(cap.node.text); if (!target || target.slice(0, target.indexOf("#")) === fileRel) continue;
-        const caller = enclosing(fileRel, cap.node.startPosition.row + 1); emitRef(caller ? caller.id : fileRel, target);
-      }
-      for (const cap of caps(grammar, `(selector_expression) @sel`, tree.rootNode)) {
-        const sel = cap.node; const operand = field(sel, "operand"), fld = field(sel, "field");
-        if (!operand || operand.type !== "identifier" || !fld) continue;
-        const imp = importedLocals.get(fileRel) && importedLocals.get(fileRel).get(operand.text); if (!imp || !imp.targetDir) continue;
-        const tdm = goDirSymbols.get(imp.targetDir); const target = tdm && tdm.get(fld.text); if (!target) continue;
-        const caller = enclosing(fileRel, sel.startPosition.row + 1); emitRef(caller ? caller.id : fileRel, target);
-      }
-    }
-    if (FAMILY[grammar] === "java") {
-      addJavaReferences({ grammar, tree, fileRel, caps, resolveJavaType, enclosing, links });
-    }
-    tree.delete();
-  }
-
   // HTML class/id usage → the CSS file(s) defining that selector: file-level reference edges (deduped per pair).
   const htmlRefSeen = new Set();
   for (const u of htmlUsages) {
@@ -422,6 +260,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     edgeTypesV: 2,
     edgeProvenanceV: EDGE_PROVENANCE_V,
     complexityV: 2,
+    physicalFileLocV: 1,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
     reExportOccurrencesV: 1,

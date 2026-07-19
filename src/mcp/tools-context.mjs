@@ -3,15 +3,19 @@ import {boundedInteger} from '../bounds.js'
 import {isSymbol, labelOf} from './graph-context.mjs'
 import {toolResult} from './tool-result.mjs'
 import {sourceExcerpt} from './tools-source.mjs'
+import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
 const MAX_LINE_SAMPLES = 5
+const CONTEXT_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 
 const fileOf = (g, id) => {
     const node = g.byId.get(String(id))
     return String(node?.source_file || (isSymbol(id) ? String(id).split('#')[0] : id))
 }
 
-function aggregateEdges(g, edges, cap, {callsiteFile = null} = {}) {
+function aggregateEdges(g, edges, cap, {
+    callsiteFile = null, classifier = null, includeClassified = true, productionFirst = false,
+} = {}) {
     const groups = new Map()
     for (const edge of edges || []) {
         if (isStructuralRelation(edge.relation) || edge.barrelProxy === true) continue
@@ -33,9 +37,23 @@ function aggregateEdges(g, edges, cap, {callsiteFile = null} = {}) {
         if (edge.typeOnly === true) group.typeOnly = true
         if (edge.compileOnly === true) group.compileOnly = true
     }
-    const all = [...groups.values()].sort((left, right) => right.count - left.count
-        || left.file.localeCompare(right.file) || left.id.localeCompare(right.id))
-    return {total: all.length, shown: all.slice(0, cap), capped: all.length > cap}
+    const all = [...groups.values()]
+    if (classifier) for (const group of all) {
+        const info = classifier.explain(group.file, {content: ''})
+        const classes = CONTEXT_NON_PRODUCT.filter((name) => hasPathClass(info, name))
+        group.classified = classes.length > 0 || info?.excluded === true
+        if (classes.length) group.pathClasses = classes
+    }
+    const eligible = includeClassified ? all : all.filter((group) => !group.classified)
+    eligible.sort((left, right) => (productionFirst ? Number(left.classified) - Number(right.classified) : 0)
+        || right.count - left.count || left.file.localeCompare(right.file) || left.id.localeCompare(right.id))
+    return {
+        total: eligible.length,
+        available: all.length,
+        suppressed: all.length - eligible.length,
+        shown: eligible.slice(0, cap),
+        capped: eligible.length > cap,
+    }
 }
 
 const sameOrigin = (occurrence, definition) => occurrence.originId === definition.id
@@ -97,12 +115,14 @@ function exactReExportSites(g, definition, cap) {
 }
 
 function linesForGroups(title, groups) {
-    if (!groups.shown.length) return [`${title}: none`]
-    const lines = [`${title}: ${groups.total} container(s)${groups.capped ? ` (${groups.shown.length} shown)` : ''}`]
+    const suppression = groups.suppressed ? `; ${groups.suppressed} classified container(s) suppressed` : ''
+    if (!groups.shown.length) return [`${title}: none${suppression}`]
+    const lines = [`${title}: ${groups.total} container(s)${groups.capped ? ` (${groups.shown.length} shown)` : ''}${suppression}`]
     for (const group of groups.shown) {
         const sites = group.lines.length ? `:${group.lines.join(',')}` : ''
         const destination = group.targetFile ? ` → ${group.targetFile}` : ''
-        lines.push(`  ${group.count}× ${group.relation}  ${group.label}  [call site ${group.file}${sites}${destination}]`)
+        const classified = group.classified ? ` [classified${group.pathClasses?.length ? `:${group.pathClasses.join('+')}` : ''}]` : ''
+        lines.push(`  ${group.count}× ${group.relation}  ${group.label}  [call site ${group.file}${sites}${destination}]${classified}`)
     }
     return lines
 }
@@ -139,26 +159,47 @@ export async function tContextBundle(g, args = {}, ctx = {}, inspectSymbol) {
         ...inspection.definition,
         name: String(g.byId.get(inspection.definition.id)?.label || '').replace(/\(\)$/, ''),
     }
-    const inbound = aggregateEdges(g, g.inn.get(definition.id), maxRelated)
+    const classifier = createPathClassifier(ctx.repoRoot || null)
+    const includeClassified = args.include_classified === true
+    const inbound = aggregateEdges(g, g.inn.get(definition.id), maxRelated, {
+        classifier, includeClassified, productionFirst: true,
+    })
     const outbound = aggregateEdges(g, g.out.get(definition.id), maxRelated, {callsiteFile: definition.file})
     const reExports = exactReExportSites(g, definition, maxReExports)
     const source = []
+    const overlaps = (left, right) => left.file === right.file
+        && left.startLine <= right.endLine && right.startLine <= left.endLine
     const append = (role, excerpt) => {
         if (!excerpt || source.length >= maxSourceFiles) return
-        if (source.some((item) => item.file === excerpt.file && item.focusLine === excerpt.focusLine)) return
+        if (source.some((item) => overlaps(item, excerpt))) return
         source.push({role, ...excerpt})
     }
     append('Definition', inspection.source.definition)
     const contextLines = boundedInteger(args.context_lines, 4, 0, 12)
-    for (const group of outbound.shown) {
-        for (const line of group.lines) append('Outbound call site', sourceExcerpt(ctx.repoRoot, group.file, line, contextLines))
+    const excerptCandidates = []
+    const groupExcerpts = (groups, role) => {
+        const primary = []
+        const secondary = []
+        for (const group of groups.shown) for (let index = 0; index < group.lines.length; index++) {
+            const candidate = {role, excerpt: sourceExcerpt(ctx.repoRoot, group.file, group.lines[index], contextLines)}
+            ;(index === 0 ? primary : secondary).push(candidate)
+        }
+        return [...primary, ...secondary]
     }
-    for (const group of inbound.shown) {
-        for (const line of group.lines) append('Inbound call site', sourceExcerpt(ctx.repoRoot, group.file, line, contextLines))
+    const outboundExcerpts = groupExcerpts(outbound, 'Outbound call site')
+    const inboundExcerpts = groupExcerpts(inbound, 'Inbound call site')
+    for (let index = 0; index < Math.max(outboundExcerpts.length, inboundExcerpts.length); index++) {
+        if (outboundExcerpts[index]) excerptCandidates.push(outboundExcerpts[index])
+        if (inboundExcerpts[index]) excerptCandidates.push(inboundExcerpts[index])
     }
-    for (const excerpt of inspection.source.callers || []) {
-        append('Reference', excerpt)
+    for (const excerpt of inspection.source.callers || []) excerptCandidates.push({role: 'Reference', excerpt})
+    const deferred = []
+    for (const candidate of excerptCandidates) {
+        const knownFile = source.some((item) => item.file === candidate.excerpt?.file)
+        if (knownFile && candidate.role !== 'Outbound call site') deferred.push(candidate)
+        else append(candidate.role, candidate.excerpt)
     }
+    for (const candidate of deferred) append(candidate.role, candidate.excerpt)
     const result = {
         status: 'OK', definition, evidence: inspection.evidence,
         references: {

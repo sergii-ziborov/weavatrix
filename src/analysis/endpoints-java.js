@@ -4,6 +4,7 @@
 import { maskJavaNonCode } from "./java-source.js";
 
 const SPRING_MAPPING = /@(?:org\.springframework\.web\.bind\.annotation\.)?(RequestMapping|GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b/g;
+const SPRING_CONDITION = /@(?:org\.springframework\.boot\.autoconfigure\.condition\.)?(ConditionalOnExpression|ConditionalOnProperty)\b/g;
 const REQUEST_METHOD = /\bRequestMethod\s*\.\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\b/g;
 
 const lineAt = (text, index) => {
@@ -119,6 +120,58 @@ function mappingMethods(name, args) {
   return methods.length ? methods : ["ANY"];
 }
 
+function namedInitializer(args, name) {
+  const source = String(args || "");
+  const match = new RegExp(`\\b${name}\\s*=`).exec(source);
+  return match ? initializer(source, source.indexOf("=", match.index)) : "";
+}
+
+function namedStrings(args, name) {
+  return stringLiterals(namedInitializer(args, name));
+}
+
+function namedBoolean(args, name, fallback) {
+  const value = namedInitializer(args, name).trim();
+  if (/^true\b/i.test(value)) return true;
+  if (/^false\b/i.test(value)) return false;
+  return fallback;
+}
+
+function positionalStrings(args) {
+  const source = String(args || "");
+  const start = source.trimStart()[0];
+  return start === '"' || start === "{" ? stringLiterals(initializer(source, -1)) : [];
+}
+
+function expressionDefaultActive(expression) {
+  const value = String(expression || "").trim();
+  if (/^(?:true|false)$/i.test(value)) return value.toLowerCase() === "true";
+  const match = /^\$\{[^{}:]+:(true|false)\}$/i.exec(value);
+  return match ? match[1].toLowerCase() === "true" : null;
+}
+
+function conditionMetadata(annotation, args) {
+  if (annotation === "ConditionalOnExpression") {
+    const expression = namedStrings(args, "value")[0] || stringLiterals(args)[0] || "";
+    return {
+      type: annotation,
+      expression,
+      defaultActive: expressionDefaultActive(expression),
+    };
+  }
+  const namedProperties = [...namedStrings(args, "name"), ...namedStrings(args, "value")];
+  const properties = [...new Set(namedProperties.length ? namedProperties : positionalStrings(args))];
+  const matchIfMissing = namedBoolean(args, "matchIfMissing", false);
+  return {
+    type: annotation,
+    prefix: namedStrings(args, "prefix")[0] || "",
+    properties,
+    havingValue: namedStrings(args, "havingValue")[0] || "",
+    matchIfMissing,
+    defaultActive: matchIfMissing,
+  };
+}
+
 function joinPaths(prefix, path) {
   const left = String(prefix || "").trim().replace(/^\/+|\/+$/g, "");
   const right = String(path || "").trim().replace(/^\/+|\/+$/g, "");
@@ -135,10 +188,10 @@ function declarationAfter(text, start) {
   if (classMatch) {
     const open = bounded.indexOf("{");
     const bodyOpen = open < 0 ? -1 : declarationStart + open;
-    return { kind: "class", name: classMatch[2], bodyOpen, bodyClose: bodyOpen < 0 ? text.length : balancedEnd(text, bodyOpen, "{", "}") };
+    return { kind: "class", name: classMatch[2], start: declarationStart, bodyOpen, bodyClose: bodyOpen < 0 ? text.length : balancedEnd(text, bodyOpen, "{", "}") };
   }
   const methodMatch = /\b([A-Za-z_$][\w$]*)\s*\(/.exec(head);
-  return methodMatch ? { kind: "method", name: methodMatch[1] } : { kind: "unknown", name: "" };
+  return methodMatch ? { kind: "method", name: methodMatch[1], start: declarationStart } : { kind: "unknown", name: "", start: declarationStart };
 }
 
 export function extractSpringEndpoints(text, file) {
@@ -160,6 +213,19 @@ export function extractSpringEndpoints(text, file) {
     });
     SPRING_MAPPING.lastIndex = Math.max(SPRING_MAPPING.lastIndex, invocation.end);
   }
+  const conditions = [];
+  SPRING_CONDITION.lastIndex = 0;
+  while ((match = SPRING_CONDITION.exec(code))) {
+    const invocation = annotationInvocation(text, SPRING_CONDITION.lastIndex);
+    const declaration = declarationAfter(code, invocation.end);
+    conditions.push({
+      index: match.index,
+      line: lineAt(text, match.index),
+      declaration,
+      ...conditionMetadata(match[1], invocation.args),
+    });
+    SPRING_CONDITION.lastIndex = Math.max(SPRING_CONDITION.lastIndex, invocation.end);
+  }
 
   const classMappings = mappings
     .filter((item) => item.declaration.kind === "class")
@@ -176,9 +242,20 @@ export function extractSpringEndpoints(text, file) {
     const prefixes = owner?.paths?.length ? owner.paths : [""];
     const paths = mappingPaths(item.args);
     if (!paths.length) continue; // literal path was requested but could not be resolved
+    const activationConditions = conditions.filter((condition) => condition.declaration.start === item.declaration.start
+      || (owner && condition.declaration.start === owner.declaration.start));
+    const activation = activationConditions.length
+      ? {
+          conditional: true,
+          defaultActive: activationConditions.some((condition) => condition.defaultActive === false)
+            ? false
+            : activationConditions.every((condition) => condition.defaultActive === true) ? true : null,
+          conditions: activationConditions.map(({ declaration: _declaration, index: _index, ...condition }) => condition),
+        }
+      : {};
     for (const method of mappingMethods(item.annotation, item.args)) {
       for (const prefix of prefixes) for (const path of paths) {
-        out.push({ method, path: joinPaths(prefix, path), handler: item.declaration.name, file, line: item.line });
+        out.push({ method, path: joinPaths(prefix, path), handler: item.declaration.name, file, line: item.line, ...activation });
       }
     }
   }

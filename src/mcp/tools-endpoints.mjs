@@ -105,7 +105,10 @@ function endpointLine(endpoint) {
     const mount = endpoint.mountChain?.length
         ? endpoint.mountChain.map((item) => `${item.file}:${item.line} ${item.path}`).join(' → ')
         : 'no static router mount chain'
-    return `${endpoint.method} ${endpoint.path} → ${endpoint.handler || 'inline/unknown'} (${endpoint.file}:${endpoint.line}; ${endpoint.mountState}/${endpoint.confidence}; declared ${endpoint.declaredPath}; ${mount})`
+    const activation = endpoint.conditional
+        ? `; conditional default ${endpoint.defaultActive === false ? 'inactive' : endpoint.defaultActive === true ? 'active' : 'unknown'}`
+        : ''
+    return `${endpoint.method} ${endpoint.path} → ${endpoint.handler || 'inline/unknown'} (${endpoint.file}:${endpoint.line}; ${endpoint.mountState}/${endpoint.confidence}${activation}; declared ${endpoint.declaredPath}; ${mount})`
 }
 
 export function tTraceEndpoint(graph, args, ctx) {

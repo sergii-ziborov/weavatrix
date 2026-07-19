@@ -138,3 +138,49 @@ test('context_bundle reports outbound call-site files and excerpts instead of ta
         assert.match(bundle.text, /call site src\/controller\.ts:9 → src\/service\.ts/)
     } finally { rmSync(root, {recursive: true, force: true}) }
 })
+
+test('context_bundle ranks production inbound callers first, gates classified callers, and avoids overlapping excerpts', async () => {
+    const root = repository({
+        'src/service.ts': 'export function helper(){ return 1; }\nexport function work(){ return helper(); }\n',
+        'src/controller.ts': "import {work} from './service';\nexport function run(){ return work(); }\n",
+        'test/work.test.ts': [
+            "import {work} from '../src/service';",
+            'export function exercise(){',
+            '  work();',
+            '  work();',
+            '  return work();',
+            '}',
+        ].join('\n'),
+    })
+    try {
+        const raw = await buildInternalGraph(root)
+        const graphPath = join(root, 'graph.json')
+        writeFileSync(graphPath, JSON.stringify(raw))
+        const graph = loadGraph(graphPath)
+        const work = graph.nodes.find((node) => node.source_file === 'src/service.ts' && node.label === 'work()')
+        const production = await tContextBundle(graph, {
+            label: work.id, precision: 'graph', max_related: 10, max_source_files: 6, context_lines: 1,
+        }, {repoRoot: root, graphPath}, tInspectSymbol)
+        assert.equal(production.result.inbound.total, 1)
+        assert.equal(production.result.inbound.available, 2)
+        assert.equal(production.result.inbound.suppressed, 1)
+        assert.equal(production.result.inbound.shown[0].file, 'src/controller.ts')
+        assert.doesNotMatch(production.text, /test\/work\.test\.ts/)
+
+        const complete = await tContextBundle(graph, {
+            label: work.id, precision: 'graph', include_classified: true,
+            max_related: 10, max_source_files: 6, context_lines: 1,
+        }, {repoRoot: root, graphPath}, tInspectSymbol)
+        assert.deepEqual(complete.result.inbound.shown.map((group) => group.file), [
+            'src/controller.ts',
+            'test/work.test.ts',
+        ], 'production caller stays first even when the classified caller has more call sites')
+        assert.match(complete.text, /classified:test/)
+        for (let left = 0; left < complete.result.source.length; left++) for (let right = left + 1; right < complete.result.source.length; right++) {
+            const a = complete.result.source[left]
+            const b = complete.result.source[right]
+            assert.ok(a.file !== b.file || a.endLine < b.startLine || b.endLine < a.startLine,
+                `source excerpts overlap in ${a.file}: ${a.startLine}-${a.endLine} and ${b.startLine}-${b.endLine}`)
+        }
+    } finally { rmSync(root, {recursive: true, force: true}) }
+})

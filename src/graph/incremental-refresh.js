@@ -163,7 +163,7 @@ function mergeScopedGraph(base, scoped, affected, snapshot) {
     controlHashes: snapshot.controlHashes,
     graphRevision: snapshot.revision,
   };
-  for (const key of ["extImportsV", "edgeTypesV", "edgeProvenanceV", "complexityV", "repoBoundaryV", "barrelResolutionV", "reExportOccurrencesV", "symbolSpacesV", "extractorSchemaV"]) {
+  for (const key of ["extImportsV", "edgeTypesV", "edgeProvenanceV", "complexityV", "physicalFileLocV", "repoBoundaryV", "barrelResolutionV", "reExportOccurrencesV", "symbolSpacesV", "extractorSchemaV"]) {
     merged[key] = Math.max(Number(base[key]) || 0, Number(scoped[key]) || 0);
   }
   return merged;
@@ -184,7 +184,8 @@ export async function refreshGraphIncrementally(repoDir, existingGraph, {
 
   if (!existingGraph || !existingGraph.fileHashes || !existingGraph.fileExportSignatures
     || !existingGraph.controlHashes || !existingGraph.jsExportRecords || Number(existingGraph.barrelResolutionV) < 1
-    || Number(existingGraph.extractorSchemaV) < 5 || Number(existingGraph.reExportOccurrencesV) < 1
+    || Number(existingGraph.extractorSchemaV) < 5 || Number(existingGraph.physicalFileLocV) < 1
+    || Number(existingGraph.reExportOccurrencesV) < 1
     || Number(existingGraph.symbolSpacesV) < 1 || Number(existingGraph.edgeProvenanceV) < 1) {
     return full("incremental-baseline-unavailable");
   }

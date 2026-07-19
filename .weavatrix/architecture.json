@@ -1,0 +1,82 @@
+{
+  "architectureContractV": 1,
+  "name": "Weavatrix local repository intelligence boundaries",
+  "style": "ports-and-adapters",
+  "enforcement": "strict",
+  "components": [
+    {
+      "id": "runtime-shell",
+      "name": "CLI, MCP process, build and release adapters",
+      "paths": [
+        "bin",
+        "scripts",
+        "src/build-graph.js",
+        "src/mcp-server.mjs",
+        "src/mcp-source-tools.mjs"
+      ]
+    },
+    {"id": "mcp", "name": "MCP application and tool adapters", "paths": ["src/mcp"]},
+    {"id": "analysis", "name": "Repository analysis engines", "paths": ["src/analysis"]},
+    {"id": "graph", "name": "Code graph build, storage and traversal", "paths": ["src/graph"]},
+    {"id": "precision", "name": "Optional semantic precision providers", "paths": ["src/precision"]},
+    {"id": "security", "name": "Advisory and malware evidence", "paths": ["src/security"]},
+    {"id": "discovery", "name": "Repository, stack and infrastructure discovery", "paths": ["src/scan", "src/infra"]},
+    {
+      "id": "core",
+      "name": "Dependency-light shared runtime primitives",
+      "paths": [
+        "src/bounds.js",
+        "src/child-env.js",
+        "src/config.js",
+        "src/mcp-rg.mjs",
+        "src/path-classification.js",
+        "src/path-ignore.js",
+        "src/process.js",
+        "src/repo-path.js",
+        "src/util.js"
+      ]
+    },
+    {"id": "site", "name": "Static public site", "paths": ["site"]}
+  ],
+  "dependencyRules": [
+    {
+      "id": "core-stays-foundational",
+      "action": "forbid",
+      "kinds": ["any"],
+      "from": ["core"],
+      "to": ["runtime-shell", "mcp", "analysis", "graph", "precision", "security", "discovery", "site"],
+      "reason": "Shared primitives must not depend on product engines or adapters."
+    },
+    {
+      "id": "engines-do-not-depend-on-adapters",
+      "action": "forbid",
+      "kinds": ["any"],
+      "from": ["analysis", "graph", "precision", "security", "discovery"],
+      "to": ["mcp", "runtime-shell"],
+      "reason": "Repository engines remain reusable below MCP and process adapters."
+    },
+    {
+      "id": "site-stays-static",
+      "action": "forbid",
+      "kinds": ["any"],
+      "from": ["site"],
+      "to": ["runtime-shell", "mcp", "analysis", "graph", "precision", "security", "discovery", "core"],
+      "reason": "The public site must not become a runtime dependency of the local analysis package."
+    },
+    {
+      "id": "runtime-does-not-import-site",
+      "action": "forbid",
+      "kinds": ["any"],
+      "from": ["runtime-shell", "mcp", "analysis", "graph", "precision", "security", "discovery", "core"],
+      "to": ["site"],
+      "reason": "Static marketing assets stay outside the package runtime graph."
+    }
+  ],
+  "budgets": {
+    "runtimeCycles": 0,
+    "maxFileLoc": 300
+  },
+  "technologies": {"required": ["node"], "forbidden": []},
+  "exceptions": [],
+  "ratchet": {"baseline": {"fingerprints": [], "metrics": {}}}
+}

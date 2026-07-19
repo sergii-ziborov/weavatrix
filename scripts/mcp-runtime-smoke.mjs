@@ -123,7 +123,8 @@ async function inspectProfile({entryPoint, repoRoot, graphHome, profile, expecte
         const names = (listed.tools || []).map((tool) => tool.name).sort()
         assert.deepEqual(names, expectedTools, `${profile}: exact packaged tools/list`)
         assert.deepEqual(listed._meta?.['weavatrix/runtime'], {
-            version, profile, capabilities: profile === 'offline'
+            version, diskVersion: version, staleRuntime: false, staleRuntimeAllowed: false,
+            profile, capabilities: profile === 'offline'
                 ? ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo']
                 : ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo', 'advisories', 'hosted'],
             toolCount: expectedTools.length,
@@ -141,7 +142,7 @@ async function exerciseBehavior(server) {
         name: 'graph_stats', arguments: {output_format: 'json'},
     })
     assert.equal(stats.isError, undefined, contentText(stats))
-    assert.match(contentText(stats), /Weavatrix runtime: v[^;]+; profile full; 38 registered tools/)
+    assert.match(contentText(stats), /Weavatrix runtime: v[^;]+; disk v[^;]+; stale no; profile full; 38 registered tools/)
 
     const search = await server.request('tools/call', {
         name: 'search_code',

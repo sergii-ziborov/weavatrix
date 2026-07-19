@@ -1,107 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {spawn, spawnSync} from 'node:child_process'
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs'
+import {spawnSync} from 'node:child_process'
+import {cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
-import {fileURLToPath} from 'node:url'
-import {graphStorageKey} from '../src/graph/layout.js'
-import {persistedFreshnessMatches, repositoryFreshnessProbe} from '../src/graph/freshness-probe.js'
 import {PRECISION_OVERLAY_V} from '../src/precision/lsp-overlay.js'
-
-const SERVER = fileURLToPath(new URL('../src/mcp-server.mjs', import.meta.url))
-const PROJECT_ROOT = dirname(dirname(SERVER))
-
-function startServer(graphPath, repoRoot, graphHome, extraEnv = {}, capsArg) {
-    const child = spawn(process.execPath, [SERVER, graphPath, repoRoot, ...(capsArg == null ? [] : [capsArg])], {
-        cwd: PROJECT_ROOT,
-        env: {...process.env, WEAVATRIX_GRAPH_HOME: graphHome, WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS: '0', ...extraEnv},
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-    })
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    let stdout = ''
-    let stderr = ''
-    let nextId = 1
-    const pending = new Map()
-    let exitResult = null
-    let resolveExit
-    const exited = new Promise((resolve) => { resolveExit = resolve })
-
-    const failPending = (error) => {
-        for (const {reject, timer} of pending.values()) {
-            clearTimeout(timer)
-            reject(error)
-        }
-        pending.clear()
-    }
-    child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-16_000) })
-    child.stdout.on('data', (chunk) => {
-        stdout += chunk
-        let newline
-        while ((newline = stdout.indexOf('\n')) >= 0) {
-            const line = stdout.slice(0, newline).trim()
-            stdout = stdout.slice(newline + 1)
-            if (!line) continue
-            let message
-            try { message = JSON.parse(line) } catch { continue }
-            if (message.id == null || !pending.has(message.id)) continue
-            const entry = pending.get(message.id)
-            pending.delete(message.id)
-            clearTimeout(entry.timer)
-            if (message.error) entry.reject(new Error(message.error.message || 'MCP request failed'))
-            else entry.resolve(message.result)
-        }
-    })
-    child.once('error', (error) => failPending(error))
-    child.once('exit', (code, signal) => {
-        exitResult = {code, signal}
-        resolveExit(exitResult)
-        failPending(new Error(`MCP server exited before replying (code=${code}, signal=${signal})\n${stderr}`))
-    })
-
-    const request = (method, params = {}, timeoutMs = 60_000) => new Promise((resolve, reject) => {
-        const id = nextId++
-        const timer = setTimeout(() => {
-            pending.delete(id)
-            reject(new Error(`MCP request timed out: ${method}\n${stderr}`))
-        }, timeoutMs)
-        pending.set(id, {resolve, reject, timer})
-        child.stdin.write(`${JSON.stringify({jsonrpc: '2.0', id, method, params})}\n`)
-    })
-    const notify = (method, params = {}) => {
-        child.stdin.write(`${JSON.stringify({jsonrpc: '2.0', method, params})}\n`)
-    }
-    const endInput = () => {
-        if (!child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end()
-    }
-    const closeOutput = () => child.stdout.destroy()
-    const waitForExit = async (timeoutMs = 10_000) => {
-        if (exitResult) return exitResult
-        let timer
-        try {
-            return await Promise.race([
-                exited,
-                new Promise((_, reject) => {
-                    timer = setTimeout(() => reject(new Error(`MCP server did not exit within ${timeoutMs}ms\n${stderr}`)), timeoutMs)
-                }),
-            ])
-        } finally {
-            if (timer) clearTimeout(timer)
-        }
-    }
-    const stop = async () => {
-        if (child.exitCode != null || child.signalCode != null) return
-        endInput()
-        await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 8_000))])
-        if (child.exitCode == null && child.signalCode == null) child.kill()
-        if (child.exitCode == null && child.signalCode == null) {
-            await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 1_000))])
-        }
-    }
-    return {request, notify, endInput, closeOutput, waitForExit, stop, stderr: () => stderr}
-}
+import {MCP_SERVER as SERVER, PROJECT_ROOT, startServer} from './helpers/mcp-stdio-fixture.js'
 
 test('MCP stdio identifies its runtime profile and exact registered catalog', {timeout: 120_000}, async () => {
     const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-runtime-profile-'))
@@ -115,11 +19,14 @@ test('MCP stdio identifies its runtime profile and exact registered catalog', {t
             protocolVersion: '2024-11-05', capabilities: {},
             clientInfo: {name: 'weavatrix-test', version: '1.0.0'},
         })
-        assert.match(initialized.instructions, new RegExp(`^Weavatrix ${initialized.serverInfo.version}; profile=full; tools=38;`))
+        assert.match(initialized.instructions, new RegExp(`^Weavatrix ${initialized.serverInfo.version}; diskVersion=${initialized.serverInfo.version}; profile=full; tools=38;`))
         const listed = await server.request('tools/list')
         assert.equal(listed.tools.length, 38)
         assert.deepEqual(listed._meta['weavatrix/runtime'], {
             version: initialized.serverInfo.version,
+            diskVersion: initialized.serverInfo.version,
+            staleRuntime: false,
+            staleRuntimeAllowed: false,
             profile: 'full',
             capabilities: ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo', 'advisories', 'hosted'],
             toolCount: 38,
@@ -128,9 +35,53 @@ test('MCP stdio identifies its runtime profile and exact registered catalog', {t
             assert.ok(listed.tools.some((tool) => tool.name === name), name)
         }
         const stats = await server.request('tools/call', {name: 'graph_stats', arguments: {}}, 90_000)
-        assert.match(stats.content[0].text, /profile full; 38 registered tools/)
+        assert.match(stats.content[0].text, /stale no; profile full; 38 registered tools/)
     } finally {
         await server.stop()
+        rmSync(parent, {recursive: true, force: true})
+    }
+})
+
+test('MCP stdio fails loudly when package.json changes under a running process', {timeout: 120_000}, async () => {
+    const parent = mkdtempSync(join(PROJECT_ROOT, '.mcp-stale-runtime-'))
+    const stagedSrc = join(parent, 'src')
+    const stagedServer = join(stagedSrc, 'mcp-server.mjs')
+    const stagedPackage = join(parent, 'package.json')
+    const repo = join(parent, 'repo')
+    const graphPath = join(parent, 'graph', 'graph.json')
+    const currentPackage = JSON.parse(readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf8'))
+    cpSync(join(PROJECT_ROOT, 'src'), stagedSrc, {recursive: true})
+    writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: currentPackage.version, type: 'module'}))
+    mkdirSync(repo, {recursive: true})
+    const server = startServer(graphPath, repo, join(parent, 'graph-home'), {WEAVATRIX_PRECISION: 'off'}, 'full', stagedServer)
+    try {
+        await server.request('ping')
+        writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: '99.0.0', type: 'module'}))
+        const initialize = {protocolVersion: '2024-11-05', capabilities: {}, clientInfo: {name: 'stale-test', version: '1'}}
+        await assert.rejects(server.request('initialize', initialize), /STALE_RUNTIME: running Weavatrix .* package\.json on disk is 99\.0\.0/)
+        await assert.rejects(server.request('tools/list'), /STALE_RUNTIME/)
+        await assert.rejects(server.request('tools/call', {name: 'graph_stats', arguments: {}}), /STALE_RUNTIME/)
+    } finally { await server.stop() }
+
+    writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: currentPackage.version, type: 'module'}))
+    const override = startServer(graphPath, repo, join(parent, 'override-graph-home'), {
+        WEAVATRIX_PRECISION: 'off', WEAVATRIX_ALLOW_STALE_RUNTIME: '1',
+    }, 'full', stagedServer)
+    try {
+        await override.request('ping')
+        writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: '99.0.0', type: 'module'}))
+        const initialized = await override.request('initialize', {
+            protocolVersion: '2024-11-05', capabilities: {}, clientInfo: {name: 'stale-test', version: '1'},
+        })
+        assert.equal(initialized._meta['weavatrix/runtime'].diskVersion, '99.0.0')
+        assert.equal(initialized._meta['weavatrix/runtime'].staleRuntime, true)
+        assert.equal(initialized._meta['weavatrix/runtime'].staleRuntimeAllowed, true)
+        assert.match(initialized.instructions, /Development override is active/)
+        const listed = await override.request('tools/list')
+        assert.equal(listed.tools.length, 38)
+        assert.equal(listed._meta['weavatrix/runtime'].staleRuntime, true)
+    } finally {
+        await override.stop()
         rmSync(parent, {recursive: true, force: true})
     }
 })
@@ -319,164 +270,5 @@ test('MCP EOF drains an in-flight precision refresh and tolerates a closed stdou
         // On Windows an orphaned TLS/tsserver tree retains this cwd long enough for recursive removal
         // to fail. Retried deletion turns that process leak into a deterministic regression signal.
         rmSync(parent, {recursive: true, force: true, maxRetries: 20, retryDelay: 50})
-    }
-})
-
-test('persisted freshness skips the full snapshot after MCP restart and is replaced after a partial refresh', {timeout: 120_000}, async () => {
-    const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-persisted-freshness-'))
-    const repo = join(parent, 'repo')
-    const graphHome = join(parent, 'graph-home')
-    const graphDir = join(graphHome, graphStorageKey(repo))
-    const graphPath = join(graphDir, 'graph.json')
-    const source = join(repo, 'src', 'calculate.js')
-    mkdirSync(dirname(source), {recursive: true})
-    writeFileSync(join(repo, 'package.json'), JSON.stringify({name: 'restart-fixture', version: '1.0.0', type: 'module'}))
-    writeFileSync(source, 'export function calculate(value) { return value + 1 }\n')
-    git(repo, ['init', '-q'])
-    git(repo, ['add', '.'])
-    git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'baseline'])
-
-    const callStats = async (server, timeoutMs = 60_000) => {
-        await server.request('initialize', {protocolVersion: '2024-11-05', capabilities: {}, clientInfo: {name: 'weavatrix-test', version: '1.0.0'}})
-        server.notify('notifications/initialized')
-        return server.request('tools/call', {name: 'graph_stats', arguments: {output_format: 'json'}}, timeoutMs)
-    }
-
-    try {
-        const firstServer = startServer(graphPath, repo, graphHome)
-        try {
-            const first = await callStats(firstServer)
-            assert.equal(first.structuredContent.graph.update, 'full')
-        } finally { await firstServer.stop() }
-
-        const firstRaw = JSON.parse(readFileSync(graphPath, 'utf8'))
-        const firstProbe = repositoryFreshnessProbe(repo)
-        assert.equal(persistedFreshnessMatches(firstRaw, firstProbe, 'full'), true)
-
-        // A live canonical graph lock makes an accidental build path block. The restarted server must
-        // answer through its persisted probe without touching the repository snapshot/build transaction.
-        const lockDir = join(graphDir, '.graph.lock')
-        mkdirSync(lockDir)
-        writeFileSync(join(lockDir, 'owner'), `${process.pid}\n${new Date().toISOString()}\n`)
-        const restarted = startServer(graphPath, repo, graphHome)
-        try {
-            const startedAt = Date.now()
-            const unchanged = await callStats(restarted, 3_000)
-            assert.equal(unchanged.structuredContent.graph.update, 'none')
-            assert.ok(Date.now() - startedAt < 2_900, 'persisted-probe restart must not wait for the graph lock')
-        } finally { await restarted.stop() }
-        rmSync(lockDir, {recursive: true, force: true})
-
-        // Same-size dirty edit across another process invalidates the stamp and takes the incremental
-        // authority path. The refreshed graph persists the new exact dirty-content probe.
-        writeFileSync(source, 'export function calculate(value) { return value + 2 }\n')
-        const dirtyProbe = repositoryFreshnessProbe(repo)
-        assert.notEqual(dirtyProbe, firstProbe)
-        const dirtyServer = startServer(graphPath, repo, graphHome)
-        try {
-            const refreshed = await callStats(dirtyServer)
-            assert.equal(refreshed.structuredContent.graph.update, 'incremental')
-            assert.ok(refreshed.structuredContent.graph.changedFiles >= 1)
-        } finally { await dirtyServer.stop() }
-        const refreshedRaw = JSON.parse(readFileSync(graphPath, 'utf8'))
-        assert.equal(persistedFreshnessMatches(refreshedRaw, dirtyProbe, 'full'), true)
-
-        // A legacy graph safely performs one authoritative fallback and gains a restart stamp. This is
-        // intentionally a metadata-only rewrite when source content itself is unchanged.
-        for (const key of [
-            'repositoryFreshnessProbeV',
-            'repositoryFreshnessBuilderSchemaV',
-            'repositoryFreshnessBuilderVersion',
-            'repositoryFreshnessProbe',
-            'repositoryFreshnessMode',
-        ]) delete refreshedRaw[key]
-        writeFileSync(graphPath, JSON.stringify(refreshedRaw))
-        const legacyServer = startServer(graphPath, repo, graphHome)
-        try {
-            const migrated = await callStats(legacyServer)
-            assert.equal(migrated.structuredContent.graph.update, 'none')
-        } finally { await legacyServer.stop() }
-        const migratedRaw = JSON.parse(readFileSync(graphPath, 'utf8'))
-        assert.equal(persistedFreshnessMatches(migratedRaw, dirtyProbe, 'full'), true)
-    } finally { rmSync(parent, {recursive: true, force: true}) }
-})
-
-test('MCP auto-refresh preserves an active no-tests graph mode', {timeout: 120_000}, async () => {
-    const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-no-tests-'))
-    const repo = join(parent, 'repo')
-    const graphPath = join(parent, 'classic-graph-output', 'graph.json')
-    mkdirSync(join(repo, 'src'), {recursive: true})
-    mkdirSync(join(repo, 'test-e2e', 'cypress'), {recursive: true})
-    writeFileSync(join(repo, 'src', 'app.js'), 'export const app = 1\n')
-    writeFileSync(join(repo, 'test-e2e', 'cypress', 'app.cy.js'), "import { app } from '../../src/app.js'\nconsole.log(app)\n")
-
-    const server = startServer(graphPath, repo, join(parent, 'graph-home'))
-    try {
-        await server.request('initialize', {protocolVersion: '2024-11-05', capabilities: {}, clientInfo: {name: 'weavatrix-test', version: '1.0.0'}})
-        server.notify('notifications/initialized')
-        const rebuilt = await server.request('tools/call', {name: 'rebuild_graph', arguments: {mode: 'no-tests', precision: 'off'}})
-        assert.equal(rebuilt.isError, undefined, server.stderr())
-        const preserved = await server.request('tools/call', {name: 'rebuild_graph', arguments: {}})
-        assert.equal(preserved.isError, undefined, server.stderr())
-        const stats = await server.request('tools/call', {name: 'graph_stats', arguments: {output_format: 'json'}})
-        assert.equal(stats.isError, undefined, server.stderr())
-        assert.equal(stats.structuredContent.graph.update, 'none')
-        const saved = JSON.parse(readFileSync(graphPath, 'utf8'))
-        assert.equal(saved.graphBuildMode, 'no-tests')
-        assert.equal(saved.graphPrecisionMode, 'off')
-        assert.equal(saved.nodes.some((node) => String(node.source_file).startsWith('test-e2e/')), false)
-    } finally {
-        await server.stop()
-        rmSync(parent, {recursive: true, force: true})
-    }
-})
-
-test('MCP no-tests refreshes membership when .weavatrix.json classification changes', {timeout: 120_000}, async () => {
-    const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-classification-'))
-    const repo = join(parent, 'repo')
-    const graphPath = join(parent, 'classic-graph-output', 'graph.json')
-    mkdirSync(join(repo, 'src'), {recursive: true})
-    mkdirSync(join(repo, 'quality'), {recursive: true})
-    writeFileSync(join(repo, 'src', 'app.js'), 'export const app = 1\n')
-    writeFileSync(join(repo, 'quality', 'probe.js'), 'export const probe = 1\n')
-    writeFileSync(join(repo, '.weavatrix.json'), JSON.stringify({classify: {test: ['quality/**']}}))
-    const server = startServer(graphPath, repo, join(parent, 'graph-home'))
-    try {
-        await server.request('initialize', {protocolVersion: '2024-11-05', capabilities: {}, clientInfo: {name: 'weavatrix-test', version: '1.0.0'}})
-        server.notify('notifications/initialized')
-        await server.request('tools/call', {name: 'rebuild_graph', arguments: {mode: 'no-tests'}})
-        let saved = JSON.parse(readFileSync(graphPath, 'utf8'))
-        assert.equal(saved.nodes.some((node) => node.source_file === 'quality/probe.js'), false)
-        writeFileSync(join(repo, '.weavatrix.json'), JSON.stringify({classify: {test: []}}))
-        const stats = await server.request('tools/call', {name: 'graph_stats', arguments: {output_format: 'json'}})
-        assert.equal(stats.structuredContent.graph.update, 'full')
-        saved = JSON.parse(readFileSync(graphPath, 'utf8'))
-        assert.equal(saved.graphBuildMode, 'no-tests')
-        assert.equal(saved.nodes.some((node) => node.source_file === 'quality/probe.js'), true)
-    } finally {
-        await server.stop()
-        rmSync(parent, {recursive: true, force: true})
-    }
-})
-
-test('list_endpoints refreshes the graph before discovering a newly added route file', {timeout: 120_000}, async () => {
-    const parent = mkdtempSync(join(tmpdir(), 'weavatrix-mcp-endpoints-'))
-    const repo = join(parent, 'repo')
-    const graphPath = join(parent, 'classic-graph-output', 'graph.json')
-    mkdirSync(join(repo, 'src'), {recursive: true})
-    writeFileSync(join(repo, 'package.json'), JSON.stringify({name: 'endpoint-fixture', version: '1.0.0'}))
-    writeFileSync(join(repo, 'src', 'app.js'), 'export const app = {}\n')
-    const server = startServer(graphPath, repo, join(parent, 'graph-home'))
-    try {
-        await server.request('initialize', {protocolVersion: '2024-11-05', capabilities: {}, clientInfo: {name: 'weavatrix-test', version: '1.0.0'}})
-        server.notify('notifications/initialized')
-        await server.request('tools/call', {name: 'graph_stats', arguments: {output_format: 'json'}})
-        writeFileSync(join(repo, 'src', 'routes.js'), "router.get('/api/live', liveHandler)\n")
-        const endpoints = await server.request('tools/call', {name: 'list_endpoints', arguments: {max_results: 20}})
-        assert.equal(endpoints.isError, undefined, server.stderr())
-        assert.match(endpoints.content[0].text, /GET\s+\/api\/live/)
-    } finally {
-        await server.stop()
-        rmSync(parent, {recursive: true, force: true})
     }
 })

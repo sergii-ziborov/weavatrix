@@ -67,6 +67,9 @@ test("incremental refresh reparses one edited file plus bounded reverse importer
     assert.equal(result.graph.barrelResolutionV, baseline.barrelResolutionV);
     assert.equal(result.graph.edgeTypesV, baseline.edgeTypesV);
     assert.equal(result.graph.edgeProvenanceV, baseline.edgeProvenanceV);
+    assert.equal(result.graph.physicalFileLocV, 1);
+    assert.equal(result.graph.nodes.find((node) => node.id === "src/value.ts")?.physical_loc, 1,
+      "incremental merges preserve fresh physical file LOC metadata");
     const ids = new Set(result.graph.nodes.map((node) => String(node.id)));
     assert.ok(result.graph.links.every((link) => ids.has(String(link.source)) && ids.has(String(link.target))), "merged graph has no dangling endpoints");
     const value = result.graph.nodes.find((node) => node.source_file === "src/value.ts" && String(node.id).includes("#value@"));

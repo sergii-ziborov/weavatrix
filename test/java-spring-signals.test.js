@@ -61,6 +61,46 @@ test("repository endpoint inventory reads Java files and recognizes fully-qualif
   }
 });
 
+test("Spring endpoint inventory preserves conditional activation and default-inactive metadata", () => {
+  const source = [
+    "@RestController",
+    "@ConditionalOnExpression(\"${feature.controller:false}\")",
+    "@RequestMapping(\"/api\")",
+    "class FeatureController {",
+    "  @GetMapping(\"/read\")",
+    "  public String read() { return \"ok\"; }",
+    "",
+    "  @ConditionalOnProperty(prefix = \"feature\", name = {\"write\", \"api\"}, havingValue = \"true\", matchIfMissing = false)",
+    "  @PostMapping(\"/write\")",
+    "  public void write() {}",
+    "}",
+    "",
+    "@RestController",
+    "@ConditionalOnProperty(prefix = \"feature\", name = \"optional\", matchIfMissing = true)",
+    "@RequestMapping(\"/optional\")",
+    "class OptionalController {",
+    "  @GetMapping",
+    "  public String get() { return \"ok\"; }",
+    "}",
+  ].join("\n");
+
+  const found = extractEndpointsFromText(source, "src/main/java/com/acme/FeatureController.java");
+  const read = endpoint(found, "GET", "/api/read");
+  const write = endpoint(found, "POST", "/api/write");
+  const optional = endpoint(found, "GET", "/optional");
+
+  assert.equal(read.conditional, true);
+  assert.equal(read.defaultActive, false);
+  assert.deepEqual(read.conditions.map((condition) => condition.type), ["ConditionalOnExpression"]);
+  assert.equal(read.conditions[0].expression, "${feature.controller:false}");
+  assert.equal(write.defaultActive, false);
+  assert.deepEqual(write.conditions.map((condition) => condition.type), ["ConditionalOnExpression", "ConditionalOnProperty"]);
+  assert.deepEqual(write.conditions[1].properties, ["write", "api"]);
+  assert.equal(write.conditions[1].matchIfMissing, false);
+  assert.equal(optional.defaultActive, true);
+  assert.equal(optional.conditions[0].prefix, "feature");
+});
+
 test("Spring-managed application, configuration, component and repository files are explainable convention roots", async () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-spring-audit-"));
   try {

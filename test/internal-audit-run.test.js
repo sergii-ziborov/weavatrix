@@ -4,6 +4,30 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runInternalAudit } from "../src/analysis/internal-audit.js";
+import { formatOrdinaryAudit } from "../src/mcp/health/audit-format.mjs";
+
+test("internal audit leaves dependency health NOT_CHECKED when no manifest ecosystem was discovered", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-no-deps-"));
+  try {
+    writeFileSync(join(repo, "README.md"), "fixture without a dependency manifest\n");
+    const audit = await runInternalAudit(repo, {
+      graph: { nodes: [], links: [], externalImports: [] },
+      advisoryStorePath: join(repo, "missing-advisories.json"),
+      skipMalwareScan: true,
+    });
+
+    assert.equal(audit.dependencyReport.status, "NOT_CHECKED");
+    assert.deepEqual(audit.dependencyReport.verificationCoverage, {});
+    assert.match(audit.dependencyReport.reason, /verification did not run/);
+    assert.equal(audit.healthCapabilities.dependencies.status, "NOT_CHECKED");
+    const text = formatOrdinaryAudit(audit, {});
+    assert.match(text, /Dependency manifests: NOT_CHECKED/);
+    assert.match(text, /no dependency verdict was produced/);
+    assert.doesNotMatch(text, /checked 0 declared package/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test("internal audit reports NOT_CHECKED states and honors managed Python runtime config", async () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-run-"));
@@ -27,6 +51,14 @@ test("internal audit reports NOT_CHECKED states and honors managed Python runtim
     assert.equal(audit.dependencyReport.unused, 0);
     assert.equal(audit.dependencyReport.missing, 0);
     assert.ok(!audit.findings.some((f) => f.rule === "missing-dep" && f.package === "numpy"));
+    assert.equal(audit.healthCapabilities.structure.status, "CHECKED");
+    assert.equal(audit.healthCapabilities.dependencies.status, "CHECKED");
+    assert.equal(audit.healthCapabilities.dependencies.completeness, "COMPLETE");
+    assert.equal(audit.healthCapabilities.runtimeCorrectness.status, "CHECKED");
+    assert.equal(audit.healthCapabilities.concurrency.status, "NOT_SUPPORTED");
+    assert.equal(audit.healthCapabilities.advisories.status, "NOT_CHECKED");
+    assert.equal(audit.healthCapabilities.malware.status, "NOT_CHECKED");
+    assert.equal(audit.healthCapabilities.coverage.status, "NOT_CHECKED");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -100,4 +132,98 @@ test("internal audit suppresses convention/generated/config-excluded dead and un
     assert.equal(audit.scanned.pathClassifications.generated, 1);
     assert.equal(audit.scanned.pathClassificationExcluded, 1);
   } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("internal audit reports Maven and Gradle evidence as NOT_SUPPORTED/PARTIAL instead of a clean 0/0", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-jvm-deps-"));
+  try {
+    const javaFile = "src/main/java/com/acme/App.java";
+    mkdirSync(join(repo, "src", "main", "java", "com", "acme"), { recursive: true });
+    writeFileSync(join(repo, javaFile), "package com.acme; class App { void run() {} }\n");
+    writeFileSync(join(repo, "pom.xml"), [
+      "<project>",
+      "  <dependencyManagement><dependencies>",
+      "    <dependency><groupId>managed</groupId><artifactId>not-direct</artifactId></dependency>",
+      "  </dependencies></dependencyManagement>",
+      "  <dependencies>",
+      "    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId></dependency>",
+      "    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency>",
+      "  </dependencies>",
+      "</project>",
+    ].join("\n"));
+    writeFileSync(join(repo, "build.gradle.kts"), "dependencies {\n  implementation(\"com.google.guava:guava:33.0.0-jre\")\n}\n");
+    const audit = await runInternalAudit(repo, {
+      graph: {
+        nodes: [{ id: javaFile, source_file: javaFile, file_type: "code" }],
+        links: [],
+        externalImports: [{ file: javaFile, spec: "org.slf4j.Logger", pkg: "org.slf4j", line: 1 }],
+      },
+      advisoryStorePath: join(repo, "missing-advisories.json"),
+      skipMalwareScan: true,
+    });
+
+    assert.equal(audit.ok, true);
+    assert.equal(audit.dependencyReport.status, "PARTIAL");
+    assert.equal(audit.dependencyReport.ecosystems.maven.status, "NOT_SUPPORTED");
+    assert.equal(audit.dependencyReport.ecosystems.maven.completeness, "PARTIAL");
+    assert.equal(audit.dependencyReport.ecosystems.maven.declared, 2);
+    assert.equal(audit.dependencyReport.ecosystems.gradle.status, "NOT_SUPPORTED");
+    assert.equal(audit.dependencyReport.ecosystems.gradle.declared, 1);
+    assert.equal(audit.dependencyReport.declared, 3);
+    assert.equal(audit.dependencyReport.missing, 0, "an unmapped Java package must not become a false npm missing-dependency finding");
+    assert.match(audit.dependencyReport.reason, /package-to-artifact verification is NOT_SUPPORTED/);
+    assert.doesNotMatch(audit.dependencyReport.reason, /npm/i);
+    assert.equal(audit.healthCapabilities.dependencies.status, "NOT_SUPPORTED");
+    assert.equal(audit.healthCapabilities.dependencies.completeness, "PARTIAL");
+    assert.equal(audit.healthCapabilities.advisories.status, "NOT_SUPPORTED");
+    assert.equal(audit.healthCapabilities.malware.status, "NOT_SUPPORTED");
+    assert.equal(audit.healthCapabilities.coverage.status, "NOT_SUPPORTED");
+    assert.equal(audit.healthCapabilities.concurrency.status, "CHECKED");
+    assert.match(audit.healthCapabilities.concurrency.detail, /No race detector ran/);
+    const text = formatOrdinaryAudit(audit, {});
+    assert.match(text, /Dependency manifests: PARTIAL/);
+    assert.match(text, /package-to-artifact verification is NOT_SUPPORTED/);
+    assert.match(text, /no unused, missing, or duplicate-declaration verdict was produced/);
+    assert.doesNotMatch(text, /checked 3 declared package/);
+    assert.doesNotMatch(text, /unused 0, missing 0/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("mixed supported and unsupported dependency summary separates checked declarations from inventory", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-mixed-deps-"));
+  try {
+    const jsFile = "src/index.js";
+    const javaFile = "src/main/java/com/acme/App.java";
+    mkdirSync(join(repo, "src", "main", "java", "com", "acme"), { recursive: true });
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "mixed", dependencies: { "left-pad": "1.3.0" } }));
+    writeFileSync(join(repo, "pom.xml"), "<project><dependencies><dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId></dependency></dependencies></project>\n");
+    writeFileSync(join(repo, jsFile), "import leftPad from 'left-pad'; console.log(leftPad);\n");
+    writeFileSync(join(repo, javaFile), "package com.acme; import org.slf4j.Logger; class App {}\n");
+    const audit = await runInternalAudit(repo, {
+      graph: {
+        nodes: [jsFile, javaFile].map((file) => ({ id: file, source_file: file, file_type: "code" })),
+        links: [],
+        externalImports: [
+          { file: jsFile, spec: "left-pad", pkg: "left-pad", ecosystem: "npm", line: 1 },
+          { file: javaFile, spec: "org.slf4j.Logger", pkg: "org.slf4j", line: 1 },
+        ],
+      },
+      advisoryStorePath: join(repo, "missing-advisories.json"),
+      skipMalwareScan: true,
+    });
+
+    assert.equal(audit.dependencyReport.status, "PARTIAL");
+    assert.equal(audit.dependencyReport.ecosystems.npm.status, "CHECKED");
+    assert.equal(audit.dependencyReport.ecosystems.maven.status, "NOT_SUPPORTED");
+    const text = formatOrdinaryAudit(audit, {});
+    assert.match(text, /checked 1 declaration\(s\) across 1 supported manifest\(s\) \(npm\)/);
+    assert.match(text, /inventoried 1 declaration\(s\) across 1 unsupported manifest\(s\) \(maven\)/);
+    assert.match(text, /Supported-ecosystem findings:/);
+    assert.doesNotMatch(text, /checked 2 declared package/);
+    assert.doesNotMatch(text, /against 2 external import/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

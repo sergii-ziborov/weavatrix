@@ -70,6 +70,30 @@ test("dead-code review makes reflection/framework uncertainty explicit", () => {
   assert.ok(result.warnings.some((warning) => warning.code === "REFLECTION_PRESENT"));
 });
 
+test("Go grouped imports are not mislabeled as dynamic loading", () => {
+  const goFile = "main.go";
+  const goNode = symbolNode(goFile, "unused", 6, { visibility: "private" });
+  const graph = {
+    nodes: [fileNode(goFile), goNode],
+    links: [{ source: goFile, target: goNode.id, relation: "contains" }],
+    externalImports: [],
+  };
+  const go = computeDeadCodeReview(graph, new Map([[goFile,
+    'package main\nimport (\n  "fmt"\n  "reflect"\n)\nfunc unused() {}\n',
+  ]]));
+  assert.equal(go.repoSignals.dynamicLoading, false);
+  assert.equal(go.warnings.some((warning) => warning.code === "DYNAMIC_LOADING_PRESENT"), false);
+
+  const jsFile = "src/plugin.js";
+  const jsNode = symbolNode(jsFile, "unused", 2, { visibility: "private" });
+  const js = computeDeadCodeReview({
+    nodes: [fileNode(jsFile), jsNode],
+    links: [{ source: jsFile, target: jsNode.id, relation: "contains" }],
+    externalImports: [],
+  }, new Map([[jsFile, 'const plugin = import(name);\nfunction unused() {}\n']]));
+  assert.equal(js.repoSignals.dynamicLoading, true);
+});
+
 test("dead-code review excludes tests and generated/classified paths unless explicitly opted in", () => {
   const testFile = "test-e2e/helpers.js";
   const generatedFile = "src/generated/client.js";

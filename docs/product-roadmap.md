@@ -54,9 +54,9 @@ That remains Hosted `0.4.0`, after the operational and evidence foundations.
 - Delivered foundation: representative Java OOP and Rust module/endpoint assertions; the current
   golden gap lists are empty.
 - Delivered layer: portable manifest-driven real-repository runner, exact 0.2.1 source-free
-  baselines for five available checkouts, a 5% unexplained-relation regression gate and explicit
-  `MISSING`/`UNBASELINED`/`STALE` states. The Rust source checkout is still unavailable locally, so
-  the strict six-repository release gate correctly remains incomplete.
+  baselines for all six release checkouts, a 5% unexplained-relation regression gate and explicit
+  `MISSING`/`UNBASELINED`/`STALE` states. The strict six-repository release gate now passes while
+  retaining honest incomplete states for an unavailable or stale checkout.
 - Delivered: framework peer/build-tool and convention-consumer fixtures with negative controls.
 - Delivered: versioned `EXACT_LSP` / `EXTRACTED` / `RESOLVED` / `INFERRED` / `CONFLICT`
   edge-provenance contract, complete golden/real gates, V3 sync allowlisting and current docs/skill.

@@ -1,6 +1,6 @@
 {
   "name": "weavatrix",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "type": "module",
   "description": "Local repository intelligence MCP for AI coding agents: reusable architecture graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "author": "Sergii Ziborov <sergii.ziborov@gmail.com>",
@@ -26,7 +26,7 @@
     "skill",
     "scripts/run-agent-task-benchmark.mjs",
     "docs/agent-task-benchmark.md",
-    "docs/releases/v0.2.13.md",
+    "docs/releases/v0.2.14.md",
     "README.md",
     "SECURITY.md",
     "LICENSE"

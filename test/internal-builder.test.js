@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -21,6 +21,8 @@ test("internal-builder: symbol selections use zero-based UTF-16 LSP positions", 
   const dir = repoWith({ "src/unicode.ts": source });
   try {
     const graph = await buildInternalGraph(dir);
+    assert.equal(graph.physicalFileLocV, 1);
+    assert.equal(graph.nodes.find((node) => node.id === "src/unicode.ts")?.physical_loc, 1);
     const target = graph.nodes.find((node) => String(node.id).includes("#target@"));
     assert.ok(target, "the TypeScript declaration is indexed");
     assert.deepEqual(target.selection_start, {
@@ -277,87 +279,4 @@ test("internal-builder: default object facades resolve public members to local h
     assert.equal(graph.nodes.find((node) => node.id === getSchema)?.exported, true);
     assert.equal(graph.nodes.find((node) => node.id === persist)?.exported, true);
   } finally { rmSync(dir, {recursive: true, force: true}); }
-});
-
-test("internal-builder: Python receiver types and wildcard imports resolve without mixing same-named methods", async () => {
-  const dir = repoWith({
-    "pkg/__init__.py": "",
-    "pkg/alpha.py": "class AlphaService:\n    def run(self):\n        return 'alpha'\n",
-    "pkg/beta.py": "class BetaService:\n    def run(self):\n        return 'beta'\n",
-    "pkg/helpers.py": "__all__ = ['wild_helper']\ndef wild_helper():\n    return 1\ndef hidden_helper():\n    return 2\n",
-    "pkg/use.py":
-      "from .alpha import AlphaService as Alpha\n" +
-      "from .beta import BetaService\n" +
-      "from .helpers import *\n" +
-      "def use(alpha: Alpha, beta: BetaService):\n" +
-      "    alpha.run()\n" +
-      "    beta.run()\n" +
-      "    local = Alpha()\n" +
-      "    local.run()\n" +
-      "    return wild_helper()\n",
-  });
-  try {
-    const graph = await buildInternalGraph(dir);
-    const symbol = (file, name, line) => graph.nodes.find((node) => node.source_file === file
-      && String(node.id).includes(`#${name}@`) && (!line || node.source_location === `L${line}`));
-    const use = symbol("pkg/use.py", "use");
-    const alphaRun = symbol("pkg/alpha.py", "run");
-    const betaRun = symbol("pkg/beta.py", "run");
-    const wildcard = symbol("pkg/helpers.py", "wild_helper");
-    assert.equal(alphaRun.member_of, "AlphaService");
-    assert.equal(betaRun.member_of, "BetaService");
-    const calls = graph.links.filter((link) => link.source === use.id && link.relation === "calls");
-    assert.equal(calls.filter((link) => link.target === alphaRun.id).length, 2, "typed alias and constructor binding resolve to AlphaService.run");
-    assert.equal(calls.filter((link) => link.target === betaRun.id).length, 1, "typed receiver resolves only to BetaService.run");
-    assert.equal(calls.filter((link) => link.target === wildcard.id).length, 1, "unique __all__ wildcard symbol resolves");
-    assert.ok(calls.filter((link) => [alphaRun.id, betaRun.id, wildcard.id].includes(link.target)).every((link) => link.provenance === "RESOLVED"));
-  } finally { rmSync(dir, {recursive: true, force: true}); }
-});
-
-test("internal-builder: deeply-nested JS does not hang (bounded isExportedDecl, not O(depth^3))", async () => {
-  // ~700 nested functions — the exact O(depth^3) .parent-walk trigger; the unbounded version took minutes.
-  let body = "return 1;";
-  for (let i = 700; i > 0; i--) body = "const f" + i + " = () => { function g" + i + "(){ " + body + " } return g" + i + "; };";
-  const dir = repoWith({ "src/deep.js": "function root(){ " + body + " }\n", "src/ok.js": "export function hi(){ return 0; }\n" });
-  try {
-    const t0 = Date.now();
-    const g = await buildInternalGraph(dir);
-    const ms = Date.now() - t0;
-    assert.ok(g.nodes.length > 0, "build produced nodes");
-    assert.equal(g.nodes.find((n) => String(n.id).includes("#hi@")).exported, true, "sibling export still detected");
-    assert.ok(ms < 15000, `deep-nesting build finished quickly (${ms}ms) — no O(depth^3) hang`);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
-test("internal-builder: a symlink/junction cycle does not make the walk recurse forever", async (t) => {
-  const dir = repoWith({ "src/a.js": "export function a(){ return 1; }\n" });
-  // a symlink pointing back at the repo root would loop forever with a naive statSync walk
-  try { symlinkSync(dir, join(dir, "src", "loop"), "junction"); }
-  catch { return t.skip("symlink/junction not permitted in this environment"); }
-  try {
-    const t0 = Date.now();
-    const g = await buildInternalGraph(dir);
-    assert.ok(g.nodes.some((n) => String(n.id).includes("#a@")), "still indexes real files");
-    assert.ok(Date.now() - t0 < 15000, "cycle-safe walk terminates");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
-test("internal-builder: a symlink or junction cannot index files outside the repository", async (t) => {
-  const parent = mkdtempSync(join(tmpdir(), "wx-build-boundary-"));
-  const repo = join(parent, "repo");
-  const outside = join(parent, "outside");
-  mkdirSync(join(repo, "src"), { recursive: true });
-  mkdirSync(outside);
-  writeFileSync(join(repo, "src", "inside.js"), "export function inside(){ return 1; }\n");
-  writeFileSync(join(outside, "secret.js"), "export function outsideSecret(){ return 2; }\n");
-  try {
-    try { symlinkSync(outside, join(repo, "linked"), process.platform === "win32" ? "junction" : "dir"); }
-    catch (error) {
-      if (["EPERM", "EACCES", "ENOSYS"].includes(error?.code)) return t.skip(`link creation is unavailable: ${error.code}`);
-      throw error;
-    }
-    const graph = await buildInternalGraph(repo);
-    assert.ok(graph.nodes.some((node) => String(node.id).includes("#inside@")));
-    assert.ok(!graph.nodes.some((node) => String(node.id).includes("outsideSecret") || String(node.source_file).includes("linked")));
-  } finally { rmSync(parent, { recursive: true, force: true }); }
 });

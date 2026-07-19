@@ -1,55 +1,13 @@
 // internal-audit.collect.js — filesystem collection helpers for the internal audit: source/config
 // text gathering, workspace package names, and the Python manifest reader. Split from internal-audit.js.
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps, pep503 } from "./manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
-import { childProcessEnv } from "../child-env.js";
-import { filterWeavatrixIgnored } from "../path-ignore.js";
+import {listRepoFiles, readJson, readRepoJson, readRepoText, readText} from './internal-audit/repo-files.js'
 
-export const readText = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
-export const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
-export const readRepoText = (boundary, relativePath) => {
-  const resolved = boundary.resolve(relativePath);
-  return resolved.ok ? readText(resolved.path) : null;
-};
-export const readRepoJson = (boundary, relativePath) => {
-  const resolved = boundary.resolve(relativePath);
-  return resolved.ok ? readJson(resolved.path) : null;
-};
-const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|py|go|vue|svelte)$/i;
-const SOURCE_SKIP_DIRS = new Set([
-  ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", ".next", "out",
-  "release", "weavatrix-graphs", "__pycache__", ".venv", "venv", "env", ".tox", "site-packages",
-  ".mypy_cache", ".pytest_cache",
-]);
-
-// One file universe for every filesystem-backed audit. In Git repos this exactly matches tracked files
-// plus untracked/non-ignored work, so release bundles and other .gitignore outputs cannot re-enter through
-// text/config/manifest fallback collectors after the graph builder correctly omitted them.
-export function listRepoFiles(repoRoot) {
-  try {
-    const r = spawnSync("git", ["-C", repoRoot, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
-      encoding: "utf8", windowsHide: true, timeout: 15_000, maxBuffer: 32 * 1024 * 1024,
-      env: childProcessEnv(),
-    });
-    if (r.status === 0) return filterWeavatrixIgnored(repoRoot, String(r.stdout || "").split("\0").filter(Boolean).map((f) => f.replace(/\\/g, "/")));
-  } catch { /* non-Git repo or git unavailable: use the bounded walker below */ }
-
-  const files = [];
-  const walk = (abs, parts = []) => {
-    let entries = [];
-    try { entries = readdirSync(abs, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        if (!SOURCE_SKIP_DIRS.has(entry.name)) walk(join(abs, entry.name), [...parts, entry.name]);
-      } else if (entry.isFile()) files.push([...parts, entry.name].join("/"));
-    }
-  };
-  walk(repoRoot);
-  return filterWeavatrixIgnored(repoRoot, files);
-}
+export {listRepoFiles, readJson, readRepoJson, readRepoText, readText} from './internal-audit/repo-files.js'
+export {collectPyManifest} from './internal-audit/python-manifests.js'
+const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|py|go|java|rs|cs|vue|svelte)$/i;
 
 const NON_RUNTIME_DIR_RE = /^(?:templates?|examples?|samples?|fixtures?|snippets?|__fixtures__)$/i;
 const NON_RUNTIME_README_RE = /(?:\b(?:reusable|copyable|reference)\b[\s\S]{0,160}\b(?:templates?|snippets?|examples?|samples?)\b|\b(?:these|contents?)\s+are\s+templates?\b)/i;
@@ -253,62 +211,3 @@ export function workspacePkgNames(repoRoot, pkg) {
 }
 
 export const TEST_FILE_RE = /(^|[/])(test|tests|__tests__|spec|e2e|__mocks__)([/]|$)|[._-](test|spec)\.[a-z0-9]+$/i;
-
-// Python declared deps are owned by the nearest manifest root, matching nested service/monorepo
-// layouts. `requirements/*.txt` belongs to the directory above `requirements`; a colocated
-// requirements.txt, pyproject.toml or Pipfile owns its own directory.
-// present=false (no manifest at all) softens missing-dep findings instead of suppressing them.
-export function collectPyManifest(repoRoot) {
-  const boundary = createRepoBoundary(repoRoot);
-  const scopes = new Map();
-  const scopeFor = (root) => {
-    const normalized = normRoot(root);
-    if (!scopes.has(normalized)) scopes.set(normalized, { root: normalized, present: false, deps: [], manifests: [] });
-    return scopes.get(normalized);
-  };
-  const addManifest = (root, manifest, parsedDeps, present = true) => {
-    if (!present) return;
-    const scope = scopeFor(root);
-    scope.present = true;
-    scope.manifests.push(manifest);
-    scope.deps.push(...parsedDeps.map((dep) => ({ ...dep, manifest })));
-  };
-  const files = listRepoFiles(repoRoot);
-  for (const file of files.filter((name) => /(^|\/)requirements[\w.-]*\.(?:txt|in)$/i.test(name)
-    || /(^|\/)requirements\/[^/]+\.(?:txt|in)$/i.test(name))) {
-    const t = readRepoText(boundary, file);
-    if (t == null) continue;
-    const parent = normRoot(dirname(file));
-    const root = /(^|\/)requirements$/i.test(parent) ? normRoot(dirname(parent)) : parent;
-    const dev = /dev|test|lint|doc|ci/i.test(file.slice(file.lastIndexOf("/") + 1));
-    addManifest(root, file, parseRequirementsNames(t).map((dep) => ({ ...dep, dev })));
-  }
-  for (const file of files.filter((name) => /(^|\/)pyproject\.toml$/i.test(name))) {
-    const parsed = parsePyprojectDeps(readRepoText(boundary, file));
-    addManifest(dirname(file), file, parsed.deps, parsed.present);
-  }
-  for (const file of files.filter((name) => /(^|\/)Pipfile$/i.test(name))) {
-    const parsed = parsePipfileDeps(readRepoText(boundary, file));
-    addManifest(dirname(file), file, parsed.deps, parsed.present);
-  }
-  const normalizedScopes = [...scopes.values()]
-    .map((scope) => {
-      const seen = new Set();
-      return {
-        ...scope,
-        manifests: [...new Set(scope.manifests)].sort(),
-        deps: scope.deps.filter((dep) => {
-          const key = pep503(dep.name);
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }),
-      };
-    })
-    .sort((left, right) => right.root.length - left.root.length || left.root.localeCompare(right.root));
-  return {
-    present: normalizedScopes.some((scope) => scope.present),
-    deps: normalizedScopes.flatMap((scope) => scope.deps),
-    scopes: normalizedScopes,
-  };
-}

@@ -16,54 +16,24 @@
 // go to stderr. Two argv forms:
 //   weavatrix-mcp <repoRoot> [caps]               — graph path derived from the standard layout
 //   weavatrix-mcp <graph.json> <repoRoot> [caps]  — explicit graph file (classic form)
-import {existsSync, statSync, realpathSync} from 'node:fs'
-import {join, dirname} from 'node:path'
-import {fileURLToPath} from 'node:url'
 import process from 'node:process'
 import {loadGraph} from './mcp/graph-context.mjs'
-import {graphOutDirForRepo} from './graph/layout.js'
-import {createRequire} from 'node:module'
 import {createStalenessNoticeGate} from './mcp/staleness-notice.mjs'
 import {normalizeToolResult} from './mcp/tool-result.mjs'
-import {buildGraphForRepo, defaultPrecisionMode} from './build-graph.js'
-import {persistedFreshnessMatches, repositoryFreshnessProbe} from './graph/freshness-probe.js'
-import {activeLspClientCount, beginLspClientShutdown, shutdownActiveLspClients} from './precision/lsp-client.js'
-import {PRECISION_OVERLAY_V, precisionSemanticInputsMatch, readPrecisionOverlay} from './precision/lsp-overlay.js'
+import {runtimeVersionStatus, staleRuntimeMessage} from './mcp/runtime-version.mjs'
+import {createAutoRefresh} from './mcp/server/auto-refresh.mjs'
+import {createShutdownController} from './mcp/server/shutdown.mjs'
+import {
+    hotCatalogVersion as hotVersion, loadServerCatalog as loadCatalog, PACKAGE_JSON_PATH,
+    PACKAGE_VERSION as PKG_VERSION, resolveServerTarget, SERVER_INFO,
+} from './mcp/server/runtime-config.mjs'
 
 // version comes from package.json so serverInfo can never drift from the published package again
-const PKG_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version } catch { return '0.0.0' } })()
-const SERVER_INFO = {name: 'weavatrix', version: PKG_VERSION}
 const DEFAULT_PROTOCOL = '2024-11-05'
 const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 
-async function settleWithin(promise, timeoutMs) {
-    let timer
-    const settled = await Promise.race([
-        Promise.resolve(promise).then(() => true, () => true),
-        new Promise((resolveSettled) => { timer = setTimeout(() => resolveSettled(false), timeoutMs) }),
-    ])
-    if (timer) clearTimeout(timer)
-    return settled
-}
-
-// argv[2] is a repo DIRECTORY in the npx form — derive the graph location from the standard layout;
-// otherwise it is the graph.json path and the repo root follows it.
-let GRAPH_PATH = process.argv[2]
-let repoArg = process.argv[3]
-// caps ABSENT (undefined) = offline defaults (explicit local retargeting, no network).
-// PRESENT (even the empty string) = explicit set — see catalog.loadHotApi.
-let CAPS_ARG = process.argv[4]
-try {
-    if (GRAPH_PATH && statSync(GRAPH_PATH).isDirectory()) {
-        repoArg = realpathSync.native(GRAPH_PATH)
-        CAPS_ARG = process.argv[3]
-        GRAPH_PATH = join(graphOutDirForRepo(repoArg), 'graph.json')
-        if (!existsSync(GRAPH_PATH)) log(`no graph built yet for ${repoArg} — ask the agent to call rebuild_graph; it builds into the standard weavatrix-graphs layout`)
-    }
-} catch { /* argv[2] is not a directory → classic <graph.json> <repoRoot> form */ }
-// repo source root for search_code / read_source; null → those tools degrade.
-let REPO_ROOT = null
-try { if (repoArg && statSync(repoArg).isDirectory()) REPO_ROOT = realpathSync.native(repoArg) } catch { /* invalid repo root */ }
+const target = resolveServerTarget(process.argv, log)
+const GRAPH_PATH = target.graphPath, REPO_ROOT = target.repoRoot, CAPS_ARG = target.capabilities
 
 // ---- hot reload of tool implementations -----------------------------------------------------------
 // Node caches modules at spawn, so edits to the tool code would otherwise be invisible until the MCP
@@ -71,29 +41,21 @@ try { if (repoArg && statSync(repoArg).isDirectory()) REPO_ROOT = realpathSync.n
 // any changed on disk we re-import them through catalog.loadHotApi with a cache-busting version and
 // swap the tool table, then notify the client. The stdio shell, graph-context (its caches), and the
 // analysis engines are NOT swapped — changing those still needs a reconnect.
-const MCP_DIR = join(dirname(fileURLToPath(import.meta.url)), 'mcp')
-const CATALOG_URL = new URL('./mcp/catalog.mjs', import.meta.url)
-const loadCatalog = (version = 0) => import(version ? `${CATALOG_URL.href}?v=${version}` : CATALOG_URL.href)
-function hotVersion(hotFiles) {
-    let v = 0
-    for (const f of hotFiles) {
-        try { const t = statSync(join(MCP_DIR, f)).mtimeMs; if (t > v) v = t } catch { /* missing file just doesn't bump the version */ }
-    }
-    return v
-}
-
 async function main() {
     let catalog = await loadCatalog()
     let api = await catalog.loadHotApi(0, CAPS_ARG)
     const runtimeInfo = () => ({
-        version: PKG_VERSION,
+        ...runtimeVersionStatus({runningVersion: PKG_VERSION, packageJsonPath: PACKAGE_JSON_PATH}),
         profile: api.profile || 'custom',
         capabilities: [...api.caps],
         toolCount: api.tools.length,
     })
     const runtimeInstructions = () => {
         const runtime = runtimeInfo()
-        return `Weavatrix ${runtime.version}; profile=${runtime.profile}; tools=${runtime.toolCount}; capabilities=${runtime.capabilities.join(',') || '(none)'}. If this differs from the client-visible tool list, reconnect the MCP client to discard its cached schema.`
+        const stale = runtime.staleRuntime
+            ? ` ${staleRuntimeMessage(runtime)}${runtime.staleRuntimeAllowed ? ' Development override is active.' : ''}`
+            : ''
+        return `Weavatrix ${runtime.version}; diskVersion=${runtime.diskVersion || 'unavailable'}; profile=${runtime.profile}; tools=${runtime.toolCount}; capabilities=${runtime.capabilities.join(',') || '(none)'}.${stale} If this differs from the client-visible tool list, reconnect the MCP client to discard its cached schema.`
     }
     let graph = null
     let graphError = null
@@ -119,73 +81,12 @@ async function main() {
     // ordinary tools use a per-call graph/context snapshot, so an explicitly retargetable registration
     // cannot mix one repo's in-memory graph with another repo's source root under concurrent MCP calls.
     let targetMutation = Promise.resolve()
-    let shuttingDown = false
-    let shutdownPromise = null
-    const refreshProbeCache = new Map()
-    const configuredDebounce = process.env.WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS == null
-        ? 2_000
-        : Number(process.env.WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS)
-    const refreshDebounceMs = Math.max(0, Math.min(5_000, Number.isFinite(configuredDebounce) ? configuredDebounce : 2_000))
-    const autoRefresh = async (callCtx, currentGraph) => {
-        if (!callCtx?.repoRoot || !callCtx?.graphPath) return {graph: null, refresh: null}
-        const activePrecision = currentGraph?.graphPrecisionMode || defaultPrecisionMode()
-        const probeKey = `${callCtx.graphPath}\0${currentGraph?.graphBuildMode || 'full'}\0${activePrecision}`
-        // Semantic inputs include ignored configs and configured project files that Git status does
-        // not see. Check their bounded fingerprint before the ordinary source freshness debounce;
-        // exact evidence must have no stale window, even on back-to-back tool calls.
-        let semanticInputsChanged = false
-        if (activePrecision === 'lsp' && currentGraph) {
-            try {
-                const overlay = readPrecisionOverlay(callCtx.graphPath, currentGraph)
-                semanticInputsChanged = typeof overlay?.semanticInputFingerprint === 'string'
-                    && !precisionSemanticInputsMatch(overlay, callCtx.repoRoot, currentGraph)
-            } catch {
-                semanticInputsChanged = true
-            }
-        }
-        const cachedProbe = refreshProbeCache.get(probeKey)
-        if (!semanticInputsChanged && currentGraph && cachedProbe && Date.now() - cachedProbe.checkedAt < refreshDebounceMs) {
-            return {graph: currentGraph, refresh: {kind: 'none', revision: currentGraph.graphRevision || null, changedFiles: 0}}
-        }
-        const beforeProbe = repositoryFreshnessProbe(callCtx.repoRoot)
-        const precisionMissing = activePrecision === 'lsp' && (
-            Number(currentGraph?.precisionOverlayV) !== PRECISION_OVERLAY_V
-            || semanticInputsChanged
-        )
-        if (!precisionMissing && beforeProbe && currentGraph && (
-            cachedProbe?.probe === beforeProbe
-            || persistedFreshnessMatches(currentGraph, beforeProbe, currentGraph.graphBuildMode || 'full')
-        )) {
-            refreshProbeCache.set(probeKey, {probe: beforeProbe, checkedAt: Date.now()})
-            return {graph: currentGraph, refresh: {kind: 'none', revision: currentGraph.graphRevision || null, changedFiles: 0}}
-        }
-        const result = await buildGraphForRepo(callCtx.repoRoot, {
-            mode: currentGraph?.graphBuildMode || 'full',
-            precision: activePrecision,
-            scope: '',
-            outDir: dirname(callCtx.graphPath),
-        })
-        if (!result.ok) throw new Error(result.error || 'automatic graph refresh failed')
-        api.resetStalenessCache()
-        const fresh = loadGraph(callCtx.graphPath, {repoRoot: callCtx.repoRoot})
-        const afterProbe = repositoryFreshnessProbe(callCtx.repoRoot)
-        if (afterProbe && afterProbe === beforeProbe) refreshProbeCache.set(probeKey, {probe: afterProbe, checkedAt: Date.now()})
-        else refreshProbeCache.delete(probeKey)
-        const update = result.refresh || {kind: 'full', changedFiles: [], reason: 'automatic-refresh'}
-        return {
-            graph: fresh,
-            refresh: {
-                kind: update.kind,
-                revision: update.revision || fresh.graphRevision || null,
-                changedFiles: Array.isArray(update.changedFiles) ? update.changedFiles.length : 0,
-                notice: update.kind === 'none' ? undefined : `Graph ${update.kind === 'incremental' ? 'incrementally refreshed' : 'rebuilt'} before this answer (${update.reason || 'repository changed'}).`,
-            },
-        }
-    }
+    const shutdown = createShutdownController({log, targetMutation: () => targetMutation})
+    const autoRefresh = createAutoRefresh(() => api)
     const send = (msg) => {
         // A request that was already running when the client disconnected may complete during the
         // bounded drain. Do not write a late reply into a closed protocol pipe.
-        if (shuttingDown || process.stdout.destroyed || !process.stdout.writable) return false
+        if (shutdown.isShuttingDown() || process.stdout.destroyed || !process.stdout.writable) return false
         try {
             return process.stdout.write(JSON.stringify(msg) + '\n')
         } catch (error) {
@@ -194,32 +95,9 @@ async function main() {
         }
     }
     const reply = (id, result) => send({jsonrpc: '2.0', id, result})
-    const fail = (id, code, message) => send({jsonrpc: '2.0', id, error: {code, message}})
+    const fail = (id, code, message, data) => send({jsonrpc: '2.0', id, error: {code, message, ...(data ? {data} : {})}})
 
-    const requestShutdown = (reason, exitCode = 0) => {
-        if (shutdownPromise) return shutdownPromise
-        shuttingDown = true
-        // This is synchronous and deliberately precedes every await: a graph build that reaches its
-        // precision phase during the drain must not create a fresh TLS/tsserver process tree.
-        beginLspClientShutdown()
-        process.stdin.pause()
-        const activeAtStart = activeLspClientCount()
-        log(`shutdown requested (${reason}); draining graph work and ${activeAtStart} semantic provider(s)`)
-        shutdownPromise = (async () => {
-            // Give an ordinary auto-refresh a chance to commit and close its provider itself. A wedged
-            // parse/query is bounded; active semantic children are then closed or tree-killed, after
-            // which the mutation gets a final window to observe that cancellation and release locks.
-            const initiallyDrained = await settleWithin(targetMutation, 2_500)
-            const semantic = await shutdownActiveLspClients({timeoutMs: 3_000})
-            const fullyDrained = initiallyDrained || await settleWithin(targetMutation, 1_500)
-            log(`shutdown cleanup: graph=${fullyDrained ? 'drained' : 'bounded-timeout'}, semantic=${semantic.requested} requested/${semantic.remaining} remaining${semantic.timedOut ? ' (forced)' : ''}`)
-        })().catch((error) => {
-            log(`shutdown cleanup failed: ${error.stack || error.message}`)
-        }).finally(() => {
-            process.exit(exitCode)
-        })
-        return shutdownPromise
-    }
+    const requestShutdown = shutdown.request
     process.stdout.on('error', (error) => {
         if (error?.code === 'EPIPE' || error?.code === 'ERR_STREAM_DESTROYED') {
             void requestShutdown('stdout disconnected')
@@ -252,19 +130,30 @@ async function main() {
     const handle = async (msg) => {
         const {id, method, params} = msg
         const isNotification = id === undefined || id === null
-        if (shuttingDown) {
+        if (shutdown.isShuttingDown()) {
             if (!isNotification) fail(id, -32000, 'MCP server is shutting down')
             return
         }
+        if (method === 'initialize' || method === 'tools/list' || method === 'tools/call') {
+            const runtime = runtimeInfo()
+            ctx.runtime = runtime
+            if (runtime.staleRuntime && !runtime.staleRuntimeAllowed) {
+                if (!isNotification) fail(id, -32001, staleRuntimeMessage(runtime), {'weavatrix/runtime': runtime})
+                return
+            }
+        }
         if (method === 'initialize') {
             if (params?.protocolVersion) protocolVersion = String(params.protocolVersion)
-            return reply(id, {protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo: SERVER_INFO, instructions: runtimeInstructions()})
+            return reply(id, {
+                protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo: SERVER_INFO,
+                instructions: runtimeInstructions(), _meta: {'weavatrix/runtime': runtimeInfo()},
+            })
         }
         if (method === 'notifications/initialized' || method === 'initialized') return
         if (method === 'ping') return reply(id, {})
         if (method === 'tools/list') {
             await maybeHotReload()
-            if (shuttingDown) return
+            if (shutdown.isShuttingDown()) return
             return reply(id, {
                 tools: api.tools.map(({name, description, inputSchema, outputSchema}) => ({name, description, inputSchema, outputSchema})),
                 _meta: {'weavatrix/runtime': runtimeInfo()},
@@ -274,7 +163,7 @@ async function main() {
             await maybeHotReload()
             // EOF can arrive while the hot-reload import is pending. Do not enqueue a graph mutation
             // after requestShutdown captured the mutation chain it is responsible for draining.
-            if (shuttingDown) return
+            if (shutdown.isShuttingDown()) return
             const tool = api.byName.get(params?.name)
             if (!tool) return reply(id, {content: [{type: 'text', text: `Unknown tool: ${params?.name}`}], isError: true})
             const refreshesGraph = tool.cap === 'graph' || tool.cap === 'health' || tool.refreshGraph === true
@@ -363,7 +252,7 @@ async function main() {
     let buf = ''
     process.stdin.setEncoding('utf8')
     process.stdin.on('data', (chunk) => {
-        if (shuttingDown) return
+        if (shutdown.isShuttingDown()) return
         buf += chunk
         let nl
         while ((nl = buf.indexOf('\n')) >= 0) {

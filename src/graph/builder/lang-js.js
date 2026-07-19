@@ -2,33 +2,10 @@
 // Symbols: functions, generators, classes, methods, top-level const/let/var (data + arrow/fn consts).
 // Imports: ESM `import`, CJS `require`, path-aliases (tsconfig/vite), and barrel re-exports (`export … from`).
 // Calls: bare `foo()`. Heritage: `class X extends Y`. Everything runs through the shared ctx (see internal-builder.js).
-const CALLABLE = /arrow_function|function|function_expression|generator_function/;
-
-const FUNCS = `
-  (function_declaration name: (identifier) @fn)
-  (generator_function_declaration name: (identifier) @fn)
-  (class_declaration name: (_) @class)
-  (method_definition name: (_) @method)`;
-const TOPVARS = `
-  (program (lexical_declaration (variable_declarator) @decl))
-  (program (variable_declaration (variable_declarator) @decl))
-  (program (export_statement (lexical_declaration (variable_declarator) @decl)))
-  (program (export_statement (variable_declaration (variable_declarator) @decl)))`;
-const TYPES = `
-  (interface_declaration name: (_) @interface)
-  (type_alias_declaration name: (_) @type)
-  (enum_declaration name: (_) @enum)`;
-const REQUIRE = `(variable_declarator name: (_) @lhs value: (call_expression function: (identifier) @req arguments: (arguments (string (string_fragment) @src))))`;
-
-function parseExportSpecifiers(raw) {
-  return String(raw || "").split(",").map((part) => {
-    const text = part.trim();
-    const typeOnly = /^type\s+/.test(text);
-    const clean = text.replace(/^type\s+/, "").trim();
-    const match = clean.match(/^([A-Za-z_$][\w$]*|default)(?:\s+as\s+([A-Za-z_$][\w$]*|default))?$/);
-    return match ? { imported: match[1], exported: match[2] || match[1], typeOnly } : null;
-  }).filter(Boolean);
-}
+import {
+  CALLABLE, FUNCS, TOPVARS, TYPES, REQUIRE, parseExportSpecifiers,
+  importTypeOnly, reexportTypeOnly,
+} from './js/queries.js';
 
 export default {
   family: "js",
@@ -161,23 +138,6 @@ export default {
         symbolSpace,
       });
     }
-
-    const importTypeOnly = (node) => {
-      if (/^\s*import\s+type\b/.test(node.text)) return true;
-      const clause = node.namedChildren.find((c) => c.type === "import_clause");
-      if (!clause) return false; // side-effect import executes the target module
-      const parts = clause.namedChildren;
-      if (parts.some((c) => c.type === "identifier" || c.type === "namespace_import")) return false;
-      const named = parts.find((c) => c.type === "named_imports");
-      const specs = named?.namedChildren.filter((c) => c.type === "import_specifier") || [];
-      return specs.length > 0 && specs.every((s) => /^\s*type\b/.test(s.text));
-    };
-    const reexportTypeOnly = (node) => {
-      if (/^\s*export\s+type\b/.test(node.text)) return true;
-      const clause = node.namedChildren.find((c) => c.type === "export_clause");
-      const specs = clause?.namedChildren.filter((c) => c.type === "export_specifier") || [];
-      return specs.length > 0 && specs.every((s) => /^\s*type\b/.test(s.text));
-    };
 
     // ---- ESM imports ----
     for (const cap of caps(grammar, `(import_statement) @imp`, tree.rootNode)) {

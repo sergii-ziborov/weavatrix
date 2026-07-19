@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { createRustResolvers } from "./resolvers/rust.js";
 
 export function buildResolvers(repoDir, fileSet) {
   const boundary = createRepoBoundary(repoDir);
@@ -48,111 +49,7 @@ export function buildResolvers(repoDir, fileSet) {
     return cands.find((f) => f === full || f.endsWith("/" + full)) || cands[0] || null;
   };
 
-  // Rust modules are files, but their paths are logical rather than simple source-relative imports:
-  // `foo.rs` owns children below `foo/`, while lib.rs/main.rs/mod.rs own siblings. Keep the resolver
-  // filesystem-only and crate-local: Cargo/external dependencies belong to dependency analysis, not to
-  // the internal module graph.
-  const cleanRustRel = (p) => String(p || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/, "").replace(/^\.$/, "");
-  const rustDir = (p) => { p = cleanRustRel(p); const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
-  const rustBase = (p) => { p = cleanRustRel(p); const i = p.lastIndexOf("/"); return i < 0 ? p : p.slice(i + 1); };
-  const rustJoin = (...parts) => cleanRustRel(join(...parts.filter((x) => x != null && x !== "")));
-  const rustFiles = new Set([...fileSet].filter((fr) => fr.endsWith(".rs")));
-  const rustRoots = new Map();
-  for (const fr of rustFiles) {
-    const base = rustBase(fr);
-    if (base !== "lib.rs" && base !== "main.rs") continue;
-    const dir = rustDir(fr);
-    let root = rustRoots.get(dir);
-    if (!root) rustRoots.set(dir, (root = { base: dir, lib: null, main: null }));
-    root[base === "lib.rs" ? "lib" : "main"] = fr;
-  }
-  const rustRootList = [...rustRoots.values()].sort((a, b) => b.base.length - a.base.length);
-  const rustContext = (fromRel) => {
-    fromRel = cleanRustRel(fromRel);
-    const base = rustBase(fromRel);
-    const dir = rustDir(fromRel);
-    if (base === "lib.rs" || base === "main.rs") return { base: dir, rootFile: fromRel };
-
-    // Cargo treats direct files in these conventional folders as independent crate roots. This only
-    // affects paths originating in the root file itself; nested module ownership still comes from mod/use.
-    if (/^(?:bin|examples|tests|benches)$/.test(rustBase(dir))) return { base: dir, rootFile: fromRel };
-    for (const root of rustRootList) {
-      if (!root.base || fromRel.startsWith(root.base + "/")) return { base: root.base, rootFile: root.lib || root.main };
-    }
-    return { base: dir, rootFile: fromRel };
-  };
-  const rustModuleBase = (fromRel) => {
-    const ctx = rustContext(fromRel);
-    if (ctx.rootFile === cleanRustRel(fromRel)) return rustDir(fromRel);
-    const name = rustBase(fromRel);
-    if (name === "lib.rs" || name === "main.rs" || name === "mod.rs") return rustDir(fromRel);
-    return rustJoin(rustDir(fromRel), name.replace(/\.rs$/, ""));
-  };
-  const rustInlineBase = (fromRel, inlineModules = []) => {
-    let base = rustModuleBase(fromRel);
-    for (let i = 0; i < inlineModules.length; i++) {
-      const mod = inlineModules[i] || {};
-      if (mod.path) {
-        // Rust Reference: a path attribute on the first inline module is relative to the source file's
-        // directory; nested attributes are relative to their containing module's search directory.
-        const parent = i === 0 ? rustDir(fromRel) : base;
-        base = rustJoin(parent, mod.path);
-      } else base = rustJoin(base, mod.name);
-    }
-    return base;
-  };
-  const rustModuleFile = (moduleBase, ctx) => {
-    moduleBase = cleanRustRel(moduleBase);
-    if (moduleBase === cleanRustRel(ctx.base) && ctx.rootFile && rustFiles.has(ctx.rootFile)) return ctx.rootFile;
-    const flat = moduleBase + ".rs";
-    if (rustFiles.has(flat)) return flat;
-    const legacy = rustJoin(moduleBase, "mod.rs");
-    return rustFiles.has(legacy) ? legacy : null;
-  };
-  const resolveRustMod = (fromRel, name, { inlineModules = [], explicitPath = "" } = {}) => {
-    fromRel = cleanRustRel(fromRel);
-    if (explicitPath) {
-      const parent = inlineModules.length ? rustInlineBase(fromRel, inlineModules) : rustDir(fromRel);
-      const target = rustJoin(parent, explicitPath);
-      return rustFiles.has(target) ? target : null;
-    }
-    const targetBase = rustJoin(rustInlineBase(fromRel, inlineModules), String(name || "").replace(/^r#/, ""));
-    return rustModuleFile(targetBase, rustContext(fromRel));
-  };
-  const resolveRustPath = (fromRel, rawSegments, { inlineModules = [], unqualified = true } = {}) => {
-    fromRel = cleanRustRel(fromRel);
-    const segments = (Array.isArray(rawSegments) ? rawSegments : String(rawSegments || "").split("::"))
-      .map((s) => String(s).trim().replace(/^r#/, "")).filter(Boolean);
-    if (!segments.length) return null;
-    const ctx = rustContext(fromRel);
-    const current = rustInlineBase(fromRel, inlineModules);
-    let rest = [...segments];
-    const starts = [];
-    let anchored = false;
-    if (rest[0] === "crate") { anchored = true; rest.shift(); starts.push(ctx.base); }
-    else if (rest[0] === "self") { anchored = true; rest.shift(); starts.push(current); }
-    else if (rest[0] === "super") {
-      anchored = true;
-      let base = current;
-      while (rest[0] === "super") { rest.shift(); base = rustDir(base); }
-      if (ctx.base && base !== ctx.base && !base.startsWith(ctx.base + "/")) return null;
-      starts.push(base);
-    } else if (unqualified) {
-      // Rust 2018 resolves a bare use path from the crate root/external prelude. Prefer an internal root
-      // module, then allow a lexically-local module for qualified expressions in nested modules.
-      starts.push(ctx.base);
-      if (current !== ctx.base) starts.push(current);
-    } else return null;
-
-    for (const start of starts) {
-      const min = anchored ? 0 : 1; // never reinterpret an unresolved external `serde::X` as the crate root
-      for (let used = rest.length; used >= min; used--) {
-        const target = rustModuleFile(rustJoin(start, ...rest.slice(0, used)), ctx);
-        if (target) return { targetFile: target, consumed: segments.length - rest.length + used, remaining: rest.slice(used), anchored };
-      }
-    }
-    return null;
-  };
+  const { resolveRustMod, resolveRustPath } = createRustResolvers(fileSet);
 
   // Path aliases (tsconfig compilerOptions.paths + vite/webpack alias) are scoped to their config folder.
   // Without nearest-config resolution, a monorepo's root `@/*` can hijack the same alias in web/.

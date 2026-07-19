@@ -17,10 +17,11 @@ Tools are named `mcp__weavatrix__…`. If none are available, ask the user to re
 `codex mcp add weavatrix -- npx -y weavatrix <repoRoot>`), then retry.
 
 First compare the selected profile with the `graph_stats` runtime line. Expected catalogs are 31
-tools for `pinned`, 34 for `offline`, 35 for `osv`, and 38 for `hosted` / `full`. If the running
-version/count differs from the installed package, or local tools such as `trace_endpoint` are missing,
-reconnect/start a new agent task because clients commonly cache `tools/list` for one connection. A
-custom capability list needs `crossrepo` for `trace_api_contract`; legacy `online` adds only
+tools for `pinned`, 34 for `offline`, 35 for `osv`, and 38 for `hosted` / `full`. Weavatrix refuses
+`initialize`, `tools/list`, and tool calls when the running package version differs from the
+`package.json` version on disk, with a loud `STALE_RUNTIME` error; restart/reconnect rather than using
+an old daemon. `WEAVATRIX_ALLOW_STALE_RUNTIME=1` is only for deliberate source development. A custom
+capability list needs `crossrepo` for `trace_api_contract`; legacy `online` adds only
 `advisories,hosted`. Missing HTTP tools are intentional only when the selected profile excludes them.
 
 Profiles use the same npm package and binary:
@@ -53,8 +54,10 @@ projection; expand only when the answer requires it.
 - **Find a connectivity path between two concepts**: `shortest_path`. It traverses the graph as
   undirected reachability, so it is not proof of call/dependency direction; confirm direction with
   `get_neighbors` and `read_source`.
-- **Explore an unknown entry point or architectural question**: `query_graph`; pin `seed_files` when
-  known, and keep its broad result as orientation evidence.
+- **Explore an unknown entry point or architectural question**: `query_graph`; pin `seed_files` or
+  exact `seed_symbols` when known. Use `relation_filter` plus `flow_direction` for a bounded event,
+  worker, queue, cron, CLI, or data-flow view; keep a broad natural-language result as orientation
+  evidence.
 - **Inspect one exact symbol deeply**: `context_bundle` for the bounded edit workset;
   `inspect_symbol` for the raw point query and on-demand JS/TS reference evidence.
 - **Confirm graph evidence in source**: `read_source`; use `search_code` only for a narrow regex/glob
@@ -86,11 +89,14 @@ projection; expand only when the answer requires it.
 
 ### Health, debt and testing scenarios
 
-- **Run a whole-repository Health review**: `run_audit debt=all`.
+- **Run a whole-repository Health review**: `run_audit debt=all`, then read its capability matrix.
+  `STRUCTURE CHECKED` and `DEPENDENCIES CHECKED` do not imply runtime or concurrency correctness.
 - **Gate only newly introduced branch debt**: `run_audit base_ref=<merge-base> debt=new`; old debt in
   a changed file remains existing.
 - **Review dependency declarations/imports**: `run_audit category=dependencies`; it includes missing,
   unused, duplicate, unresolved-import and lockfile-drift evidence without relabelling identities.
+  Maven/Gradle manifests are inventoried but unsupported import-to-artifact verification is reported
+  `NOT_SUPPORTED`/`PARTIAL`, never a false clean `0 declared / 0 external`.
 - **Refresh vulnerability evidence when explicitly authorized**: `refresh_advisories`, then
   `run_audit category=vulnerability`. `NOT_CHECKED` is unknown, never clean.
 - **Review dead files, functions, methods and symbols**: `find_dead_code`; every result remains a
@@ -104,9 +110,15 @@ projection; expand only when the answer requires it.
 
 ### Intended architecture and Hosted governance
 
-- **Read or establish intended architecture**: `get_architecture_contract`. A returned starter is a
-  product-code-only territory proposal (not tests, docs, benchmarks, generated output or repository
-  configs), not automatically approved policy.
+- **Read or establish intended architecture**: `get_architecture_contract`. A returned starter adapts
+  to Maven/Gradle source roots and monorepos and proposes product-code territories plus observed
+  dependency directions labelled `OBSERVED_NOT_ENFORCED`; oversized Java branches split only at real
+  child packages. Only runtime-cycle and 300-line file guards are active by default; generic
+  complexity/cohesion thresholds are `CANDIDATE_NOT_ENFORCED`. None becomes policy automatically.
+- **Bootstrap local policy safely**: `get_architecture_contract action=preview` with an optional
+  reviewed `candidate_contract` and `baseline_mode=none|accept-current`; inspect the exact content,
+  verification and patch, then call `action=approve confirm_token=<exact-token>`. Approval creates
+  only a missing `.weavatrix/architecture.json`, rechecks graph identity, and never overwrites policy.
 - **Select rules before editing**: `prepare_change`; **enforce the ratchet after editing**:
   `verify_architecture`.
 - **Understand or request an exception**: `explain_architecture_violation` ->
@@ -117,11 +129,13 @@ projection; expand only when the answer requires it.
 - **Review exactly what Hosted sync would send**: `preview_sync`; only an approved
   `sync_graph dry_run=false confirm_token=...` may send that exact bounded payload.
 
-Across every scenario, treat `PARTIAL`, `UNAVAILABLE`, `OFF`, `NOT_CHECKED`, `ERROR`, or capped
-evidence as incomplete rather than success. Java and Rust exact language-server providers are not
-bundled, so their edges never become `EXACT_LSP` even when a mixed repository has a complete
-TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved and explicitly
-`INFERRED`; they improve cross-file flow without claiming compiler-exact overload or dynamic dispatch.
+Across every scenario, treat `PARTIAL`, `UNAVAILABLE`, `OFF`, `NOT_SUPPORTED`, `NOT_CHECKED`,
+`ERROR`, or capped evidence as incomplete rather than success. Java and Rust exact language-server
+providers are not bundled, so their edges never become `EXACT_LSP` even when a mixed repository has
+a complete TypeScript/JavaScript overlay. Java and Go receiver-type call edges are parser-resolved
+and explicitly `INFERRED`; Go resolution uses parameter, local, constructor-return, imported and
+struct-field types. These edges improve cross-file flow without claiming compiler-exact overload,
+interface dispatch, reflection, or runtime behavior.
 
 ## Ground rules
 
@@ -171,10 +185,15 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
   and the score is not profiler data or an interprocedural Big-O proof. The default queue uses
   `min_score=85` plus a narrow strong-local fallback; use `min_score=0` only for full diagnostics.
   Inspect its line evidence and measure runtime before scheduling a performance rewrite.
-- **Audit completeness**: read `dependencyReport.status` plus its unused/missing counts, then
-  each npm finding's `verification` (manifest, indexed source, scripts/config, unresolved dynamic
-  usage), then `checks.osv.status` and `checks.malware.status`. A dependency result from a partial graph is not a
-  repository-wide clean zero. For OSV, `OK` is
+- **Audit completeness**: read the top-level Health capability matrix first: structure, dependencies,
+  runtime correctness, concurrency, advisories, malware and measured coverage each have independent
+  status/completeness. The bounded Go/Java correctness patterns can flag a fixed-index slice hazard,
+  discriminator mismatch, lost Java interrupt or unbounded retry candidate, but they are not a
+  compiler, race detector, runtime trace, CFG, or proof of race freedom. Then read
+  `dependencyReport.status`, ecosystem support, unused/missing counts, each npm finding's
+  `verification` (manifest, indexed source, scripts/config, unresolved dynamic usage), and
+  `checks.osv.status` / `checks.malware.status`. A dependency result from a partial or unsupported
+  ecosystem is not a repository-wide clean zero. For OSV, `OK` is
   complete for the recorded dependency fingerprint; `PARTIAL` is incomplete or stale,
   `NOT_CHECKED` has no repository-specific result, and `ERROR` means the local check failed. Treat
   the same non-`OK` states as incomplete for malware scanning. Refresh OSV only when the user has
@@ -248,12 +267,15 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
   safety semantics, not boilerplate. Use `.weavatrix-deps.json` entrypoints/nonRuntimeRoots only for
   verified conventions.
 - **API inventory**: `list_endpoints` (including mount provenance, Next.js App Router, Rust axum and
-  actix-web). When one exact route is known, use `trace_endpoint` for its composed mount chain,
-  handler and bounded production call graph instead of broad natural-language traversal.
-- **CLI, worker, queue, cron or event flow**: locate the manifest/registration literal with
-  `search_code`, then pin the discovered entry file with `query_graph seed_files=[...]`; use
-  `context_bundle` on its exact handler plus `get_neighbors` / `get_dependents`, and confirm the
-  registration and call sites with `read_source`. Do not force a non-HTTP flow through endpoint tools.
+  actix-web). Spring endpoint rows also expose conditional activation and whether the controller is
+  inactive by default. When one exact route is known, use `trace_endpoint` for its composed mount
+  chain, handler and bounded production call graph instead of broad natural-language traversal.
+- **CLI, worker, queue, cron or event flow**: identify the exact listener/handler/registration symbol,
+  then call `query_graph seed_symbols=[...] relation_filter=["calls","references"]
+  flow_direction="both"`; use `context_bundle` for production-first inbound/outbound containers and
+  diverse call-site excerpts, then `get_dependents` / `read_source` for decisive evidence. If the
+  symbol is unknown, use a narrow `search_code` registration check once and pin what it finds. Do not
+  force a non-HTTP flow through endpoint tools or begin with an unconstrained natural-language seed.
 - **Cross-repository API impact**: ensure both repositories are in `list_known_repos`, then call
   `trace_api_contract backend=<uuid-or-label> clients=[<uuid-or-label>]`; narrow with `method`, `path`,
   or backend `changed_files`. `path` may be a segment-aligned fragment (`/query` can select
@@ -273,19 +295,16 @@ TypeScript/JavaScript overlay. Java receiver-type call edges are parser-resolved
   `UNBASELINED` and `STALE` are explicit incomplete states, not green results.
   A green Java/Rust fixture proves only its declared representative signals, not compiler-exact
   coverage of arbitrary repositories.
-- **Target architecture before editing**: `get_architecture_contract` → `prepare_change` with the
-  intended files → edit and rebuild → `verify_architecture`. A missing contract returns a starter
-  proposal from `get_architecture_contract output_format:"json"`, not an automatically approved
-  architecture. For offline adoption, have the owner review/edit `starterContract`, save it as
-  `.weavatrix/architecture.json`, and rerun the lookup. To establish a ratchet over accepted current
-  debt, run `verify_architecture output_format:"json"`; only after explicit owner approval, copy the
-  accepted `verification.new[*].fingerprint` values into `ratchet.baseline.fingerprints`, save, and
-  verify again so accepted debt is `existing` while later debt is `new`. The v1 verifier classifies
-  ratchet debt by fingerprints; `ratchet.baseline.metrics` is metadata, not a replacement. An approved local exception
-  is applied by adding the exact returned `proposal` to `exceptions`; rerun verification afterward.
-  Without a contract, `prepare_change` still returns provisional no-regression budgets, but they are
-  guidance rather than enforceable policy. Pull an owner-approved hosted contract only when the user
-  selected `hosted` and explicitly asks for it. No Weavatrix tool silently writes either policy.
+- **Target architecture before editing**: if no contract exists, call
+  `get_architecture_contract action=preview baseline_mode=none` and inspect the adaptive product
+  territories, observed-but-not-enforced directions and verification. Pass a reviewed
+  `candidate_contract` when the desired target differs. Only after explicit owner approval call
+  `get_architecture_contract action=approve confirm_token=<exact-token>`. Use
+  `baseline_mode=accept-current` only when the owner intentionally accepts current deterministic
+  debt into the ratchet. Then run `prepare_change` with intended files → edit/rebuild →
+  `verify_architecture`. An approved exception is still applied by adding the exact returned proposal
+  to `exceptions` and verifying again. Existing contracts are never overwritten; Hosted contracts
+  are pulled only after explicit opt-in. No tool silently changes an active policy.
 - **Behavioral architecture**: `git_history` ranks churn × connectivity hotspots and hidden
   co-change coupling from bounded local numstat history. Always set `top_n`; it is enforced across
   every returned structured collection and JSON reports per-collection truncation. Use it as review

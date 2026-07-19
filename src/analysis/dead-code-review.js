@@ -3,14 +3,12 @@
 // never deletion instructions: framework entry, dynamic loading, reflection and public API surfaces
 // lower confidence and remain explicit in the returned record.
 import { computeDead, isFrameworkEntryFile } from "./dead-check.js";
-import { createPathClassifier, hasPathClass } from "../path-classification.js";
-
-const CONFIDENCE_RANK = Object.freeze({ high: 0, medium: 1, low: 2 });
-const CLASSIFIED_NON_PRODUCT = Object.freeze(["generated", "mock", "story", "docs", "benchmark", "temp"]);
-const DYNAMIC_RE = /(?:\bimport\s*\(|\brequire\s*\(\s*(?!["'])|\bcreateRequire\s*\(|\b__import__\s*\(|\bimportlib\.|(?:^|[^\w.$])(?:eval|exec)\s*\()/m;
-const REFLECTION_RE = /(?:\b(?:Class\.forName|get(?:Declared)?Method|getattr|setattr|hasattr|Method\.Invoke|GetMethod|GetProcAddress|dlsym)\s*\(|\b(?:globals|locals)\s*\(\s*\)\s*\[|\breflect\.[A-Za-z_$][\w$]*\s*\()/i;
-
-const normalizedPath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\.\//, "");
+import { createPathClassifier } from "../path-classification.js";
+import {
+  DEAD_CODE_CONFIDENCE_RANK as CONFIDENCE_RANK, hasDynamicCode,
+  REFLECTION_CODE_RE as REFLECTION_RE, deadCodePathAllowed as pathAllowed,
+  normalizedReviewPath as normalizedPath,
+} from './dead-code-review/policy.js'
 const lineOf = (node) => {
   const match = /@(\d+)$/.exec(String(node?.id || "")) || /L(\d+)/.exec(String(node?.source_location || ""));
   return match ? Number(match[1]) : 0;
@@ -32,14 +30,6 @@ function isPublicSurface(node) {
   return node?.exported === true || visibility === "public" || visibility === "protected";
 }
 
-function pathAllowed(info, { includeTests, includeClassified }) {
-  if (!includeTests && hasPathClass(info, "test", "e2e")) return { ok: false, bucket: "tests" };
-  if (!includeClassified && (info?.excluded || hasPathClass(info, ...CLASSIFIED_NON_PRODUCT))) {
-    return { ok: false, bucket: "classified" };
-  }
-  return { ok: true };
-}
-
 function symbolCandidate(item, node, context) {
   const file = normalizedPath(item.file);
   const source = String(context.sources.get(file) || "");
@@ -48,7 +38,7 @@ function symbolCandidate(item, node, context) {
   const testOnly = item.testOnly === true;
   const externalEntry = context.entrySet.has(file) || isFrameworkEntryFile(file);
   const framework = context.frameworkByFile.get(file) || null;
-  const dynamicFile = context.dynamicTargets.has(file) || DYNAMIC_RE.test(source);
+  const dynamicFile = context.dynamicTargets.has(file) || hasDynamicCode(source, file);
   const reflectionFile = REFLECTION_RE.test(source);
   const kind = kindOf(node);
   const exactNoReference = context.exactNoReferenceIds.has(String(item.id));
@@ -143,7 +133,7 @@ function fileCandidate(item, symbols, context) {
   const source = String(context.sources.get(file) || "");
   const pathInfo = context.classify(file, source);
   const publicSymbols = symbols.filter((symbol) => symbol.publicApi);
-  const dynamicFile = context.dynamicTargets.has(file) || DYNAMIC_RE.test(source);
+  const dynamicFile = context.dynamicTargets.has(file) || hasDynamicCode(source, file);
   const reflectionFile = REFLECTION_RE.test(source);
   // Whole-file liveness always remains at most medium: external launchers/manifests can exist outside
   // the indexed import graph even when every internal symbol signal is otherwise strong.
@@ -219,7 +209,7 @@ export function computeDeadCodeReview(graph, sources, options = {}) {
     return classificationCache.get(file);
   };
   const repoSignals = {
-    dynamicLoading: (graph.externalImports || []).some((entry) => entry?.dynamic) || [...sources.values()].some((text) => DYNAMIC_RE.test(String(text || ""))),
+    dynamicLoading: (graph.externalImports || []).some((entry) => entry?.dynamic) || [...sources].some(([file, text]) => hasDynamicCode(text, file)),
     reflection: [...sources.values()].some((text) => REFLECTION_RE.test(String(text || ""))),
   };
   const includeTests = options.includeTests === true;

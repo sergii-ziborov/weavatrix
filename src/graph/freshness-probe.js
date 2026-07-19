@@ -9,7 +9,7 @@ import {childProcessEnv} from '../child-env.js'
 import {createRepoBoundary} from '../repo-path.js'
 
 export const REPOSITORY_FRESHNESS_PROBE_V = 1
-export const GRAPH_BUILDER_SCHEMA_V = 5
+export const GRAPH_BUILDER_SCHEMA_V = 6
 export const GRAPH_BUILDER_VERSION = (() => {
     try { return String(createRequire(import.meta.url)('../../package.json').version) }
     catch { return '0.0.0' }
@@ -23,6 +23,7 @@ const CURRENT_GRAPH_SCHEMA = Object.freeze({
     edgeTypesV: 2,
     edgeProvenanceV: 1,
     complexityV: 2,
+    physicalFileLocV: 1,
     repoBoundaryV: 1,
     barrelResolutionV: 1,
     reExportOccurrencesV: 1,

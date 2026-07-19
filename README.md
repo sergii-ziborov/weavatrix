@@ -34,8 +34,8 @@ Weavatrix answers questions a text index cannot:
   depends on them — with test coverage attached, so the **untested part of the blast radius** stands
   out before you ship.
 - *"Who calls this function?"* → `inspect_symbol` returns exact bounded TS/JS occurrences plus
-  source context; `context_bundle` adds grouped graph relations, exact re-export sites, and a
-  smaller source workset. `get_dependents` walks the symbol-level reverse graph transitively. Opt into
+  source context; `context_bundle` adds production-first graph relations, exact re-export sites,
+  diverse call-site excerpts, and a smaller source workset. `get_dependents` walks the symbol-level reverse graph transitively. Opt into
   `include_container_importers:true` only when a broader module-import radius is intended.
 - *"Did my refactor actually decouple anything?"* → `graph_diff base_ref=HEAD~1` builds an immutable
   baseline graph without checking it out, then reports the structural delta: new module
@@ -116,6 +116,43 @@ find_duplicates
 Every dead-code, orphan, dependency and duplicate item remains review evidence. Confirm framework
 conventions and source use before editing; Weavatrix does not auto-delete or merge findings.
 
+`run_audit` also returns an explicit capability matrix. `STRUCTURE CHECKED` and a supported package
+ecosystem do not imply `RUNTIME_CORRECTNESS` or `CONCURRENCY` is complete. Maven/Gradle manifests are
+reported `NOT_SUPPORTED`/`PARTIAL` for import-to-artifact verification rather than as a false clean
+`0 declared / 0 external`; bounded Go/Java correctness checks disclose that they are neither compiler
+proof nor a race detector.
+
+### Trace an event, queue, worker, cron or CLI flow
+
+```text
+query_graph
+  seed_symbols=["handleAttackEvents"]
+  relation_filter=["calls", "references"]
+  flow_direction="both"
+  -> exact listener plus bounded producers and consumers
+context_bundle label="handleAttackEvents"
+  -> production callers first and diverse excerpts around decisive call sites
+```
+
+Exact symbol seeds avoid fuzzy routing noise and work for non-HTTP entry points without adding a
+special-purpose tool for every framework. A narrow `search_code` registration check is still useful
+when the handler name is not known; it is a discovery aid, not the graph.
+
+### Establish an architecture contract without silently changing policy
+
+```text
+get_architecture_contract action=preview baseline_mode=none
+  -> adaptive Maven/Gradle/monorepo territories
+  -> observed dependency directions labelled OBSERVED_NOT_ENFORCED
+  -> exact proposed file, verification, hash and short-lived token
+get_architecture_contract action=approve confirm_token=<reviewed-token>
+  -> creates only a missing .weavatrix/architecture.json
+prepare_change -> edit -> verify_architecture
+```
+
+Use `baseline_mode=accept-current` only when the owner explicitly accepts current deterministic debt.
+Approval rechecks the graph and never overwrites an existing local or Hosted policy.
+
 ## Benchmarks
 
 Two different gates ship in the repository:
@@ -126,7 +163,7 @@ Two different gates ship in the repository:
   0.2.1 relation baseline. It fails on unexplained signal loss; `MISSING`, `STALE` and `UNBASELINED`
   remain incomplete, not green.
 
-Latest local release run (Windows x64, Node 24.15.0, July 18, 2026):
+Representative local regression run (Windows x64, Node 24.15.0, July 18, 2026):
 
 | Gate | Result | Selected evidence |
 |---|---:|---|
@@ -218,7 +255,7 @@ No graph yet? Ask the agent to call `rebuild_graph`; it builds the missing graph
 With the default `offline` profile (or an explicit capability set containing `retarget`),
 `open_repo` can change the active repository
 and builds a missing graph automatically. A normal
-`open_repo` also upgrades graphs that predate current typed-edge/provenance metadata; `build:false`
+`open_repo` also upgrades graphs that predate current typed-edge/provenance/physical-LOC metadata; `build:false`
 probes without building and refuses a legacy graph. Retargeting is offline but intentionally changes
 the filesystem boundary for subsequent tools; select `pinned` when that boundary must not move.
 
@@ -240,8 +277,8 @@ Every current edge carries versioned provenance. The parser emits `EXTRACTED`, `
 confirmed by its bundled `typescript-language-server` + TypeScript runtime to `EXACT_LSP`.
 `CONFLICT` means evidence disagrees. `graph_stats` reports the provenance breakdown and the semantic
 provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means precision was explicitly
-disabled and only static evidence is active. Java and Rust language-server providers are not bundled
-in 0.2.9: their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
+disabled and only static evidence is active. Java and Rust language-server providers are not bundled:
+their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
 TypeScript/JavaScript overlay.
 
 The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
@@ -252,19 +289,21 @@ choice as **TypeScript/JavaScript semantic precision**.
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback, with repository-relative
 path globs on Windows/macOS/Linux), `read_source` (a
 symbol's actual code in one hop), `context_bundle` (definition plus grouped inbound/outbound
-containers, exact re-export sites, call-site/target provenance and bounded excerpts around decisive
+containers ranked production-first, exact re-export sites, call-site/target provenance and diverse bounded excerpts around decisive
 edges), `inspect_symbol` (one exact
 bounded TS/JS reference query, logical containers, impact and source excerpts), `list_endpoints` (HTTP route inventory:
 Express/Fastify/Nest/Flask/FastAPI/Go mux/Rust axum and actix-web, including nested Express
-`router.use(...)` mount composition, declaration/reachability counts and mount provenance),
+`router.use(...)` mount composition, declaration/reachability counts, mount provenance, and Spring
+conditional/default-active state),
 `trace_endpoint` (one exact composed route → handler → bounded production call graph with call-site excerpts)
 
 **health** — `find_dead_code` (bounded review queue for statically unreferenced and test-only files,
 functions, methods, and symbols, with evidence tiers, completed/remaining verification and explicit
 public/framework/dynamic caveats),
-`run_audit` (unused files/exports/dependencies with per-finding manifest/indexed-source/script/config verification;
+`run_audit` (an explicit capability matrix plus unused files/exports/dependencies with per-finding manifest/indexed-source/script/config verification;
 `category:dependencies` isolates missing/unused/duplicate declarations, unresolved imports and lockfile drift,
-missing npm/Go/Python deps, runtime
+missing npm/Go/Python deps, honest Maven/Gradle `NOT_SUPPORTED`/`PARTIAL` import verification, bounded
+Go/Java correctness candidates, runtime
 cycles, type-only/compile-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
 lockfile drift; accepts an immutable `base_ref`, `changed_files`, and `debt: new|existing|all` for
 review-scoped results; production paths are the default and `include_classified:true` opts into
@@ -318,8 +357,10 @@ not CFG, value-propagation, or taint analysis.
 **crossrepo** *(included in `offline`; absent from `pinned`; reads only registered local graphs)* —
 `trace_api_contract`; reconciles the selected backend/client graphs and joins routes to client callsites
 
-`query_graph` accepts optional `seed_files` when an architectural question must start from exact
-entry points. Resolved explicit seeds are exclusive by default; set `augment_seeds:true` only when
+`query_graph` accepts optional `seed_files` and exact `seed_symbols` when an architectural or
+event-driven question must start from known entry points. `relation_filter` limits edge kinds and
+`flow_direction:forward|backward|both` turns the same graph into a bounded producer/consumer view.
+Resolved explicit seeds are exclusive by default; set `augment_seeds:true` only when
 question-derived seeds are also wanted. A code-shaped identifier such as `startMitigate` is treated
 as a stronger bounded seed than surrounding words such as controller/service/flow; all exact
 same-name declarations are retained instead of adding unrelated concept seeds. Broad
@@ -329,7 +370,7 @@ and fixture matches. Production-first classification also applies during travers
 tests/generated/docs/benchmarks do not leak back from a production seed; name a class in the
 question or set `include_classified:true` to include it. Unreferenced unmatched constant/field leaves
 are hidden unless `include_low_signal:true`. Broad ranking remains orientation evidence; use
-`seed_files`, an exact endpoint, or `inspect_symbol` when the intended entry point is already known.
+`seed_files`, `seed_symbols`, an exact endpoint, or `inspect_symbol` when the intended entry point is already known.
 Instruction words such as “REST”, “path”, and “inspect” do not become fuzzy code seeds.
 
 **advisories** *(network, explicit opt-in)* — `refresh_advisories`
@@ -347,25 +388,29 @@ disclosed instead of silently guessed; and the server **hot-reloads its watched 
 modules and catalog** when those files change — other MCP helpers and analysis engines require a
 reconnect. Every MCP response also carries local, transient `_meta["weavatrix/metrics"]` with elapsed
 time, output bytes/token estimate, graph freshness/revision/update and graph-cache status. These
-metrics are not persisted or transmitted by Weavatrix.
+metrics are not persisted or transmitted by Weavatrix. If a source checkout's package version moves
+while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
+`STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
-### 0.2.13 runtime-integrity and cross-language verification patch
+### 0.2.14 typed flows, honest Health, and architecture bootstrap
 
-- `verified_change` no longer requires `package.json` when no package tests can run. Python, Go,
-  Java, Rust and other non-Node repositories now receive `NOT_REQUESTED` or `DISABLED` test evidence
-  instead of a false `BLOCKED`; actual package-script execution keeps the same double opt-in and
-  allowlist.
-- Release verification starts the packed npm artifact and portable MCPB stage over stdio. It asserts
-  the exact profile counts and required 38-tool `full` surface, including `trace_endpoint`,
-  `trace_api_contract` and `preview_sync`, so source/package drift cannot publish silently.
-- Runtime diagnostics expose the package version, selected capability groups and registered tool
-  count. The documentation now distinguishes an old client connection from an intentional profile
-  omission and explains that custom capabilities need `crossrepo` for contract tracing.
-- The bundled skill documents practical CLI/worker/event flows, local target-architecture adoption,
-  repository classification, undirected path semantics and the correct release and proof-carrying
-  change recipes without reducing Weavatrix to text search.
+- Go call resolution now follows receiver types through parameters, locals, constructor returns,
+  imported types and struct fields. It links calls such as `bgpSpeaker.RemoveMitigator(update)` to
+  `(*Speaker).RemoveMitigator` without guessing across ambiguous same-name receivers.
+- `query_graph` adds exact `seed_symbols`, `relation_filter`, and directed traversal for generic
+  event/queue/worker/cron/CLI flows. `context_bundle` ranks production callers before tests and uses
+  diverse edge-centered excerpts. `FlowSpec` no longer accidentally requests test traversal.
+- Health exposes per-capability completeness. Maven/Gradle support is honest instead of returning a
+  clean zero, and bounded Go/Java correctness findings never claim compiler, runtime, race, or
+  concurrency proof. Spring endpoints expose conditional/default-inactive controllers.
+- Architecture bootstrap adapts to Maven/Gradle/monorepo source roots and uses a reviewable
+  preview/approve handshake. A stale daemon now refuses analysis when its runtime version differs
+  from the package on disk.
+- The MCP implementation and static site are split into owner-focused modules/assets. A release test
+  enforces a physical 300-line maximum for JavaScript/TypeScript under `src`, `bin`, `scripts`, and
+  `test`, plus maintained HTML/CSS/JavaScript under `site`.
 
-Full patch notes: [docs/releases/v0.2.13.md](docs/releases/v0.2.13.md).
+Full patch notes: [docs/releases/v0.2.14.md](docs/releases/v0.2.14.md).
 
 ### 0.2.9 correctness, signal, and consent patch
 
@@ -752,10 +797,10 @@ The benchmark checks representative graph correctness, complete edge provenance,
 HTTP tracing, output bytes, latency, freshness, reconnect and active-target stability. Its budgets, semantics and intentionally
 limited claims are documented in [docs/benchmarking.md](docs/benchmarking.md).
 
-Refactoring target: keep focused implementation modules near 300 lines and split larger concerns
-into dotted-suffix modules behind a slim facade (`foo.js` re-exports `foo.parse.js`,
-`foo.report.js`, …). A few older orchestration modules remain above that target; new work should
-reduce them instead of growing new monoliths. The MCP layer lives
+Maintained JavaScript/TypeScript files under `src`, `bin`, `scripts`, and `test`, plus HTML/CSS/JavaScript
+under `site`, have a hard physical 300-line ceiling enforced by the release suite. Larger concerns are
+split into owner-focused modules behind slim stable facades (`foo.js` re-exports `foo.parse.js`,
+`foo.report.js`, …). The MCP layer lives
 in `src/mcp/` (graph context, tool entry modules, focused helpers, and the catalog/hot-reload
 loader) behind the thin stdio entry `src/mcp-server.mjs`.
 
@@ -763,9 +808,8 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
 
 - **Public 0.2.2 regression foundation** now has the permanent six-language golden corpus,
   cross-repository wrapper/liveness fixture, framework/convention fixture, full MCP lifecycle gate
-  and a portable real-repository runner. Five source-free 0.2.1 real-repository baselines are
-  recorded; edge provenance is gated end-to-end. The unavailable Rust source checkout is the only
-  explicit local gap preventing the strict six-repository release command from passing here.
+  and a portable real-repository runner. Six source-free 0.2.1 real-repository baselines are
+  recorded; edge provenance is gated end-to-end and the strict six-repository release command passes.
 - **Wrapper-aware API contracts** shipped in 0.2.2: persistent/ad-hoc configuration,
   conservative discovery, cross-repository handler liveness and explicit unknown states. The next
   hosted increment joins privacy-safe contract identities across separately synced services.

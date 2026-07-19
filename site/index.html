@@ -33,7 +33,7 @@
   "description": "Local repository intelligence MCP for AI coding agents: one reusable graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "url": "https://weavatrix.com",
   "downloadUrl": "https://www.npmjs.com/package/weavatrix",
-  "softwareVersion": "0.2.13",
+  "softwareVersion": "0.2.14",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Sergii Ziborov", "url": "https://github.com/sergii-ziborov" },
@@ -43,118 +43,14 @@
   ]
 }
 </script>
-<style>
-  :root {
-    --bg: #0b0d14; --bg2: #101322; --panel: #141830; --line: #23284a;
-    --text: #e8eaf6; --muted: #9aa0c0; --accent: #7c6cff; --accent2: #40e0c8;
-    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body { background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
-  a { color: var(--accent2); text-decoration: none; }
-  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
-
-  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
-  .mark { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .12em; font-size: 18px; }
-  .mark svg { flex: none; }
-  .badge { font: 11px/1 var(--mono); letter-spacing: .1em; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 4px; padding: 4px 7px; }
-  nav a { color: var(--muted); margin-left: 22px; font-size: 14px; }
-  nav a:hover { color: var(--text); }
-  .soon { opacity: .55; cursor: default; }
-
-  .hero { position: relative; padding: 72px 0 56px; }
-  #net { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; opacity: .9; }
-  .hero-inner { position: relative; z-index: 1; max-width: 640px; }
-  h1 { font-size: clamp(34px, 5.4vw, 56px); line-height: 1.1; font-weight: 800; }
-  h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .sub { color: var(--muted); margin: 22px 0 30px; font-size: 18px; max-width: 560px; }
-  .cta { display: inline-block; background: linear-gradient(90deg, var(--accent), #5a8bff); color: #fff; font-weight: 600; border-radius: 8px; padding: 12px 22px; }
-  .cta:hover { filter: brightness(1.12); }
-  .cta2 { display: inline-block; margin-left: 14px; color: var(--muted); padding: 12px 10px; }
-
-  .term { background: #0d1020; border: 1px solid var(--line); border-radius: 10px; margin: 46px 0 0; overflow: hidden; box-shadow: 0 18px 60px rgba(0,0,0,.45); position: relative; z-index: 1; }
-  .term-bar { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2c3157; }
-  .term pre { padding: 18px 20px; font: 13.5px/1.75 var(--mono); overflow-x: auto; }
-  .c { color: #5c6390; } .g { color: var(--accent2); } .p { color: #b7aaff; }
-
-  section { padding: 64px 0 8px; }
-  h2 { font-size: 26px; margin-bottom: 8px; }
-  .lead { color: var(--muted); margin-bottom: 34px; max-width: 640px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
-  .card h3 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 9px; }
-  .card p { color: var(--muted); font-size: 14.5px; }
-  .card code { font: 12.5px var(--mono); color: var(--accent2); }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); flex: none; }
-  .dot.t { background: var(--accent2); box-shadow: 0 0 10px var(--accent2); }
-
-  .proof-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 4px 0 28px; }
-  .proof-flow li { min-width: 0; position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 16px 14px 14px; background: #101426; }
-  .proof-flow li::before { content: ""; display: block; width: 7px; height: 7px; margin-bottom: 10px; border-radius: 50%; background: var(--accent); animation: proof-pulse 5s ease-in-out infinite; }
-  .proof-flow li:nth-child(2)::before { animation-delay: 1s; }
-  .proof-flow li:nth-child(3)::before { animation-delay: 2s; }
-  .proof-flow li:nth-child(4)::before { animation-delay: 3s; }
-  .proof-flow li:nth-child(5)::before { animation-delay: 4s; background: var(--accent2); }
-  .proof-flow li:not(:last-child)::after { content: "→"; position: absolute; z-index: 2; right: -12px; top: 31px; color: #696f9e; font: 15px var(--mono); }
-  .proof-flow b { display: block; font: 12px var(--mono); color: var(--text); }
-  .proof-flow span { display: block; margin-top: 5px; color: var(--muted); font-size: 12.5px; }
-  @keyframes proof-pulse { 0%, 15%, 100% { opacity: .32; box-shadow: 0 0 0 transparent; } 7% { opacity: 1; box-shadow: 0 0 14px var(--accent); } }
-
-  .scenario-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-  .scenario { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-  .scenario-head { padding: 18px 20px 15px; border-bottom: 1px solid var(--line); }
-  .scenario-head small { color: var(--accent2); font: 10.5px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
-  .scenario-head h3 { margin-top: 5px; font-size: 16px; }
-  .scenario pre { min-height: 205px; padding: 17px 20px 19px; overflow-x: auto; color: #bdc1db; background: #0d1020; font: 12.5px/1.65 var(--mono); white-space: pre-wrap; }
-  .scenario .prompt { color: #b7aaff; }
-  .scenario .result { color: var(--accent2); }
-
-  .bench-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-  .metric { border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: var(--panel); }
-  .metric strong { display: block; color: var(--accent2); font: 22px var(--mono); }
-  .metric span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-  .bench-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
-  .bench-table { width: 100%; min-width: 720px; border-collapse: collapse; background: #101426; font-size: 13px; }
-  .bench-table th, .bench-table td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: right; }
-  .bench-table th:first-child, .bench-table td:first-child { text-align: left; }
-  .bench-table th { color: #858caf; font: 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
-  .bench-table td { color: #c7cae0; font-family: var(--mono); }
-  .bench-table tr:last-child td { border-bottom: 0; }
-  .pass { color: var(--accent2); }
-  .method-note { margin-top: 16px; color: var(--muted); font-size: 13px; }
-
-  .langs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
-  .langs span { font: 12.5px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; }
-
-  .road { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-  .step { border: 1px solid var(--line); border-radius: 12px; padding: 22px; position: relative; }
-  .step .tag { font: 11px var(--mono); letter-spacing: .1em; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 12px; }
-  .now .tag { background: rgba(64,224,200,.12); color: var(--accent2); }
-  .next .tag { background: rgba(124,108,255,.12); color: #b7aaff; }
-  .later .tag { background: rgba(154,160,192,.12); color: var(--muted); }
-  .step h3 { font-size: 16px; margin-bottom: 6px; }
-  .step p { color: var(--muted); font-size: 14.5px; }
-
-  footer { margin-top: 80px; border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 13.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
-  @media (max-width: 760px) {
-    nav { display: none; }
-    .cta2 { display: block; margin: 12px 0 0; }
-    .proof-flow { grid-template-columns: 1fr; }
-    .proof-flow li:not(:last-child)::after { content: "↓"; right: 18px; top: auto; bottom: -14px; }
-    .scenario-grid { grid-template-columns: 1fr; }
-    .bench-summary { grid-template-columns: repeat(2, 1fr); }
-  }
-  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .proof-flow li::before { animation: none; opacity: 1; } }
-</style>
+<link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="mark">
       <svg width="26" height="26" viewBox="0 0 100 100"><circle cx="30" cy="30" r="12" fill="#7c6cff"/><circle cx="72" cy="44" r="9" fill="#40e0c8"/><circle cx="44" cy="74" r="9" fill="#f0f2f8"/><line x1="30" y1="30" x2="72" y2="44" stroke="#7c6cff" stroke-width="4"/><line x1="30" y1="30" x2="44" y2="74" stroke="#40e0c8" stroke-width="4"/></svg>
-      WEAVATRIX <span class="badge">0.2.13</span>
+      WEAVATRIX <span class="badge">0.2.14</span>
     </div>
     <nav>
       <a href="#features">Tools</a>
@@ -204,13 +100,13 @@
       <div class="card"><h3><span class="dot t"></span>Proof-carrying change safeguard</h3><p><code>verified_change</code> plans and verifies one change through exact context, blast radius, graph drift, architecture, duplicate, API and optional test ratchets, returning one PASS, BLOCKED or honest UNKNOWN verdict.</p></div>
       <div class="card"><h3><span class="dot"></span>Change impact</h3><p><code>change_impact</code> diffs your branch (staged, unstaged, untracked included) and lists everything that depends on what you touched — with test coverage attached and untested hotspots called out.</p></div>
       <div class="card"><h3><span class="dot t"></span>Blast radius per symbol</h3><p><code>get_dependents</code> walks reverse edges transitively: every caller, importer and subclass that can feel your refactor, ranked by proximity and connectivity.</p></div>
-      <div class="card"><h3><span class="dot"></span>Signal-aware health audit</h3><p><code>run_audit</code> finds dead code, dependency mistakes and orphans, separates runtime cycles from type-only/compile-only coupling, and makes incomplete OSV coverage explicit instead of reporting a clean zero.</p></div>
-      <div class="card"><h3><span class="dot t"></span>Exact REST and symbol context</h3><p><code>list_endpoints</code> proves declared versus reachable routes and static mount chains. <code>trace_endpoint</code> follows one composed path through its handler and bounded call graph; <code>context_bundle</code> preserves call-site and target provenance.</p></div>
+      <div class="card"><h3><span class="dot"></span>Signal-aware health audit</h3><p><code>run_audit</code> finds dead code, dependency mistakes and orphans, separates runtime cycles from compile-only coupling, and reports a capability matrix so unsupported Maven, runtime, concurrency or OSV evidence can never look clean.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Exact REST and symbol context</h3><p><code>list_endpoints</code> proves declared versus reachable routes, mount chains and conditional Spring controllers. <code>trace_endpoint</code> follows one route; <code>context_bundle</code> ranks production callers and preserves call-site provenance.</p></div>
       <div class="card"><h3><span class="dot"></span>Cross-repo API contracts</h3><p><code>trace_api_contract</code> joins backend routes and handlers to client callsites across registered local repositories, reporting external handler use, per-callsite confidence and unresolved dynamic URLs instead of guessing.</p></div>
       <div class="card"><h3><span class="dot"></span>Clone detection, three lenses</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies and embedded strings. It ranks near-clones and same-name divergence as review evidence while suppressing homogeneous router boilerplate by default.</p></div>
       <div class="card"><h3><span class="dot t"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: runtime versus compile-time dependencies, changed cycle membership, and symbols that lost their last caller.</p></div>
       <div class="card"><h3><span class="dot"></span>History-backed architecture</h3><p><code>git_history</code> combines bounded local churn with graph connectivity, hidden co-change coupling and expected test/source movement. It reads numstat evidence, not commit messages, authors or source bodies.</p></div>
-      <div class="card"><h3><span class="dot t"></span>Intended architecture ratchet</h3><p><code>get_architecture_contract</code>, <code>prepare_change</code> and <code>verify_architecture</code> turn an owner-approved target into an executable no-regression policy with new, existing, fixed and excepted debt.</p></div>
+      <div class="card"><h3><span class="dot t"></span>Intended architecture ratchet</h3><p><code>get_architecture_contract</code> previews an adaptive Maven/Gradle/monorepo target before an explicit one-time approval; <code>prepare_change</code> and <code>verify_architecture</code> enforce it without silently rewriting policy.</p></div>
       <div class="card"><h3><span class="dot"></span>One-call multi-repo mode</h3><p><code>open_repo</code> switches the active local repository and builds missing graphs through an explicit offline tool call. It also upgrades legacy graphs to edge metadata v2; omit <code>retarget</code> to pin one repository.</p></div>
     </div>
     <div class="langs">
@@ -220,7 +116,7 @@
 
   <section id="examples">
     <h2>What the agent actually gets</h2>
-    <p class="lead">Four real task shapes from local dogfooding. The output stays bounded, exposes
+    <p class="lead">Six real task shapes from local dogfooding. The output stays bounded, exposes
       uncertainty, and carries the same graph evidence from orientation through verification.</p>
 
     <ol class="proof-flow" aria-label="Proof-carrying change pipeline">
@@ -286,6 +182,34 @@ find_duplicates
 <span class="result">Every item stays review-required;
 no auto-delete or cosmetic green score.</span></pre>
       </article>
+
+      <article class="scenario">
+        <div class="scenario-head"><small>Event-driven flow</small><h3>Trace a listener without forcing it through REST</h3></div>
+        <pre><span class="prompt">› Who produces and consumes this event?</span>
+
+query_graph
+  seed_symbols=["handleAttackEvents"]
+  relation_filter=["calls","references"]
+  flow_direction="both"
+context_bundle → production callers first
+
+<span class="result">Exact seeds keep tests and fuzzy config
+matches out of the bounded flow.</span></pre>
+      </article>
+
+      <article class="scenario">
+        <div class="scenario-head"><small>Architecture bootstrap</small><h3>Review the target before making it policy</h3></div>
+        <pre><span class="prompt">› Preserve this architecture from now on.</span>
+
+get_architecture_contract action=preview
+  adaptive source roots + candidate rules
+  observed directions: NOT ENFORCED
+  exact content + hash + one-time token
+action=approve confirm_token=…
+
+<span class="result">Creates only a missing local contract;
+never overwrites active policy.</span></pre>
+      </article>
     </div>
   </section>
 
@@ -329,17 +253,17 @@ no auto-delete or cosmetic green score.</span></pre>
        called: <code style="font-family:var(--mono);color:var(--accent2)">refresh_advisories</code> sends
        package names and versions to OSV.dev;
        <code style="font-family:var(--mono);color:var(--accent2)">pull_architecture_contract</code> sends
-       only an opaque repository UUID and receives a validated owner contract; and
-       <code style="font-family:var(--mono);color:var(--accent2)">preview_sync</code> returns a
-       no-network preview of the destination, repository UUID, sections, size and hash. Only a
+       only an opaque repository UUID and receives a validated owner contract; and only a
        <code style="font-family:var(--mono);color:var(--accent2)">sync_graph</code> call with
        <code style="font-family:var(--mono);color:var(--accent2)">dry_run:false</code> and
        its exact short-lived confirmation token sends the bounded V3 evidence allowlist to your
-       configured endpoint. A token alone remains a dry-run. V3 includes topology plus bounded architecture,
+       configured endpoint. Before that, local-only <code style="font-family:var(--mono);color:var(--accent2)">preview_sync</code>
+       shows the destination, repository UUID, sections, size and hash without network access. A token
+       alone remains a dry-run. V3 includes topology plus bounded architecture,
        health, stack, package and duplicate-review evidence, but excludes source bodies, snippets,
        absolute paths, environment values, credentials and Git remotes. The <code style="font-family:var(--mono);color:var(--accent2)">osv</code>
        profile exposes only advisory refresh; <code style="font-family:var(--mono);color:var(--accent2)">hosted</code>
-       and <code style="font-family:var(--mono);color:var(--accent2)">full</code> expose all three.
+       and <code style="font-family:var(--mono);color:var(--accent2)">full</code> expose all three HTTP tools plus the local preview.
        Legacy <code style="font-family:var(--mono);color:var(--accent2)">online</code> is only a compatibility alias.</p>
   </section>
 
@@ -347,7 +271,7 @@ no auto-delete or cosmetic green score.</span></pre>
     <h2>Roadmap</h2>
     <p class="lead">The MCP server is free and MIT — forever. The hosted layer is now an access-controlled preview.</p>
     <div class="road">
-      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server 0.2.13</h3><p>38 available tools over your local code graph; 34 offline tools enabled by default, including fast repository orientation, Health and dependency review, proof-carrying change verification, clone families, graph history, exact endpoint and cross-repository API tracing, and architecture ratchets. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server 0.2.14</h3><p>38 available tools over your local code graph; 34 offline tools enabled by default, including fast repository orientation, exact Go/Java flows, capability-aware Health, clone families, graph history, proof-carrying changes, endpoint/API tracing and explicitly approved architecture ratchets. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
       <div class="step next"><span class="tag">ACCESS-CONTROLLED PREVIEW</span><h3>Architecture workbench</h3><p><a href="https://app.weavatrix.com">app.weavatrix.com</a> is the optional owner-authenticated workbench for source-free evidence, revision history and target-architecture review. Availability and surfaces evolve independently from the public MCP. Sync remains explicit, preview-confirmed and opt-in.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
       <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>
@@ -360,60 +284,6 @@ no auto-delete or cosmetic green score.</span></pre>
   </footer>
 </div>
 
-<script>
-(() => {
-  const cv = document.getElementById('net'), cx = cv.getContext('2d');
-  let W, H, nodes = [], links = [];
-  const N = 46, LINKDIST = 150;
-
-  function reset() {
-    const r = cv.parentElement.getBoundingClientRect();
-    W = cv.width = r.width * devicePixelRatio; H = cv.height = r.height * devicePixelRatio;
-    nodes = Array.from({length: N}, () => ({
-      x: Math.random() * W, y: Math.random() * H,
-      vx: (Math.random() - .5) * .18 * devicePixelRatio, vy: (Math.random() - .5) * .18 * devicePixelRatio,
-      r: (Math.random() * 2.2 + 1.4) * devicePixelRatio,
-    }));
-    links = [];
-    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
-      const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
-      if (d < LINKDIST * devicePixelRatio && Math.random() < .5) links.push([i, j]);
-    }
-  }
-
-  let pulse = 0, pulseNode = 0;
-  function tick(t) {
-    cx.clearRect(0, 0, W, H);
-    // one node "changes" every few seconds and its blast radius ripples out
-    if (t / 1600 > pulse) { pulse = Math.ceil(t / 1600); pulseNode = Math.floor(Math.random() * N); }
-    const ripple = ((t % 1600) / 1600) * 130 * devicePixelRatio;
-    const pn = nodes[pulseNode];
-
-    cx.lineWidth = devicePixelRatio * .7;
-    for (const [i, j] of links) {
-      const a = nodes[i], b = nodes[j];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (d > LINKDIST * 1.6 * devicePixelRatio) continue;
-      const near = Math.min(Math.hypot(a.x - pn.x, a.y - pn.y), Math.hypot(b.x - pn.x, b.y - pn.y));
-      const hot = Math.abs(near - ripple) < 34 * devicePixelRatio;
-      cx.strokeStyle = hot ? 'rgba(64,224,200,.5)' : 'rgba(124,108,255,.14)';
-      cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke();
-    }
-    for (let i = 0; i < N; i++) {
-      const n = nodes[i];
-      n.x += n.vx; n.y += n.vy;
-      if (n.x < 0 || n.x > W) n.vx *= -1;
-      if (n.y < 0 || n.y > H) n.vy *= -1;
-      const dp = Math.hypot(n.x - pn.x, n.y - pn.y);
-      const hot = i === pulseNode || Math.abs(dp - ripple) < 30 * devicePixelRatio;
-      cx.fillStyle = i === pulseNode ? '#40e0c8' : hot ? 'rgba(64,224,200,.85)' : 'rgba(160,150,255,.5)';
-      cx.beginPath(); cx.arc(n.x, n.y, i === pulseNode ? n.r * 1.7 : n.r, 0, 7); cx.fill();
-    }
-    requestAnimationFrame(tick);
-  }
-  addEventListener('resize', reset);
-  reset(); requestAnimationFrame(tick);
-})();
-</script>
+<script src="/graph-animation.js"></script>
 </body>
 </html>

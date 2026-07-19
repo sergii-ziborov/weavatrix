@@ -14,15 +14,15 @@ const contractFixture = (extra = {}) => normalizeArchitectureContract({
   dependencyRules: [
     {id: 'domain-no-ui', action: 'forbid', from: ['domain'], to: ['ui'], kinds: ['runtime']},
   ],
-  budgets: {runtimeCycles: 0, maxFunctionLoc: 100, maxCyclomatic: 10},
+  budgets: {runtimeCycles: 0, maxFunctionLoc: 100, maxFileLoc: 300, maxCyclomatic: 10},
   ...extra,
 })
 
 const graphFixture = () => ({
   nodes: [
-    {id: 'src/domain/model.ts', source_file: 'src/domain/model.ts'},
+    {id: 'src/domain/model.ts', source_file: 'src/domain/model.ts', physical_loc: 350},
     {id: 'src/ui/view.ts', source_file: 'src/ui/view.ts'},
-    {id: 'src/domain/model.ts#calculate@10', label: 'calculate()', source_file: 'src/domain/model.ts', complexity: {loc: 130, cyclomatic: 4}},
+    {id: 'src/domain/model.ts#calculate@10', label: 'calculate()', source_file: 'src/domain/model.ts', source_end: 'L20', complexity: {loc: 130, cyclomatic: 4}},
   ],
   links: [
     {source: 'src/domain/model.ts', target: 'src/ui/view.ts', relation: 'imports'},
@@ -40,7 +40,11 @@ test('architecture contract normalizes deterministically and selects change rule
 test('architecture ratchet distinguishes new, existing and fixed violations', () => {
   const first = verifyArchitecture({graph: graphFixture(), contract: contractFixture()})
   assert.equal(first.status, 'FAIL')
-  assert.equal(first.new.length, 2, 'dependency and LOC budget are new debt')
+  assert.equal(first.new.length, 3, 'dependency, function LOC and physical file LOC are new debt')
+  const fileLoc = first.new.find((item) => item.ruleId === 'budget.maxFileLoc')
+  assert.deepEqual({evidence: fileLoc.evidence, current: fileLoc.current}, {
+    evidence: 'src/domain/model.ts', current: 350,
+  }, 'file LOC comes from the physical file node, not the last symbol ending at line 20')
 
   const baseline = first.new.map((item) => item.fingerprint)
   const accepted = verifyArchitecture({
@@ -48,9 +52,9 @@ test('architecture ratchet distinguishes new, existing and fixed violations', ()
     contract: contractFixture({ratchet: {baseline: {fingerprints: baseline}}}),
   })
   assert.equal(accepted.status, 'PASS')
-  assert.equal(accepted.existing.length, 2)
+  assert.equal(accepted.existing.length, 3)
 
-  const cleanGraph = {nodes: graphFixture().nodes.slice(0, 2), links: []}
+  const cleanGraph = {nodes: graphFixture().nodes.slice(0, 2).map((node) => ({...node, physical_loc: 20})), links: []}
   const fixed = verifyArchitecture({
     graph: cleanGraph,
     contract: contractFixture({ratchet: {baseline: {fingerprints: baseline}}}),
