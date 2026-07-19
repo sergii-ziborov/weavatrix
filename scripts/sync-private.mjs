@@ -4,12 +4,17 @@ import {join, resolve} from 'node:path'
 import process from 'node:process'
 import {fileURLToPath} from 'node:url'
 import {runtime} from './mcp-runtime-smoke.mjs'
+import {privateSyncGraphHome} from './private-sync-graph-home.mjs'
 
 const root = resolve(process.argv.slice(2).find((arg) => arg !== '--confirm') || process.cwd())
 const confirmed = process.argv.includes('--confirm')
 const endpoint = process.env.WEAVATRIX_SYNC_URL
 const token = process.env.WEAVATRIX_SYNC_TOKEN
 const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const graphHome = privateSyncGraphHome({
+    configuredHome: process.env.WEAVATRIX_GRAPH_HOME,
+    userHome: homedir(),
+})
 
 if (!existsSync(root)) throw new Error(`Repository does not exist: ${root}`)
 if (!endpoint || !token) throw new Error('WEAVATRIX_SYNC_URL and WEAVATRIX_SYNC_TOKEN are required')
@@ -19,7 +24,7 @@ const server = runtime(
     join(packageRoot, 'bin', 'weavatrix-mcp.mjs'),
     root,
     'full',
-    process.env.WEAVATRIX_GRAPH_HOME || join(homedir(), '.weavatrix'),
+    graphHome,
     {WEAVATRIX_PRECISION: 'lsp'},
 )
 
