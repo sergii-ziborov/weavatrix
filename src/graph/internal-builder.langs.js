@@ -115,6 +115,25 @@ function gitFileUniverse(dir) {
     });
   } catch { return null; }
 
+  // `git -C <dir>` also succeeds when <dir> is merely nested under some parent repository. If that
+  // nested directory is ignored by the parent, `ls-files` is empty even though <dir> can be a valid
+  // standalone repository root selected by the user (or a repository staged by a test/tool). In
+  // that one ambiguous case, fall back to the boundary-safe walker. Preserve an empty universe for
+  // an actual Git root so ignored files do not leak back into its graph.
+  if (!raw) {
+    try {
+      const top = execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 15_000,
+        maxBuffer: 1024 * 1024,
+        env: childProcessEnv(),
+      }).trim();
+      if (realpathSync.native(top) !== realpathSync.native(dir)) return null;
+    } catch { return null; }
+  }
+
   let rootReal;
   try { rootReal = realpathSync.native(dir); } catch { return null; }
   const files = [];

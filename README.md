@@ -28,7 +28,7 @@ Enterprise deployment through one source-free wire contract. It is a thin
 extension of this package, not a fork of the parser/graph/Health engine, so core
 updates arrive as normal dependency updates.
 
-Version 0.2.17 still contains the explicit opt-in compatibility profiles
+Version 0.2.18 still contains the explicit opt-in compatibility profiles
 documented below. The paired 0.3/0.1 release removes their network
 implementations from this package; until then the new connector is not
 publishable. The decision and release gates are in
@@ -430,7 +430,19 @@ metrics are not persisted or transmitted by Weavatrix. If a source checkout's pa
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
-### 0.2.17 self-audit trust patch
+### 0.2.18 repository-root and self-audit trust patch
+
+- A directory nested under an ignored parent Git repository is no longer mistaken for an empty
+  repository. The internal builder now falls back to its boundary-safe walker for that ambiguous
+  case while preserving Git ignore semantics at a real repository root.
+- This is the first npm release containing the 0.2.17 self-audit work: Drizzle reachability,
+  scoped typosquat precision, regex-aware clone anchors, dead parser removal and shared owners.
+- The 0.3 boundary remains unchanged: this offline package stays MIT, and the separately licensed
+  online connector owns outbound HTTP after the major split.
+
+Full patch notes: [docs/releases/v0.2.18.md](docs/releases/v0.2.18.md).
+
+### 0.2.17 self-audit trust patch (tagged, not published to npm)
 
 - Health no longer treats configured Drizzle schema modules as orphaned/test-only production code,
   and scoped typosquat checks no longer compare legitimate scoped packages with unrelated unscoped
