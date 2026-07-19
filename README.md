@@ -413,6 +413,19 @@ metrics are not persisted or transmitted by Weavatrix. If a source checkout's pa
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
+### 0.3.1 exact impact over oversized diffs
+
+- `change_impact` now recovers a bounded per-file unified diff when one large asset exceeds the
+  aggregate diff budget. Normal source files retain line/symbol classification; only the files that
+  individually exceed the budget stay conservative `unknown`.
+- Real Hosted dogfood recovered all 27 changed paths, mapped 57 changed symbols, reduced the
+  conservative seed set from 1,000 to 72, and verified exact direct references for 16/16 selected
+  JavaScript/TypeScript symbols. Transitive hops remain explicitly graph-backed.
+- The global LSP overlay remains a bounded prewarm and can honestly be `PARTIAL`; `get_dependents`,
+  `inspect_symbol`, and `change_impact` run revision-bound exact point/batch queries beyond that cap.
+
+Full patch notes: [docs/releases/v0.3.1.md](docs/releases/v0.3.1.md).
+
 ### 0.3.0 network-free core and exact dependency evidence
 
 - The MIT package now contains 34 local tools and no outbound HTTP implementation. Online OSV,
@@ -423,8 +436,8 @@ while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fa
 - Maven/Gradle imports map to exact class ownership from already installed JARs. Missing JARs,
   unresolved build expressions and heuristic fallbacks are `PARTIAL`, never a false `COMPLETE`.
 - Real self-dogfood produced persisted `EXACT_LSP` edges and an exact direct caller for
-  `startMcpServer`; GraphQL, gRPC and event/Kafka contract joins remain explicit about dynamic
-  `UNKNOWN` targets.
+  `startMcpServer`. GraphQL, gRPC and event/Kafka joins use static evidence plus revision-bound
+  runtime/OTLP observations; unobserved dynamic targets remain explicit `UNKNOWN`.
 
 Full patch notes: [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md).
 

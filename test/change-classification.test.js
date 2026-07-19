@@ -258,3 +258,31 @@ test("repoRoot + base obtains a bounded zero-context diff from git", () => {
     assert.deepEqual(result.seedIds, ["calc.ts#calculate@1"]);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("oversized git diff falls back to the complete bounded changed-file list", () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-change-oversized-"));
+  try {
+    execFileSync("git", ["init", "-q", repo], { windowsHide: true });
+    execFileSync("git", ["-C", repo, "config", "user.email", "fixture@example.test"], { windowsHide: true });
+    execFileSync("git", ["-C", repo, "config", "user.name", "Fixture"], { windowsHide: true });
+    writeFileSync(join(repo, "large.json"), JSON.stringify({ payload: "a".repeat(2_000) }));
+    writeFileSync(join(repo, "calc.ts"), "export function calculate(input) { return input * 2; }\n");
+    execFileSync("git", ["-C", repo, "add", "."], { windowsHide: true });
+    execFileSync("git", ["-C", repo, "commit", "-qm", "baseline"], { windowsHide: true });
+    writeFileSync(join(repo, "large.json"), JSON.stringify({ payload: "b".repeat(4_000) }));
+    writeFileSync(join(repo, "calc.ts"), "export function calculate(input) { return input * 3; }\n");
+    const graph = {
+      nodes: [fileNode("large.json"), fileNode("calc.ts"), symbolNode("calc.ts", "calculate", 1, 1, { exported: true })],
+      links: [],
+    };
+    const result = classifyChangeImpact({ repoRoot: repo, graph, base: "HEAD", limits: { maxDiffBytes: 1024 } });
+    assert.equal(result.ok, false);
+    assert.equal(result.verdict, "HIGH");
+    assert.equal(result.bounds.truncated, true);
+    assert.equal(result.bounds.fallbackFiles, 1);
+    assert.deepEqual(result.files.map((file) => file.path), ["calc.ts", "large.json"]);
+    assert.equal(result.files[0].classification, "signature-changed");
+    assert.equal(result.files[1].classification, "unknown");
+    assert.deepEqual(result.seedIds, ["calc.ts", "calc.ts#calculate@1", "large.json"]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
