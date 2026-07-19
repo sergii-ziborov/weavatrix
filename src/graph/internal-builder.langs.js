@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { isPathInside } from "../repo-path.js";
 import { childProcessEnv } from "../child-env.js";
 import { filterWeavatrixIgnored } from "../path-ignore.js";
+import {trustedGrammarWasm, trustedRuntimeWasm} from './parser-artifact-boundary.js'
 import LANG_JS from "./builder/lang-js.js";
 import LANG_PY from "./builder/lang-python.js";
 import LANG_GO from "./builder/lang-go.js";
@@ -24,7 +25,6 @@ const { Parser, Language, Query } = require("web-tree-sitter");
 
 const WTS_DIR = dirname(require.resolve("web-tree-sitter"));
 const NODE_MODULES = dirname(WTS_DIR);
-const DEFAULT_RUNTIME_WASM = join(WTS_DIR, "tree-sitter.wasm");
 const DEFAULT_WASM_DIR = join(NODE_MODULES, "tree-sitter-wasms", "out");
 
 // ---- language registry (derived from the per-language modules) ----
@@ -61,11 +61,19 @@ const _langs = {};
 // in the repo get compiled. The heavy WASMs (rust ~3MB, c_sharp ~4MB) cost seconds to compile — a tax
 // a JS-only repo must never pay. Omit `wanted` to load everything (old behavior).
 async function ensureParser(opts = {}, wanted = null) {
-  if (!_ready) _ready = Parser.init({ locateFile: () => opts.runtimeWasm || DEFAULT_RUNTIME_WASM });
+  if (opts.runtimeWasm != null || opts.wasmDir != null) {
+    throw new Error('custom parser artifacts are not supported; Weavatrix loads only pinned package-owned WASM')
+  }
+  if (!_ready) {
+    const runtimeWasm = trustedRuntimeWasm(WTS_DIR)
+    _ready = Parser.init({ locateFile: () => runtimeWasm });
+  }
   await _ready;
-  const wasmDir = opts.wasmDir || DEFAULT_WASM_DIR;
   const list = wanted ? GRAMMARS.filter((g) => wanted.has(g)) : GRAMMARS;
-  for (const g of list) if (!_langs[g]) { try { _langs[g] = await Language.load(join(wasmDir, `tree-sitter-${g}.wasm`)); } catch { _langs[g] = null; } }
+  for (const g of list) if (!_langs[g]) {
+    const grammarWasm = trustedGrammarWasm(DEFAULT_WASM_DIR, g)
+    try { _langs[g] = await Language.load(grammarWasm); } catch { _langs[g] = null; }
+  }
   return _langs;
 }
 

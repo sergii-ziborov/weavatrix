@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| `0.2.15.x` | Yes |
-| `0.2.14` and older | Upgrade to the latest release |
+| `0.3.x` | Yes |
+| `0.2.x` and older | Upgrade to the latest release |
 
 Security fixes are provided for the latest published version of Weavatrix. Upgrade before reporting
 an issue that may already be resolved.
@@ -55,6 +55,22 @@ network sandbox. On stdio EOF, SIGTERM or SIGINT, the MCP server stops new provi
 bounded graph-work drain, and closes or tree-terminates TLS/tsserver before exiting.
 Set `WEAVATRIX_PRECISION=off` before server startup (or select `off` in the MCPB semantic-precision
 setting) to keep new graphs parser-only from their first build.
+
+The parser runtime and language grammars are also exact package-pinned dependencies. Before compiling
+WASM, Weavatrix requires the runtime and every selected grammar to resolve inside their dependency
+directories and match a release-pinned SHA-256 allowlist. Repository paths, URLs, symlinks and custom
+`runtimeWasm`/`wasmDir` overrides cannot enter this path. This specifically bounds the generated
+Emscripten dynamic-module loader in `web-tree-sitter`: although upstream contains `eval` glue for
+EM_ASM/EM_JS side-module exports, Weavatrix supplies only its known local runtime and grammar artifacts.
+An integrity mismatch fails the graph build instead of silently falling back to an unverified parser.
+
+Dependency scanners should distinguish a package's declared license from component notices.
+`typescript@5.9.3` declares `Apache-2.0`; its `ThirdPartyNoticeText.txt` also reproduces the W3C Community
+Final Specification Agreement for the Web Background Synchronization specification. That attribution
+does not change the npm package's declared license, but conservative scanners may report the embedded
+notice separately. `web-tree-sitter@0.25.10` declares MIT; its generated loader is covered by the
+artifact boundary above. These observations are security evidence, not a request to suppress third-party
+scanner warnings or legal advice.
 
 `verified_change` is read-only by default. Its optional targeted-test step can execute only an
 existing `package.json` script whose name matches the bounded test/check/verify allowlist. The call

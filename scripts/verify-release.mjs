@@ -10,8 +10,10 @@ const server = readJson("server.json");
 const expected = pkg.version;
 const releaseNotesPath = resolve("docs", "releases", `v${expected}.md`);
 const precisionRuntimeDependencies = {
+  "tree-sitter-wasms": "0.1.13",
   typescript: "5.9.3",
   "typescript-language-server": "4.4.1",
+  "web-tree-sitter": "0.25.10",
 };
 
 const versions = {

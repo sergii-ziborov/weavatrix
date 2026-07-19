@@ -4,22 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weavatrix — local repository intelligence for AI coding agents</title>
-<meta name="description" content="Open-source MCP server that builds one reusable local code graph for fast application understanding, lower repeated context, Health, dead code, clone detection, graph history, blast radius and intended-architecture safeguards. JavaScript, TypeScript, Python, Go, Java, C#, Rust. Offline by default.">
+<meta name="description" content="Weavatrix Core is a free MIT, network-free MCP server for local code intelligence. Weavatrix Online adds licensed Cloud and self-hosted workflows without uploading source code.">
 <meta name="keywords" content="MCP server, Model Context Protocol, code graph, blast radius, change impact analysis, AI coding agent, Claude Code, Codex, dependency graph, dead code, clone detection, static analysis, tree-sitter, Rust, C#">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://weavatrix.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Weavatrix">
 <meta property="og:title" content="Weavatrix — one reusable application graph for your AI agent">
-<meta property="og:description" content="Understand an unfamiliar application quickly, then reuse the same local graph for Health, safe changes, duplicates, history and architecture safeguards. Offline by default, MIT.">
+<meta property="og:description" content="Start with the free, network-free MIT Core. Add the separately licensed Online overlay only when you need source-free Cloud or self-hosted workflows.">
 <meta property="og:url" content="https://weavatrix.com/">
-<meta property="og:image" content="https://weavatrix.com/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
+<meta property="og:image" content="https://weavatrix.com/og-image-v2.png">
+<meta property="og:image:width" content="1731">
+<meta property="og:image:height" content="909">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Weavatrix — local repository intelligence for AI coding agents">
-<meta name="twitter:description" content="Fast application understanding, Health, safe changes, duplicates, history and architecture safeguards from one reusable local graph.">
-<meta name="twitter:image" content="https://weavatrix.com/og-image.png">
+<meta name="twitter:description" content="One reusable application graph: free network-free Core, plus an optional licensed Online overlay for source-free Cloud and Enterprise workflows.">
+<meta name="twitter:image" content="https://weavatrix.com/og-image-v2.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -33,7 +33,7 @@
   "description": "Local repository intelligence MCP for AI coding agents: one reusable graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "url": "https://weavatrix.com",
   "downloadUrl": "https://www.npmjs.com/package/weavatrix",
-  "softwareVersion": "0.3.2",
+  "softwareVersion": "0.3.3",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Sergii Ziborov", "url": "https://github.com/sergii-ziborov" },
@@ -50,13 +50,14 @@
   <header>
     <div class="mark">
       <svg width="26" height="26" viewBox="0 0 100 100"><circle cx="30" cy="30" r="12" fill="#7c6cff"/><circle cx="72" cy="44" r="9" fill="#40e0c8"/><circle cx="44" cy="74" r="9" fill="#f0f2f8"/><line x1="30" y1="30" x2="72" y2="44" stroke="#7c6cff" stroke-width="4"/><line x1="30" y1="30" x2="44" y2="74" stroke="#40e0c8" stroke-width="4"/></svg>
-      WEAVATRIX <span class="badge">0.3.2</span>
+      WEAVATRIX <span class="badge">0.3.3</span>
     </div>
     <nav>
       <a href="#features">Tools</a>
+      <a href="#products">Core / Online</a>
       <a href="#examples">Examples</a>
       <a href="#benchmarks">Benchmarks</a>
-      <a href="#privacy">Privacy</a>
+      <a href="/privacy">Privacy</a>
       <a href="#roadmap">Roadmap</a>
       <a href="https://github.com/sergii-ziborov/weavatrix">GitHub</a>
     </nav>
@@ -71,7 +72,7 @@
         blast radius and intended-architecture safeguards. All 34 tools are offline; outbound
         operations live only in the separate Weavatrix Online product.</p>
       <a class="cta" href="#install">Get started</a>
-      <a class="cta2" href="#features">Explore the tools ↓</a>
+      <a class="cta2" href="#products">Core or Online? ↓</a>
     </div>
     <div class="term" id="install">
       <div class="term-bar"><i></i><i></i><i></i></div>
@@ -86,6 +87,34 @@
    7 untested hotspots called out — ranked by proximity × connectivity.</span></pre>
     </div>
   </div>
+
+  <section id="products">
+    <h2>One graph. Two trust boundaries.</h2>
+    <p class="lead product-lead">Start with the network-free Core. Add Online only when a team needs
+      an explicitly authorized Cloud or self-hosted connection. Online depends on Core and extends it;
+      it does not fork or privately replace the graph, parsers, LSP precision or baseline Health analysis.</p>
+    <div class="product-grid">
+      <article class="product-card core-product">
+        <div class="product-head"><div><span class="product-kicker">FREE · OPEN SOURCE</span><h3>Weavatrix Core <small>0.3.3</small></h3></div><span class="license-chip mit-chip">MIT</span></div>
+        <p>The complete local analysis engine: 34 MCP tools for application maps, exact context,
+          Health, dependencies, duplicates, blast radius, runtime evidence and architecture ratchets.</p>
+        <ul><li>Network-free by construction; no profile or tool call can enable HTTP.</li><li>Runs against repositories on your machine and keeps source local.</li><li>The shared foundation for every Weavatrix product.</li></ul>
+        <pre><span class="g">$</span> npx -y weavatrix &lt;repoRoot&gt;</pre>
+        <div class="product-actions"><a href="https://www.npmjs.com/package/weavatrix">npm</a><a href="https://github.com/sergii-ziborov/weavatrix">GitHub</a><a href="/license">MIT license</a></div>
+      </article>
+      <article class="product-card online-product">
+        <div class="product-head"><div><span class="product-kicker">OPTIONAL · SOURCE-AVAILABLE</span><h3>Weavatrix Online <small>0.1.0</small></h3></div><span class="license-chip online-chip">LICENSED</span></div>
+        <p>A separately installed superset with 39 MCP tools: all 34 Core tools plus authentication,
+          endpoint capability negotiation, advisory refresh, architecture pull and preview-confirmed graph sync.</p>
+        <ul><li>Connects to Weavatrix Cloud or a licensed customer-hosted Enterprise endpoint.</li><li>Sync is explicit and source-free: no source bodies, snippets, absolute paths, credentials or Git remotes.</li><li>May add proprietary skills and analyzers while continuing to receive Core improvements as a dependency.</li></ul>
+        <div class="availability"><b>Availability</b><span>Client published · Cloud access controlled · Enterprise by agreement</span></div>
+        <div class="product-actions"><a href="https://github.com/sergii-ziborov/weavatrix-online">Inspect source</a><a href="https://www.npmjs.com/package/weavatrix-online">npm metadata</a><a href="https://github.com/sergii-ziborov/weavatrix-online/blob/main/LICENSE.md">Online license</a><a href="mailto:sergii.ziborov@gmail.com?subject=Weavatrix%20Online%20license">Request access</a></div>
+      </article>
+    </div>
+    <p class="license-note"><strong>Clear boundary:</strong> Core remains MIT. Publishing the Online source
+      does not grant permission to install, run, test, modify or deploy it; those rights require a written
+      evaluation or commercial license.</p>
+  </section>
 
   <section id="features">
     <h2>The graph your agent is missing</h2>
@@ -245,30 +274,21 @@ never overwrites active policy.</span></pre>
       <code>npm run benchmark:real</code>.</p>
   </section>
 
-  <section id="privacy">
-    <h2>Local-first, offline by design</h2>
-    <p class="lead">Graph queries, audits, clone scans, repository switching and the built-in JS/TS
-       precision overlay run locally. Weavatrix 0.3 is a network-free MIT core: no capability name can
-       re-enable HTTP. Optional OSV, Cloud and licensed self-hosted workflows belong to the separately
-       installed <code style="font-family:var(--mono);color:var(--accent2)">weavatrix-online</code>
-       product. It extends this core with capability negotiation, authentication and explicit
-       preview-confirm sync while keeping source bodies, snippets, absolute paths, environment values,
-       credentials and Git remotes out of the bounded payload.</p>
-  </section>
-
   <section id="roadmap">
-    <h2>Roadmap</h2>
-    <p class="lead">The MCP server is free and MIT — forever. The hosted layer is now an access-controlled preview.</p>
+    <h2>Products and roadmap</h2>
+    <p class="lead">The offline Core stays free and MIT. Online networking, managed service and customer-hosted deployment remain a separate licensed product boundary.</p>
     <div class="road">
-      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP core 0.3.2</h3><p>34 network-free tools over the local graph, exact on-demand JS/TS LSP references, bounded large-diff recovery, Cargo.lock + RustSec report evidence, and exact installed-JAR ownership for Maven/Gradle imports. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
-      <div class="step next"><span class="tag">ACCESS-CONTROLLED PREVIEW</span><h3>Architecture workbench</h3><p><a href="https://app.weavatrix.com">app.weavatrix.com</a> is the optional owner-authenticated workbench for source-free evidence, revision history and target-architecture review. Availability and surfaces evolve independently from the public MCP. Sync remains explicit, preview-confirmed and opt-in.</p></div>
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP core 0.3.3</h3><p>34 network-free tools over the local graph, exact on-demand JS/TS LSP references, SHA-256-verified parser WASM, Cargo.lock + RustSec report evidence, and exact installed-JAR ownership for Maven/Gradle imports. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
+      <div class="step now"><span class="tag">NOW · LICENSED OVERLAY</span><h3>Online client 0.1.0</h3><p>The published <a href="https://github.com/sergii-ziborov/weavatrix-online">weavatrix-online</a> overlay composes Core in-process and owns every outbound capability. Source is inspectable; execution and deployment require written permission.</p></div>
+      <div class="step next"><span class="tag">ACCESS-CONTROLLED CLOUD</span><h3>Managed workbench</h3><p><a href="https://app.weavatrix.com">app.weavatrix.com</a> is the managed workbench for source-free evidence, revision history and target-architecture review. Tenant onboarding is controlled while the multi-tenant service evolves.</p></div>
+      <div class="step next"><span class="tag">LICENSED SELF-HOSTED</span><h3>Weavatrix Enterprise</h3><p>The same source-free contract can target a customer-hosted deployment with its own authorization, workers and repositories. Deployment and update rights are supplied by written agreement.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
       <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>
     </div>
   </section>
 
   <footer>
-    <div>© 2026 Sergii Ziborov · <a href="/license">MIT License</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a></div>
+    <div>© 2026 Sergii Ziborov · Core: <a href="/license">MIT</a> · Online: <a href="https://github.com/sergii-ziborov/weavatrix-online/blob/main/LICENSE.md">source-available license</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a></div>
     <div>weavatrix.com — built with weavatrix</div>
   </footer>
 </div>

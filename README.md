@@ -413,6 +413,21 @@ metrics are not persisted or transmitted by Weavatrix. If a source checkout's pa
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
+### 0.3.3 parser supply-chain boundary
+
+- Before compiling parser WASM, Core now requires the package-pinned `web-tree-sitter` runtime and
+  each selected `tree-sitter-wasms` grammar to resolve inside its dependency directory and match a
+  release-pinned SHA-256 allowlist. Repository paths, URLs, symlinks and custom parser locations are
+  rejected; a mismatch fails the graph build.
+- This bounds the upstream Emscripten dynamic-module loader even though its generated code contains
+  `eval` glue for EM_ASM/EM_JS side modules. Weavatrix loads only its known local runtime and grammar
+  artifacts; it does not load a parser or grammar from the analyzed repository.
+- Supply-chain documentation now distinguishes the Apache-2.0 license declared by
+  `typescript@5.9.3` from the W3C agreement reproduced for one specification in its third-party
+  notices. Conservative dependency scanners may still surface that component notice for review.
+
+Full patch notes: [docs/releases/v0.3.3.md](docs/releases/v0.3.3.md).
+
 ### 0.3.2 exact impact over oversized diffs
 
 - `change_impact` now recovers a bounded per-file unified diff when one large asset exceeds the
