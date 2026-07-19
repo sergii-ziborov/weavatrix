@@ -55,6 +55,7 @@ export function detectHttpClientCalls(repoRoot, codeFiles, options = {}) {
       clientNames,
       normalizedWrappers: [...configured, ...scopedDiscovered],
       maxCalls: remaining,
+      runtimeValues: options.runtimeValues,
     });
     calls.push(...extracted.calls);
     if (extracted.truncated) truncated = true;

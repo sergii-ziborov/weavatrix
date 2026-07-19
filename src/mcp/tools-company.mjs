@@ -3,13 +3,15 @@
 // can never pass an arbitrary filesystem path through this tool.
 import {join} from 'node:path'
 import {analyzeHttpContracts} from '../analysis/http-contracts.js'
+import {analyzeTransportContracts} from '../analysis/transport-contracts.js'
 import {buildGraphForRepo} from '../build-graph.js'
 import {graphHomeDir} from '../graph/layout.js'
 import {liveRepositoryRecords} from '../graph/repo-registry.js'
 import {loadGraph} from './graph-context.mjs'
 import {toolResult} from './tool-result.mjs'
+import {contractVerdict, contractVerdictLine} from './company-contract-verdict.mjs'
 
-const CROSS_REPO_HTTP_CONTRACT_V = 2
+const CROSS_REPO_HTTP_CONTRACT_V = 3
 const selectorText = (value) => String(value ?? '').trim()
 
 function selectRecord(records, selector) {
@@ -103,52 +105,6 @@ async function reconcileGraph(record, alias, role, graphHome) {
     }
 }
 
-function verdictFor(analysis) {
-    const endpointsWithCallers = analysis.endpoints.filter((endpoint) => endpoint.callsites.length > 0)
-    const affectedFiles = new Set()
-    const affectedScreens = new Set()
-    for (const endpoint of endpointsWithCallers) {
-        for (const item of endpoint.affected.files || []) affectedFiles.add(`${item.client}\0${item.file}`)
-        for (const item of endpoint.affected.screens || []) affectedScreens.add(`${item.client}\0${item.file}`)
-    }
-    let code = 'NO_ENDPOINTS_MATCHED', risk = 'unknown'
-    if (analysis.totals.endpoints > 0 && analysis.totals.matches === 0) {
-        code = analysis.totals.methodMismatches > 0 ? 'HTTP_METHOD_MISMATCH' : 'NO_STATIC_CLIENT_CALLERS'
-        risk = analysis.totals.methodMismatches > 0 ? 'high' : 'unknown'
-    } else if (analysis.totals.matches > 0 && analysis.totals.methodMismatches > 0) {
-        code = 'CLIENTS_AT_RISK_WITH_METHOD_MISMATCHES'; risk = 'high'
-    } else if (analysis.totals.matches > 0) {
-        code = 'CLIENTS_AT_RISK'; risk = 'medium'
-    }
-    return {
-        code,
-        risk,
-        endpointsWithCallers: endpointsWithCallers.length,
-        callsites: analysis.totals.matches,
-        affectedFiles: affectedFiles.size,
-        affectedScreens: affectedScreens.size,
-        methodMismatches: analysis.totals.methodMismatches,
-        uncertainCalls: analysis.totals.uncertainCalls,
-        notDeadExternalUse: analysis.totals.notDeadExternalUse,
-        notDeadExternalHandlers: analysis.totals.notDeadExternalHandlers,
-        possibleExternalUse: analysis.totals.possibleExternalUse,
-        unknownLiveness: analysis.totals.unknownLiveness,
-    }
-}
-
-function verdictLine(verdict, endpoints) {
-    if (verdict.code === 'NO_ENDPOINTS_MATCHED') {
-        return 'VERDICT NO_ENDPOINTS_MATCHED — no backend endpoint satisfied the requested method/path/change filter.'
-    }
-    if (verdict.code === 'NO_STATIC_CLIENT_CALLERS') {
-        return `VERDICT NO_STATIC_CLIENT_CALLERS — ${endpoints} backend endpoint(s) matched, but no bounded literal/template client call was proven; this is unknown, not proof of no consumers.`
-    }
-    if (verdict.code === 'HTTP_METHOD_MISMATCH') {
-        return `VERDICT HTTP_METHOD_MISMATCH — ${verdict.methodMismatches} client call(s) match the route shape with a different method.`
-    }
-    return `VERDICT ${verdict.code} — ${verdict.callsites} callsite(s) reach ${verdict.endpointsWithCallers} endpoint(s); ${verdict.affectedScreens} screen(s) and ${verdict.affectedFiles} file(s) are in the bounded blast radius.`
-}
-
 export async function tTraceApiContract(_g, args = {}, ctx = {}) {
     const graphHome = ctx.graphHome || graphHomeDir()
     const records = liveRepositoryRecords(graphHome)
@@ -215,7 +171,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
     }
 
     try {
-        const analysis = analyzeHttpContracts({
+        let analysis = analyzeHttpContracts({
             backend: {id: backendAlias, repoRoot: backend.repoPath, graph: backendGraph.graph},
             clients: clientGraphs.map((item) => ({id: item.alias, repoRoot: item.record.repoPath, graph: item.graph})),
             method: args.method,
@@ -229,9 +185,25 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
             maxEndpoints: args.max_endpoints,
             maxMatches: args.max_matches,
             maxAffectedFiles: args.max_affected_files,
+            runtimeValues: args.runtime_config,
         })
-        const verdict = verdictFor(analysis)
-        const reasons = [...new Set([...reconciliationReasons, ...(analysis.completeness?.reasons || [])])]
+        const selectedTransport = ['all', 'http', 'graphql', 'grpc', 'event'].includes(args.transport) ? args.transport : 'all'
+        if (!['all', 'http'].includes(selectedTransport)) analysis = {
+            ...analysis, status: 'complete', completeness: {complete: true, reasons: []}, endpoints: [], uncertain: [],
+            totals: {...analysis.totals, endpoints: 0, clientCalls: 0, matches: 0, methodMismatches: 0, uncertainCalls: 0, notDeadExternalUse: 0, notDeadExternalHandlers: 0, possibleExternalUse: 0, unknownLiveness: 0},
+        }
+        const transportAnalysis = selectedTransport === 'http'
+            ? {transportContractsV: 1, transport: 'http', status: 'COMPLETE', completeness: {complete: true, reasons: []}, totals: {contracts: 0, matches: 0, uncertain: 0, filesScanned: 0}, contracts: [], uncertain: []}
+            : analyzeTransportContracts({
+                backend: {id: backendAlias, repoRoot: backend.repoPath, graph: backendGraph.graph},
+                clients: clientGraphs.map((item) => ({id: item.alias, repoRoot: item.record.repoPath, graph: item.graph})),
+                transport: selectedTransport === 'all' ? 'all' : selectedTransport,
+                includeTests: args.include_tests === true,
+                maxImpactDepth: args.max_impact_depth,
+                maxAffectedFiles: args.max_affected_files,
+            })
+        const verdict = contractVerdict(analysis, transportAnalysis)
+        const reasons = [...new Set([...reconciliationReasons, ...(analysis.completeness?.reasons || []), ...(transportAnalysis.completeness?.reasons || [])])]
         const completeness = {
             complete: reasons.length === 0 && analysis.completeness?.complete === true,
             status: reasons.length === 0 && analysis.completeness?.complete === true ? 'COMPLETE' : 'PARTIAL',
@@ -243,8 +215,8 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
             right.affected.files.length - left.affected.files.length ||
             left.path.localeCompare(right.path))
         const lines = [
-            verdictLine(verdict, analysis.totals.endpoints),
-            `Scope: ${backend.label} → ${clients.map(({record}) => record.label).join(', ')}; ${analysis.totals.endpoints} endpoint(s), ${analysis.totals.clientCalls} inspected client call(s), ${analysis.totals.uncertainCalls} uncertain.`,
+            contractVerdictLine(verdict, analysis.totals.endpoints + transportAnalysis.totals.contracts),
+            `Scope: ${backend.label} → ${clients.map(({record}) => record.label).join(', ')}; ${analysis.totals.endpoints} HTTP endpoint(s), ${transportAnalysis.totals.contracts} GraphQL/gRPC/event contract(s), ${analysis.totals.clientCalls} inspected HTTP call(s), ${verdict.uncertainCalls} uncertain.`,
             ...ranked.slice(0, topN).flatMap((endpoint) => {
                 const location = endpoint.file ? ` (${endpoint.backend}:${endpoint.file}${endpoint.line ? `:${endpoint.line}` : ''})` : ''
                 const callsites = endpoint.callsites.slice(0, 3)
@@ -257,8 +229,10 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                     ...screens,
                 ]
             }),
+            ...transportAnalysis.contracts.filter((contract) => contract.callsites.length).slice(0, topN).map((contract) =>
+                `  ${contract.transport.toUpperCase()} ${contract.service ? `${contract.service}.` : contract.operation ? `${contract.operation} ` : ''}${contract.name} (${contract.file}:${contract.line}) [${contract.liveness}] → ${contract.callsites.length} callsite(s), ${contract.affected.files.length} affected file(s)`),
             completeness.complete
-                ? 'Completeness: complete within the declared repository graphs and static HTTP-call model.'
+                ? 'Completeness: complete within the declared repository graphs and supported static HTTP/GraphQL/gRPC/event models.'
                 : `Completeness: partial — ${completeness.reasons.join('; ')}.`,
         ]
         const result = {
@@ -269,6 +243,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                 clients: clients.map(({record, alias}) => publicRecord(record, alias)),
             },
             ...analysis,
+            transportContracts: transportAnalysis,
             status: completeness.status,
             graphReconciliation,
             completeness,

@@ -12,6 +12,8 @@ const removalHint = (pkg) => {
   if (pkg?.ecosystem === "npm") return `npm uninstall ${pkg.name} and audit what it touched`;
   if (pkg?.ecosystem === "PyPI") return `remove ${pkg.name} from the Python environment/manifest and audit what it touched`;
   if (pkg?.ecosystem === "Go") return `remove ${pkg.name} from the Go module graph, run go mod tidy, and audit what it touched`;
+  if (pkg?.ecosystem === "crates.io") return `cargo remove ${pkg.name}, rebuild every feature/target, and audit what it touched`;
+  if (pkg?.ecosystem === "Maven") return `remove or upgrade ${pkg.name} in Maven/Gradle, refresh the resolved graph, and audit what it touched`;
   return `remove ${pkg?.name || "the package"} with its ecosystem's package manager and audit what it touched`;
 };
 

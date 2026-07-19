@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { listRepoFiles } from "../analysis/internal-audit/repo-files.js";
 import { createRustResolvers } from "./resolvers/rust.js";
 
 export function buildResolvers(repoDir, fileSet) {
@@ -19,11 +20,18 @@ export function buildResolvers(repoDir, fileSet) {
   // go.mod requires also feed goSpecToPkg so external Go imports map to their declared module.
   let goModule = "";
   let goRequires = [];
-  try {
-    const gomod = parseGoMod(readLocal("go.mod"));
-    goModule = gomod.module;
-    goRequires = gomod.requires.map((r) => r.path);
-  } catch { /* no go.mod */ }
+  const goModules = [];
+  for (const manifest of listRepoFiles(repoDir).filter((file) => /(^|\/)go\.mod$/i.test(file))) {
+    try {
+      const gomod = parseGoMod(readLocal(manifest));
+      if (!gomod.module) continue;
+      const root = manifest.includes("/") ? manifest.slice(0, manifest.lastIndexOf("/")) : "";
+      goModules.push({ root, module: gomod.module, requires: gomod.requires.map((item) => item.path) });
+    } catch { /* unreadable module */ }
+  }
+  goModules.sort((left, right) => right.module.length - left.module.length);
+  goModule = goModules.find((item) => !item.root)?.module || goModules[0]?.module || "";
+  goRequires = [...new Set(goModules.flatMap((item) => item.requires))];
   const dirFiles = new Map();
   const filesByBase = new Map();
   for (const fr of fileSet) {
@@ -32,8 +40,10 @@ export function buildResolvers(repoDir, fileSet) {
     if (fr.endsWith(".go")) { const d = fr.includes("/") ? fr.slice(0, fr.lastIndexOf("/")) : ""; (dirFiles.get(d) || dirFiles.set(d, []).get(d)).push(fr); }
   }
   const resolveGoImport = (importPath) => {
-    if (goModule && (importPath === goModule || importPath.startsWith(goModule + "/"))) {
-      const d = importPath === goModule ? "" : importPath.slice(goModule.length + 1);
+    for (const own of goModules) {
+      if (importPath !== own.module && !importPath.startsWith(own.module + "/")) continue;
+      const subpath = importPath === own.module ? "" : importPath.slice(own.module.length + 1);
+      const d = [own.root, subpath].filter(Boolean).join("/");
       if (dirFiles.has(d)) return d;
     }
     // a module DECLARED in go.mod is external by definition — never let the suffix fallback hijack it
@@ -207,5 +217,5 @@ export function buildResolvers(repoDir, fileSet) {
     return fileSet.has(cand) ? cand : null;
   };
 
-  return { resolveJsImport, resolveAlias, resolvePyPath, pyBaseDir, pyTopDirs, resolveGoImport, dirFiles, resolveRustMod, resolveRustPath, resolveJavaImport, resolveHref, selectorIndex, htmlUsages, goModule, goRequires };
+  return { resolveJsImport, resolveAlias, resolvePyPath, pyBaseDir, pyTopDirs, resolveGoImport, dirFiles, resolveRustMod, resolveRustPath, resolveJavaImport, resolveHref, selectorIndex, htmlUsages, goModule, goModules, goRequires };
 }

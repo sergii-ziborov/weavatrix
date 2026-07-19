@@ -113,7 +113,7 @@ export default {
   ],
 
   pass1(ctx) {
-    const { grammar, tree, fileRel, caps, field, addSym, addImportEdge, imports, resolveRustMod, resolveRustPath, links, nameToId } = ctx;
+    const { grammar, tree, fileRel, caps, field, addSym, addImportEdge, addExternalImport, imports, resolveRustMod, resolveRustPath, links, nameToId } = ctx;
     const owned = [];
     for (const src of [SYMS_CORE, ...SYMS_OPTIONAL]) {
       for (const cap of caps(grammar, src, tree.rootNode)) {
@@ -175,7 +175,13 @@ export default {
       const ancestors = inlineAncestors(use);
       for (const leaf of useLeaves(use)) {
         const resolved = resolveRustPath(fileRel, leaf.segments, { inlineModules: ancestors, unqualified: true });
-        if (!resolved) continue;
+        if (!resolved) {
+          const crate = cleanSegment(leaf.segments[0]);
+          if (crate && !["crate", "self", "super", "std", "core", "alloc"].includes(crate) && /^[a-z_][\w]*$/.test(crate)) {
+            addExternalImport({ spec: leaf.segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-use", line: use.startPosition.row + 1 });
+          }
+          continue;
+        }
         emit(resolved.targetFile, { relation, line: use.startPosition.row + 1, specifier: use.text.replace(/;\s*$/, "") });
         if (!leaf.wildcard && leaf.local && leaf.local !== "_") {
           const imported = resolved.remaining.length ? cleanSegment(resolved.remaining.at(-1)) : "*";
@@ -192,13 +198,26 @@ export default {
       if (under(node, "use_declaration")) continue;
       if (["scoped_identifier", "scoped_type_identifier"].includes(node.parent?.type)) continue;
       const segments = pathParts(node);
-      if (!["crate", "self", "super"].includes(segments[0])) continue;
+      if (!["crate", "self", "super"].includes(segments[0])) {
+        const crate = cleanSegment(segments[0]);
+        if (crate && !["std", "core", "alloc"].includes(crate) && /^[a-z_][\w]*$/.test(crate)) {
+          addExternalImport({ spec: segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-path", line: node.startPosition.row + 1 });
+        }
+        continue;
+      }
       const resolved = resolveRustPath(fileRel, segments, { inlineModules: inlineAncestors(node), unqualified: false });
       if (!resolved) continue;
       emit(resolved.targetFile, { line: node.startPosition.row + 1, specifier: node.text });
       const finalName = cleanSegment(segments.at(-1));
       if (resolved.remaining.length && finalName && !imports.has(finalName)) {
         imports.set(finalName, { imported: finalName, targetFile: resolved.targetFile, rustQualified: true });
+      }
+    }
+
+    for (const cap of caps(grammar, `(extern_crate_declaration name: (identifier) @crate)`, tree.rootNode)) {
+      const crate = cleanSegment(cap.node.text);
+      if (crate && !["std", "core", "alloc"].includes(crate)) {
+        addExternalImport({ spec: crate, pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-extern-crate", line: cap.node.startPosition.row + 1 });
       }
     }
   },

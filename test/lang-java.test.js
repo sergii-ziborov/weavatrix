@@ -131,6 +131,7 @@ test("java graph: an external import cannot bind to a same-basename project clas
     assert.ok(local);
     assert.ok(!graph.links.some((link) => endpoint(link.target) === local.id && ["imports", "references"].includes(link.relation)), "package mismatch prevents basename fallback from inventing a dependency");
     assert.ok(!graph.links.some((link) => link.relation === "calls" && endpoint(link.target).startsWith("src/test/KafkaConsumer.java#poll@")), "external receiver calls cannot bind to an unrelated same-basename project class");
+    assert.deepEqual(graph.externalImports.map((item) => [item.ecosystem, item.spec]), [["Maven", "org.apache.kafka.clients.consumer.KafkaConsumer"]]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

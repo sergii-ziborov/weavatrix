@@ -19,7 +19,7 @@ export const GRAPH_BUILDER_VERSION = (() => {
 // version invalidates stamps across releases; the explicit schema requirements also fail closed when
 // a saved graph is hand-edited or a development build bumps a structural schema without a version bump.
 const CURRENT_GRAPH_SCHEMA = Object.freeze({
-    extImportsV: 2,
+    extImportsV: 3,
     edgeTypesV: 2,
     edgeProvenanceV: 1,
     complexityV: 2,

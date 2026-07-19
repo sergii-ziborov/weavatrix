@@ -1,6 +1,6 @@
 import {typeScriptLspContract} from '../typescript-lsp-provider.js'
 
-export const PRECISION_OVERLAY_V = 3
+export const PRECISION_OVERLAY_V = 4
 export const PRECISION_FILE = 'precision.json'
 export const JS_TS_FILE = /\.(?:[cm]?[jt]sx?)$/i
 export const endpoint = (value) => String(value && typeof value === 'object' ? value.id : value)

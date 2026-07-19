@@ -117,10 +117,20 @@ Every dead-code, orphan, dependency and duplicate item remains review evidence. 
 conventions and source use before editing; Weavatrix does not auto-delete or merge findings.
 
 `run_audit` also returns an explicit capability matrix. `STRUCTURE CHECKED` and a supported package
-ecosystem do not imply `RUNTIME_CORRECTNESS` or `CONCURRENCY` is complete. Maven/Gradle manifests are
-reported `NOT_SUPPORTED`/`PARTIAL` for import-to-artifact verification rather than as a false clean
-`0 declared / 0 external`; bounded Go/Java correctness checks disclose that they are neither compiler
-proof nor a race detector.
+ecosystem do not imply `RUNTIME_CORRECTNESS` or `CONCURRENCY` is complete. npm, nested Python and Go
+modules, Maven properties, common Gradle declarations/version catalogs, and Cargo workspace/renamed
+packages are compared with indexed imports. JVM reflection/generated/runtime-only use, Cargo
+features/proc macros and unresolved build logic remain review evidence; bounded Go/Java checks are
+neither compiler proof nor a race detector.
+
+### Where this saves agent context — and where it does not
+
+The largest saving comes from graph operations that replace repeated discovery: one
+`change_impact`, `get_dependents`, `context_bundle`, contract trace or dependency audit can collapse
+many search/read hops into a bounded evidence set. `read_source` is mainly a convenient exact window
+and is not inherently cheaper than a client's native offset read. Database queries, runtime state,
+disk forensics and background workflow investigation remain outside a static repository graph.
+Typecheck, tests and runtime checks remain the release authority.
 
 ### Trace an event, queue, worker, cron or CLI flow
 
@@ -259,8 +269,9 @@ and builds a missing graph automatically. A normal
 probes without building and refuses a legacy graph. Retargeting is offline but intentionally changes
 the filesystem boundary for subsequent tools; select `pinned` when that boundary must not move.
 
-An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — install as
-`~/.claude/skills/weavatrix/SKILL.md`.
+An agent skill with recipes ships in [skill/SKILL.md](skill/SKILL.md) — install it as
+`~/.claude/skills/weavatrix/SKILL.md` for Claude Code or
+`~/.codex/skills/weavatrix/SKILL.md` for Codex.
 
 ## Tools
 
@@ -280,6 +291,13 @@ provider's `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or `OFF` state; `OFF` means pre
 disabled and only static evidence is active. Java and Rust language-server providers are not bundled:
 their edges never become `EXACT_LSP`, even when a mixed repository reports a complete
 TypeScript/JavaScript overlay.
+
+Configured TypeScript plugins (including Next.js) are recorded but suppressed; repository-local
+plugin code is never loaded. The broad overlay is deliberately budgeted, so `PARTIAL` can mean the
+candidate cap was reached. `get_dependents` then spends a bounded point query on the requested JS/TS
+symbol and replaces direct heuristic references only when exact absence/presence is proven.
+`change_impact` batches the same exact query for changed symbols. Further transitive hops remain
+graph-backed and are labelled as such.
 
 The bounded JS/TS provider is enabled by default for new graphs. Set `WEAVATRIX_PRECISION=off`
 before starting the MCP server for parser-only operation from the first build, or pass
@@ -302,8 +320,8 @@ functions, methods, and symbols, with evidence tiers, completed/remaining verifi
 public/framework/dynamic caveats),
 `run_audit` (an explicit capability matrix plus unused files/exports/dependencies with per-finding manifest/indexed-source/script/config verification;
 `category:dependencies` isolates missing/unused/duplicate declarations, unresolved imports and lockfile drift,
-missing npm/Go/Python deps, honest Maven/Gradle `NOT_SUPPORTED`/`PARTIAL` import verification, bounded
-Go/Java correctness candidates, runtime
+missing npm/Go/Python/Maven/Gradle/Cargo deps, bounded import-to-artifact/crate verification, concrete
+npm/PyPI/Go/Maven/crates.io advisory pins, Go/Java correctness candidates, runtime
 cycles, type-only/compile-only coupling, orphans, boundary rules, offline OSV vulnerabilities + typosquat +
 lockfile drift; accepts an immutable `base_ref`, `changed_files`, and `debt: new|existing|all` for
 review-scoped results; production paths are the default and `include_classified:true` opts into
@@ -391,6 +409,21 @@ time, output bytes/token estimate, graph freshness/revision/update and graph-cac
 metrics are not persisted or transmitted by Weavatrix. If a source checkout's package version moves
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
+
+### 0.2.16 exact dependents, multi-ecosystem dependencies and transport contracts
+
+- Safe TypeScript project plugins no longer disable semantic precision. Plugin loading remains
+  suppressed, while `get_dependents` and `change_impact` can obtain exact direct JS/TS references on
+  demand and identify graph-backed transitive hops separately.
+- Dependency evidence covers nested npm/Python/Go scopes, Maven properties, Gradle catalogs/locks,
+  and Cargo workspace inheritance/renames/locks. Explicit OSV refresh accepts npm, PyPI, Go, Maven
+  and crates.io pins.
+- Cross-repository tracing adds static GraphQL, gRPC and event-topic joins alongside HTTP and keeps
+  runtime configuration, reflection and other dynamic targets explicitly `UNKNOWN`.
+- npm/MCPB metadata now calls out Codex/OpenAI Codex workflows, and Hosted distinguishes aggregate
+  folder-boundary feedback from proven file-level runtime cycles.
+
+Full patch notes: [docs/releases/v0.2.16.md](docs/releases/v0.2.16.md).
 
 ### 0.2.15 self-audit precision patch
 
@@ -658,12 +691,18 @@ Java graphs:
   agent review queue. Public/exported methods, framework entries, decorators, dynamic loading and
   reflection lower confidence; the result always says `REVIEW_REQUIRED` and `autoDelete:false`.
 
-### HTTP clients and wrappers
+### Cross-repository transports
 
 `trace_api_contract` recognizes built-in object clients such as `axios.get(...)`, explicit bare or
 object/member wrappers, and simple auto-discovered functions that forward a URL parameter directly
 to a known HTTP client. Auto-discovered wrappers are restricted to their bounded reverse-import
 scope; ambiguous same-name definitions are skipped and reported as incomplete evidence.
+
+The same tool can select GraphQL, gRPC or event evidence. It joins static GraphQL schema fields and
+operations, proto service methods and typed stub calls, and static Kafka/event-bus topic producers
+and consumers across registered repositories. Computed URLs, runtime configuration, dynamic
+GraphQL documents/topics, reflection and dynamic stubs remain `UNKNOWN`; they are not converted into
+an absence claim.
 
 Persistent per-client-repository configuration lives in `.weavatrix.json`:
 
@@ -826,16 +865,17 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
   cross-repository wrapper/liveness fixture, framework/convention fixture, full MCP lifecycle gate
   and a portable real-repository runner. Six source-free 0.2.1 real-repository baselines are
   recorded; edge provenance is gated end-to-end and the strict six-repository release command passes.
-- **Wrapper-aware API contracts** shipped in 0.2.2: persistent/ad-hoc configuration,
-  conservative discovery, cross-repository handler liveness and explicit unknown states. The next
-  hosted increment joins privacy-safe contract identities across separately synced services.
+- **Cross-transport contracts** cover bounded HTTP wrappers plus static GraphQL, gRPC and event-bus
+  identities across registered local repositories, with explicit runtime/dynamic unknown states.
 - **Hosted architecture workbench** at
   [app.weavatrix.com](https://app.weavatrix.com) is an access-controlled preview for
   owner-authenticated source-free evidence and revision history. Its UI and backend evolve
   independently from the public MCP release; local use remains fully optional.
 - **Semantic precision bridge** shipped for TypeScript/JavaScript in 0.2.4: a bounded, revision-bound
   local overlay validates references with the bundled language server while the parser graph remains
-  the fallback. Java and Rust providers are not bundled yet and stay explicitly `UNAVAILABLE`.
+  the fallback. 0.2.16 adds safe configured-plugin suppression plus exact on-demand point and changed-
+  symbol batch queries. Java and Rust language-server providers are not bundled and stay explicitly
+  unavailable as semantic providers; their parser/dependency evidence is still active.
 - **Git-native architecture history** — bounded tag/ref timelines and branch
   reports built outside the worktree; graph artifacts stay out of Git.
 - **Cross-repository company evidence** — endpoints, events and internal

@@ -162,6 +162,13 @@ test("on-demand symbol precision queries only the requested declaration and uses
     assert.equal(first.overlay.coverage.selected, 1);
     assert.equal(first.overlay.locations.length, 1);
     assert.equal(first.overlay.locations[0].source.includes("#caller@"), true);
+    const exactDependents = await tGetDependents(loadGraph(graphPath), {
+      label: target.id,
+      depth: 1,
+      precision: "lsp",
+    }, {repoRoot: root, graphPath, precisionClientFactory: clientFactory});
+    assert.match(exactDependents, /Semantic precision: EXACT_LSP point query \(cache hit\)/);
+    assert.match(exactDependents, /\[EXACT_LSP\].*caller\(\)/);
     const evidence = readCachedSymbolPrecisionEvidence({repoRoot: root, graphPath, graph});
     assert.deepEqual(evidence.referenceSymbols, [target.id]);
     assert.deepEqual(evidence.productionReferenceSymbols, [target.id]);

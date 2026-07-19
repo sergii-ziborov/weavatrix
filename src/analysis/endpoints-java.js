@@ -2,16 +2,13 @@
 // literal annotation paths: inventing values for constants would make an architecture inventory look
 // more complete than the evidence permits.
 import { maskJavaNonCode } from "./java-source.js";
+import { lineNumberAt } from "../util.js";
 
 const SPRING_MAPPING = /@(?:org\.springframework\.web\.bind\.annotation\.)?(RequestMapping|GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b/g;
 const SPRING_CONDITION = /@(?:org\.springframework\.boot\.autoconfigure\.condition\.)?(ConditionalOnExpression|ConditionalOnProperty)\b/g;
 const REQUEST_METHOD = /\bRequestMethod\s*\.\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\b/g;
 
-const lineAt = (text, index) => {
-  let line = 1;
-  for (let i = 0; i < index && i < text.length; i++) if (text[i] === "\n") line++;
-  return line;
-};
+const lineAt = lineNumberAt;
 
 function skipTrivia(text, start) {
   let i = start;

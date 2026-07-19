@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { loadGraph } from "../src/mcp/graph-context.mjs";
 import { tChangeImpact } from "../src/mcp/tools-impact.mjs";
+import { buildInternalGraph } from "../src/graph/internal-builder.js";
 
 const fileNode = (file) => ({ id: file, label: file, source_file: file, file_type: "code" });
 const symbolNode = (file, name, start, end, extra = {}) => ({
@@ -129,4 +131,50 @@ test("change_impact preserves explicit files as a conservative no-diff fallback"
     assert.equal(value.result.blastRadius.nodes.filter((node) => node.id.startsWith("src/legacy-")).length, 12);
     assert.equal(value.completeness.status, "PARTIAL");
   });
+});
+
+test("change_impact batches exact direct references for changed TypeScript symbols", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "weavatrix-change-impact-lsp-"));
+  mkdirSync(join(repoRoot, "src"), {recursive: true});
+  const apiText = "export function policy(value: number) {\n  return value + 1;\n}\n";
+  const callerText = "import {policy} from './api';\nexport function render() { return policy(1); }\n";
+  writeFileSync(join(repoRoot, "tsconfig.json"), JSON.stringify({include: ["src/**/*.ts"]}));
+  writeFileSync(join(repoRoot, "src", "api.ts"), apiText);
+  writeFileSync(join(repoRoot, "src", "caller.ts"), callerText);
+  try {
+    const raw = {...await buildInternalGraph(repoRoot), graphBuildMode: "full", graphBuildScope: "", graphPrecisionMode: "lsp"};
+    const graphPath = join(repoRoot, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(raw));
+    const graph = loadGraph(graphPath);
+    const target = raw.nodes.find((node) => node.source_file === "src/api.ts" && node.label === "policy()");
+    const diff = [
+      "diff --git a/src/api.ts b/src/api.ts",
+      "--- a/src/api.ts",
+      "+++ b/src/api.ts",
+      "@@ -2 +2 @@",
+      "-  return value;",
+      "+  return value + 1;",
+    ].join("\n");
+    const character = callerText.split("\n")[1].lastIndexOf("policy");
+    const clientFactory = async () => ({
+      provider: "fake-batch-lsp",
+      version: "1.0.0",
+      async openDocument() {},
+      async references() {
+        return [{
+          uri: pathToFileURL(join(repoRoot, "src", "caller.ts")).href,
+          range: {start: {line: 1, character}, end: {line: 1, character: character + 6}},
+        }];
+      },
+      async close() {},
+    });
+    const value = await tChangeImpact(graph, {diff, precision: "lsp"}, {
+      repoRoot, graphPath, precisionClientFactory: clientFactory,
+    });
+    assert.equal(value.result.semanticPrecision.status, "DIRECT_EXACT_TRANSITIVE_GRAPH");
+    assert.deepEqual(value.result.semanticPrecision.verifiedTargets, [target.id]);
+    assert.equal(value.result.semanticPrecision.exactDirectEdges, 1);
+    assert.match(value.text, /EXACT_LSP verified direct references for 1\/1/);
+    assert.ok(value.result.blastRadius.nodes.some((node) => node.id.includes("#render@")));
+  } finally { rmSync(repoRoot, {recursive: true, force: true}); }
 });

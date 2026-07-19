@@ -7,6 +7,8 @@ import { join, relative } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
 import { uniqueBy } from "../util.js";
 import { createRepoBoundary } from "../repo-path.js";
+import { collectJvmRustInstalled } from "./installed-jvm-rust.js";
+import { listRepoFiles, readRepoText } from "../analysis/internal-audit/repo-files.js";
 
 const pep503 = (name) => String(name).toLowerCase().replace(/[-_.]+/g, "-"); // PyPI canonical name
 
@@ -256,5 +258,23 @@ export function collectInstalled(repoPath) {
     if (!vers) merged.push(d);
     else if (!vers.has(d.version)) drift.push({ name: d.name, locked: locked.get(d.name).version, installed: d.version });
   }
-  return { installed: dedupe([...merged, ...py, ...go]), drift };
+  const jvmRust = collectJvmRustInstalled(repoPath);
+  // The earlier fast path covers roots and immediate services. Complete the tracked repository
+  // universe so deeply nested Python/Go services are not silently omitted from advisory coverage.
+  const repositoryFiles = listRepoFiles(repoPath);
+  const allPython = repositoryFiles.flatMap((file) => {
+    const text = readRepoText(boundary, file);
+    if (/(^|\/)requirements[\w.-]*\.(?:txt|in)$/i.test(file) || /(^|\/)requirements\/[^/]+\.(?:txt|in)$/i.test(file)) return parseRequirements(text || "");
+    if (/(^|\/)poetry\.lock$/i.test(file)) return parseTomlLockPackages(text || "", "poetry-lock");
+    if (/(^|\/)uv\.lock$/i.test(file)) return parseTomlLockPackages(text || "", "uv-lock");
+    if (/(^|\/)Pipfile\.lock$/i.test(file)) { try { return parsePipfileLock(JSON.parse(text)); } catch { return []; } }
+    return [];
+  });
+  const allGo = repositoryFiles.flatMap((file) => {
+    const text = readRepoText(boundary, file) || "";
+    if (/(^|\/)go\.sum$/i.test(file)) return parseGoSum(text);
+    if (/(^|\/)go\.mod$/i.test(file)) return parseGoModPackages(text);
+    return [];
+  });
+  return { installed: dedupe([...merged, ...py, ...go, ...allPython, ...allGo, ...jvmRust]), drift };
 }

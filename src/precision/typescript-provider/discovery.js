@@ -4,7 +4,7 @@ import {createRequire} from 'node:module'
 
 const requireFromWeavatrix = createRequire(import.meta.url)
 export const PROVIDER = 'typescript-language-server'
-export const TYPESCRIPT_LSP_CAPABILITY_CONTRACT = 'typescript-references-v3'
+export const TYPESCRIPT_LSP_CAPABILITY_CONTRACT = 'typescript-references-v4-plugin-suppression'
 let discoveredProvider = null
 
 function resolveOwn(specifier) {

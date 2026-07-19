@@ -134,7 +134,7 @@ test("internal audit suppresses convention/generated/config-excluded dead and un
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
-test("internal audit reports Maven and Gradle evidence as NOT_SUPPORTED/PARTIAL instead of a clean 0/0", async () => {
+test("internal audit maps Java imports to Maven and Gradle declarations with review evidence", async () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-jvm-deps-"));
   try {
     const javaFile = "src/main/java/com/acme/App.java";
@@ -156,42 +156,41 @@ test("internal audit reports Maven and Gradle evidence as NOT_SUPPORTED/PARTIAL 
       graph: {
         nodes: [{ id: javaFile, source_file: javaFile, file_type: "code" }],
         links: [],
-        externalImports: [{ file: javaFile, spec: "org.slf4j.Logger", pkg: "org.slf4j", line: 1 }],
+        externalImports: [{ file: javaFile, spec: "org.slf4j.Logger", pkg: "org.slf4j", ecosystem: "Maven", line: 1 }],
       },
       advisoryStorePath: join(repo, "missing-advisories.json"),
       skipMalwareScan: true,
     });
 
     assert.equal(audit.ok, true);
-    assert.equal(audit.dependencyReport.status, "PARTIAL");
-    assert.equal(audit.dependencyReport.ecosystems.maven.status, "NOT_SUPPORTED");
-    assert.equal(audit.dependencyReport.ecosystems.maven.completeness, "PARTIAL");
+    assert.equal(audit.dependencyReport.status, "COMPLETE");
+    assert.equal(audit.dependencyReport.ecosystems.maven.status, "CHECKED");
+    assert.equal(audit.dependencyReport.ecosystems.maven.completeness, "COMPLETE");
     assert.equal(audit.dependencyReport.ecosystems.maven.declared, 2);
-    assert.equal(audit.dependencyReport.ecosystems.gradle.status, "NOT_SUPPORTED");
+    assert.equal(audit.dependencyReport.ecosystems.gradle.status, "CHECKED");
+    assert.equal(audit.dependencyReport.ecosystems.gradle.completeness, "COMPLETE");
     assert.equal(audit.dependencyReport.ecosystems.gradle.declared, 1);
     assert.equal(audit.dependencyReport.declared, 3);
     assert.equal(audit.dependencyReport.missing, 0, "an unmapped Java package must not become a false npm missing-dependency finding");
-    assert.match(audit.dependencyReport.reason, /package-to-artifact verification is NOT_SUPPORTED/);
-    assert.doesNotMatch(audit.dependencyReport.reason, /npm/i);
-    assert.equal(audit.healthCapabilities.dependencies.status, "NOT_SUPPORTED");
-    assert.equal(audit.healthCapabilities.dependencies.completeness, "PARTIAL");
-    assert.equal(audit.healthCapabilities.advisories.status, "NOT_SUPPORTED");
+    assert.equal(audit.dependencyReport.unused, 2);
+    assert.match(audit.dependencyReport.reason, /complete supported manifest-to-import evidence/);
+    assert.equal(audit.healthCapabilities.dependencies.status, "CHECKED");
+    assert.equal(audit.healthCapabilities.dependencies.completeness, "COMPLETE");
+    assert.equal(audit.healthCapabilities.advisories.status, "NOT_CHECKED");
     assert.equal(audit.healthCapabilities.malware.status, "NOT_SUPPORTED");
     assert.equal(audit.healthCapabilities.coverage.status, "NOT_SUPPORTED");
     assert.equal(audit.healthCapabilities.concurrency.status, "CHECKED");
     assert.match(audit.healthCapabilities.concurrency.detail, /No race detector ran/);
     const text = formatOrdinaryAudit(audit, {});
-    assert.match(text, /Dependency manifests: PARTIAL/);
-    assert.match(text, /package-to-artifact verification is NOT_SUPPORTED/);
-    assert.match(text, /no unused, missing, or duplicate-declaration verdict was produced/);
-    assert.doesNotMatch(text, /checked 3 declared package/);
-    assert.doesNotMatch(text, /unused 0, missing 0/);
+    assert.match(text, /Dependency manifests: COMPLETE/);
+    assert.match(text, /checked 3 declared package/);
+    assert.match(text, /unused 2, missing 0/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("mixed supported and unsupported dependency summary separates checked declarations from inventory", async () => {
+test("mixed npm and Maven dependency summary reports both checked ecosystems", async () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-mixed-deps-"));
   try {
     const jsFile = "src/index.js";
@@ -207,22 +206,19 @@ test("mixed supported and unsupported dependency summary separates checked decla
         links: [],
         externalImports: [
           { file: jsFile, spec: "left-pad", pkg: "left-pad", ecosystem: "npm", line: 1 },
-          { file: javaFile, spec: "org.slf4j.Logger", pkg: "org.slf4j", line: 1 },
+          { file: javaFile, spec: "org.slf4j.Logger", pkg: "org.slf4j", ecosystem: "Maven", line: 1 },
         ],
       },
       advisoryStorePath: join(repo, "missing-advisories.json"),
       skipMalwareScan: true,
     });
 
-    assert.equal(audit.dependencyReport.status, "PARTIAL");
+    assert.equal(audit.dependencyReport.status, "COMPLETE");
     assert.equal(audit.dependencyReport.ecosystems.npm.status, "CHECKED");
-    assert.equal(audit.dependencyReport.ecosystems.maven.status, "NOT_SUPPORTED");
+    assert.equal(audit.dependencyReport.ecosystems.maven.status, "CHECKED");
     const text = formatOrdinaryAudit(audit, {});
-    assert.match(text, /checked 1 declaration\(s\) across 1 supported manifest\(s\) \(npm\)/);
-    assert.match(text, /inventoried 1 declaration\(s\) across 1 unsupported manifest\(s\) \(maven\)/);
-    assert.match(text, /Supported-ecosystem findings:/);
-    assert.doesNotMatch(text, /checked 2 declared package/);
-    assert.doesNotMatch(text, /against 2 external import/);
+    assert.match(text, /checked 2 declared package/);
+    assert.match(text, /against 2 external import/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

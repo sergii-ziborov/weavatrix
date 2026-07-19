@@ -83,7 +83,7 @@ export default {
   pass1(ctx) {
     const {
       grammar, tree, fileRel, caps, field, addSym, addImportEdge, imports,
-      resolveJavaImport, fileSet, links, nodeIds,
+      resolveJavaImport, fileSet, links, nodeIds, addExternalImport,
     } = ctx;
     const ownerIds = new Map();
     const addJavaSym = (nameNode, callable, extra) => {
@@ -143,11 +143,17 @@ export default {
       const line = lineOf(cap.node);
       if (!isStatic && wildcard) {
         wildcardPackages.push(parts);
+        const packagePath = `${parts.join("/")}/`;
+        const projectLocal = [...fileSet].some((file) => file.startsWith(packagePath) || file.includes(`/${packagePath}`));
+        if (!projectLocal) addExternalImport({ spec: `${parts.join(".")}.*`, pkg: parts.join("."), builtin: ["java", "jdk", "sun"].includes(parts[0]), ecosystem: "Maven", kind: "java-import", line });
         continue;
       }
       if (!isStatic) {
         const target = exactJavaTarget(resolveJavaImport, parts);
-        if (!target) continue;
+        if (!target) {
+          addExternalImport({ spec: parts.join("."), pkg: parts.join("."), builtin: ["java", "jdk", "sun"].includes(parts[0]), ecosystem: "Maven", kind: "java-import", line });
+          continue;
+        }
         const local = parts[parts.length - 1];
         addImportEdge(target, { line, specifier: parts.join("."), compileOnly: true });
         imports.set(local, { imported: local, targetFile: target });
@@ -162,7 +168,10 @@ export default {
         target = exactJavaTarget(resolveJavaImport, candidate);
         if (target) classParts = candidate;
       }
-      if (!target) continue;
+      if (!target) {
+        addExternalImport({ spec: parts.join("."), pkg: parts.join("."), builtin: ["java", "jdk", "sun"].includes(parts[0]), ecosystem: "Maven", kind: "java-static-import", line });
+        continue;
+      }
       addImportEdge(target, { line, specifier: `${isStatic ? "static " : ""}${parts.join(".")}${wildcard ? ".*" : ""}`, compileOnly: true });
       if (wildcard) staticWildcardTargets.push(target);
       else {

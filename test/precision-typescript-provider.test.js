@@ -47,7 +47,7 @@ test('TypeScript reference usage distinguishes type queries from runtime values'
     assert.equal(classifyTypeScriptReferenceUsage('src/usage.ts', source, {line: 4, character: 36}), 'type')
 })
 
-test('TypeScript project safety rejects plugins in direct, extended, and referenced configs', async (t) => {
+test('TypeScript project safety records plugins without rejecting otherwise safe projects', async (t) => {
     const makeFixture = () => {
         const root = mkdtempSync(join(tmpdir(), 'weavatrix-typescript-config-safety-'))
         mkdirSync(join(root, 'src'), {recursive: true})
@@ -62,8 +62,9 @@ test('TypeScript project safety rejects plugins in direct, extended, and referen
                 files: ['src/main.ts'],
             }))
             const safety = typeScriptProjectSafety(root, ['src/main.ts'])
-            assert.equal(safety.safe, false)
-            assert.equal(safety.reason, 'CONFIGURED_TSSERVER_PLUGINS')
+            assert.equal(safety.safe, true)
+            assert.deepEqual(safety.configuredPlugins, ['evil-plugin'])
+            assert.equal(safety.pluginsSuppressed, 1)
         } finally { rmSync(root, {recursive: true, force: true}) }
     })
     await t.test('extends chain', () => {
@@ -77,8 +78,9 @@ test('TypeScript project safety rejects plugins in direct, extended, and referen
                 files: ['src/main.ts'],
             }))
             const safety = typeScriptProjectSafety(root, ['src/main.ts'])
-            assert.equal(safety.safe, false)
-            assert.equal(safety.reason, 'CONFIGURED_TSSERVER_PLUGINS')
+            assert.equal(safety.safe, true)
+            assert.deepEqual(safety.configuredPlugins, ['evil-plugin'])
+            assert.equal(safety.pluginsSuppressed, 1)
         } finally { rmSync(root, {recursive: true, force: true}) }
     })
     await t.test('project reference', () => {
@@ -95,8 +97,9 @@ test('TypeScript project safety rejects plugins in direct, extended, and referen
                 references: [{path: './packages/child'}],
             }))
             const safety = typeScriptProjectSafety(root, ['src/main.ts'])
-            assert.equal(safety.safe, false)
-            assert.equal(safety.reason, 'CONFIGURED_TSSERVER_PLUGINS')
+            assert.equal(safety.safe, true)
+            assert.deepEqual(safety.configuredPlugins, ['evil-plugin'])
+            assert.equal(safety.pluginsSuppressed, 1)
         } finally { rmSync(root, {recursive: true, force: true}) }
     })
 })
@@ -206,4 +209,3 @@ test('bundled TypeScript provider never loads a repository-local tsserver plugin
         rmSync(parent, {recursive: true, force: true})
     }
 })
-

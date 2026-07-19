@@ -97,7 +97,7 @@ test("advisory-store: missing/corrupt store loads as empty; refresh without fetc
   assert.equal(r.ok, false);
 });
 
-test("advisory-store: refresh queries npm, PyPI, and Go; unsupported ecosystems are skipped", async () => {
+test("advisory-store: refresh queries npm, PyPI, Go, Maven, and crates.io", async () => {
   const dir = mkdtempSync(join(tmpdir(), "weavatrix-adv-ecos-"));
   const storePath = join(dir, "advisories.json");
   const seen = [];
@@ -116,12 +116,14 @@ test("advisory-store: refresh queries npm, PyPI, and Go; unsupported ecosystems 
         { ecosystem: "PyPI", name: "requests", version: "2.31.0" },
         { ecosystem: "Go", name: "golang.org/x/net", version: "0.20.0" },
         { ecosystem: "Maven", name: "org.example:demo", version: "1.0.0" },
+        { ecosystem: "crates.io", name: "serde", version: "1.0.210" },
+        { ecosystem: "NuGet", name: "Example", version: "1.0.0" },
       ],
     });
     assert.equal(r.ok, true);
-    assert.equal(r.queried, 3);
+    assert.equal(r.queried, 5);
     assert.equal(r.unsupported, 1);
-    assert.deepEqual(seen.sort(), ["Go:golang.org/x/net@0.20.0", "PyPI:requests@2.31.0", "npm:lodash@4.17.20"]);
+    assert.deepEqual(seen.sort(), ["Go:golang.org/x/net@0.20.0", "Maven:org.example:demo@1.0.0", "PyPI:requests@2.31.0", "crates.io:serde@1.0.210", "npm:lodash@4.17.20"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

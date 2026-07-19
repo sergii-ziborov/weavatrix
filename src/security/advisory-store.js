@@ -17,7 +17,7 @@ export const DEFAULT_STORE = join(homedir(), ".weavatrix", "advisories.json");
 const OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch";
 const OSV_VULN_URL = "https://api.osv.dev/v1/vulns/";
 const DEFAULT_FETCH_TIMEOUT_MS = Number(process.env.WEAVATRIX_OSV_TIMEOUT_MS || 20000);
-export const OSV_SUPPORTED_ECOSYSTEMS = new Set(["npm", "PyPI", "Go"]);
+export const OSV_SUPPORTED_ECOSYSTEMS = new Set(["npm", "PyPI", "Go", "Maven", "crates.io"]);
 
 const keyOf = (ecosystem, name) => `${ecosystem}|${ecosystem === "PyPI" ? String(name).toLowerCase().replace(/[-_.]+/g, "-") : name}`;
 
@@ -121,7 +121,7 @@ export async function refreshAdvisories({ installed = [], storePath = DEFAULT_ST
       ok: false,
       queried: 0,
       unsupported,
-      error: "No OSV-supported pinned package versions found to check. weavatrix currently queries OSV for npm, PyPI, and Go packages with concrete versions.",
+      error: "No OSV-supported pinned package versions found to check. Weavatrix queries OSV for npm, PyPI, Go, Maven/Gradle, and crates.io packages with concrete versions.",
     };
   }
   const store = loadStore(storePath);

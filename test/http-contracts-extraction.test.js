@@ -40,6 +40,16 @@ test("HTTP client extraction resolves bounded local string constants in template
   ]);
 });
 
+test("HTTP client extraction resolves explicit runtime bindings and static environment fallbacks", () => {
+  const explicit = extractHttpClientCallsFromText("const root = process.env.API_BASE; fetch(`${root}/users/1`);", "src/api.ts", {
+    runtimeValues: { "process.env.API_BASE": "https://service.test/v2" },
+  });
+  assert.equal(explicit.calls[0].path, "/v2/users/1");
+  assert.equal(explicit.calls[0].unknownPrefix, false);
+  const fallback = extractHttpClientCallsFromText("const root = process.env.API_BASE || 'https://service.test/v1'; fetch(`${root}/users/1`);", "src/api.ts");
+  assert.equal(fallback.calls[0].path, "/v1/users/1");
+});
+
 test("configured bare and object/member wrappers use bounded URL argument positions", () => {
   const text = `
     get<User>('/api/users/42');

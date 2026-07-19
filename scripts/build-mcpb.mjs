@@ -84,8 +84,8 @@ run(process.execPath, [
 ], stage);
 
 // Reproduce the dangerous npm-hoisted layout: Weavatrix/TLS/TypeScript and a repository-controlled
-// tsserver plugin are siblings under one node_modules. Precision must reject the configured plugin
-// before spawning TLS; otherwise TypeScript would execute arbitrary repository JavaScript.
+// tsserver plugin are siblings under one node_modules. Precision must stay available while recording
+// plugin suppression; the bundled TLS must never execute repository-controlled plugin JavaScript.
 const securityFixture = join(stage, ".precision-security-fixture");
 const maliciousPlugin = join(stage, "node_modules", "evil-plugin");
 const pluginSentinel = join(stage, ".precision-plugin-loaded");
@@ -110,7 +110,7 @@ try {
   run(process.execPath, [
     "--input-type=module",
     "--eval",
-    `const {createHash}=await import("node:crypto");const {existsSync}=await import("node:fs");const {buildLspPrecisionOverlay}=await import(${JSON.stringify(stagedOverlayUrl)});const source=${JSON.stringify(securitySource)};const file="src/main.ts";const target=file+"#answer@1";const graph={extractorSchemaV:3,graphBuildMode:"full",graphBuildScope:"",graphPrecisionMode:"lsp",graphRevision:createHash("sha256").update(source).digest("hex"),fileHashes:{[file]:createHash("sha256").update(source).digest("hex")},nodes:[{id:file,source_file:file,file_type:"code"},{id:target,label:"answer()",source_file:file,file_type:"code",symbol_kind:"function",selection_start:{line:0,character:9},source_range:{start:{line:0,character:0},end:{line:0,character:31}}}],links:[{source:file,target,relation:"contains",provenance:"EXTRACTED"}]};const overlay=await buildLspPrecisionOverlay({repoRoot:${JSON.stringify(securityFixture)},graph,timeoutMs:10000});if(overlay.state!=="UNAVAILABLE"||!/plugins are not allowed/i.test(String(overlay.reason||"")))throw new Error("configured tsserver plugin was not rejected before provider startup");if(existsSync(${JSON.stringify(pluginSentinel)}))throw new Error("repository-local tsserver plugin executed in staged hoisted layout");`,
+    `const {createHash}=await import("node:crypto");const {existsSync}=await import("node:fs");const {buildLspPrecisionOverlay}=await import(${JSON.stringify(stagedOverlayUrl)});const source=${JSON.stringify(securitySource)};const file="src/main.ts";const target=file+"#answer@1";const graph={extractorSchemaV:3,graphBuildMode:"full",graphBuildScope:"",graphPrecisionMode:"lsp",graphRevision:createHash("sha256").update(source).digest("hex"),fileHashes:{[file]:createHash("sha256").update(source).digest("hex")},nodes:[{id:file,source_file:file,file_type:"code"},{id:target,label:"answer()",source_file:file,file_type:"code",symbol_kind:"function",selection_start:{line:0,character:9},source_range:{start:{line:0,character:0},end:{line:0,character:31}}}],links:[{source:file,target,relation:"contains",provenance:"EXTRACTED"}]};const overlay=await buildLspPrecisionOverlay({repoRoot:${JSON.stringify(securityFixture)},graph,timeoutMs:10000});if(overlay.state==="UNAVAILABLE"||overlay.pluginPolicy?.configuredPluginsSuppressed!==1||overlay.pluginPolicy?.repoLocalPluginLoads!==false)throw new Error("configured tsserver plugin was not safely suppressed");if(existsSync(${JSON.stringify(pluginSentinel)}))throw new Error("repository-local tsserver plugin executed in staged hoisted layout");`,
   ], stage);
 } finally {
   rmSync(securityFixture, { recursive: true, force: true });

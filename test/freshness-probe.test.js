@@ -53,7 +53,7 @@ test('freshness probe detects ignored control-file changes that Git status omits
 test('persisted freshness stamp fails closed for mode, scope, schema, version, legacy and non-Git state', () => {
   const probe = 'a'.repeat(64)
   const graph = {
-    extImportsV: 2,
+    extImportsV: 3,
     edgeTypesV: 2,
     edgeProvenanceV: 1,
     complexityV: 2,

@@ -25,7 +25,7 @@ const HOSTED_PROFILE_TOOLS = Object.freeze([
 ])
 const OFFLINE_TOOLS = Object.freeze(FULL_TOOLS.filter((name) => !HOSTED_PROFILE_TOOLS.includes(name)))
 
-function runtime(entryPoint, repoRoot, profile, graphHome) {
+export function runtime(entryPoint, repoRoot, profile, graphHome, envOverrides = {}) {
     const child = spawn(process.execPath, [entryPoint, repoRoot, profile], {
         cwd: dirname(entryPoint),
         env: {
@@ -33,6 +33,7 @@ function runtime(entryPoint, repoRoot, profile, graphHome) {
             WEAVATRIX_GRAPH_HOME: graphHome,
             WEAVATRIX_PRECISION: 'off',
             WEAVATRIX_AUTO_REFRESH_DEBOUNCE_MS: '0',
+            ...envOverrides,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -256,6 +257,6 @@ export async function verifyPackedNpmRuntime(root = resolve(dirname(fileURLToPat
             version: pkg.version,
         })
     } finally {
-        rmSync(temp, {recursive: true, force: true})
+        rmSync(temp, {recursive: true, force: true, maxRetries: 8, retryDelay: 250})
     }
 }

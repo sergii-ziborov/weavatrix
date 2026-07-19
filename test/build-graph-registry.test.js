@@ -50,7 +50,7 @@ test("a full build never incrementally reuses an incomplete current-schema graph
     const rebuilt = await buildGraphForRepo(repo, { mode: "full", precision: "off", outDir });
     assert.equal(rebuilt.ok, true, rebuilt.error);
     assert.equal(rebuilt.refresh.kind, "full");
-    assert.equal(JSON.parse(readFileSync(graphPath, "utf8")).extImportsV, 2);
+    assert.equal(JSON.parse(readFileSync(graphPath, "utf8")).extImportsV, 3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

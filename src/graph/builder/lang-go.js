@@ -72,7 +72,9 @@ export default {
   heritage: [],
 
   pass1(ctx) {
-    const { grammar, tree, fileRel, caps, addSym, addImportEdge, addExternalImport, imports, resolveGoImport, dirFiles, goModule, goRequires } = ctx;
+    const { grammar, tree, fileRel, caps, addSym, addImportEdge, addExternalImport, imports, resolveGoImport, dirFiles, goModule, goModules, goRequires } = ctx;
+    const owningModule = (goModules || []).filter((item) => !item.root || fileRel === item.root || fileRel.startsWith(`${item.root}/`))
+      .sort((left, right) => right.root.length - left.root.length)[0];
 
     // ---- symbols ----
     for (const cap of caps(grammar, `(function_declaration name: (identifier) @fn)`, tree.rootNode)) {
@@ -124,7 +126,7 @@ export default {
       if (!d) {
         // not a repo package: stdlib (builtin) or an external module — record for dependency analysis
         const line = pathNode.startPosition.row + 1;
-        const r = goSpecToPkg(importPath, { requires: goRequires || [], ownModule: goModule || "" });
+        const r = goSpecToPkg(importPath, { requires: owningModule?.requires || goRequires || [], ownModule: owningModule?.module || goModule || "" });
         if (r) addExternalImport({ spec: importPath, pkg: r.pkg, builtin: r.builtin, ecosystem: "Go", kind: "go-import", line });
         else addExternalImport({ spec: importPath, kind: "go-import", line, unresolved: true }); // own-module path with no matching dir
         continue;

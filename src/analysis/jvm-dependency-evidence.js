@@ -1,69 +1,115 @@
-// Maven/Gradle manifest presence and bounded declaration counts. We intentionally do not map Java
-// imports to artifacts: package-to-artifact resolution needs a real build model and claiming 0/0 from
-// source regexes would be worse than an explicit NOT_SUPPORTED/PARTIAL state.
 import { createRepoBoundary } from "../repo-path.js";
+import { dependencyVerification, makeFinding } from "./findings.js";
+import { parseGradleDependencies, parseGradleVersionCatalog, parseMavenPom } from "./jvm-manifests.js";
 import { listRepoFiles, readRepoText } from "./internal-audit.collect.js";
 
-function mavenDeclarations(text) {
-  const source = String(text || "")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<dependencyManagement\b[\s\S]*?<\/dependencyManagement>/gi, " ");
-  const identities = [];
-  const re = /<dependency\b[^>]*>([\s\S]*?)<\/dependency>/gi;
-  let match;
-  while ((match = re.exec(source))) {
-    const group = /<groupId>\s*([^<]+?)\s*<\/groupId>/i.exec(match[1])?.[1]?.trim() || "";
-    const artifact = /<artifactId>\s*([^<]+?)\s*<\/artifactId>/i.exec(match[1])?.[1]?.trim() || "";
-    if (artifact) identities.push(group ? `${group}:${artifact}` : artifact);
-  }
-  return identities;
+const normalize = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+const javaBuiltin = (name) => /^(?:java|jdk|sun)\.|^(?:org\.w3c\.dom|org\.xml\.sax)(?:\.|$)/.test(name);
+
+function mappingScore(spec, dependency) {
+  const imported = String(spec || "").replace(/\.\*$/, "");
+  if (!imported || !dependency.group) return 0;
+  if (imported === dependency.group || imported.startsWith(`${dependency.group}.`)) return 1_000 + dependency.group.length;
+  const compactImport = normalize(imported), compactArtifact = normalize(dependency.artifact);
+  if (compactArtifact.length >= 4 && compactImport.includes(compactArtifact)) return 500 + compactArtifact.length;
+  const artifactTokens = String(dependency.artifact).toLowerCase().split(/[-_.]+/).filter((part) => part.length >= 4 && !["core", "java", "client", "common", "api"].includes(part));
+  const hits = artifactTokens.filter((part) => imported.toLowerCase().split(".").some((segment) => normalize(segment) === normalize(part))).length;
+  return hits ? 100 + hits : 0;
 }
 
-function gradleDeclarations(text) {
-  const source = String(text || "")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|\s)\/\/.*$/gm, "$1");
-  const declarations = [];
-  const configurations = "api|implementation|compileOnly|runtimeOnly|annotationProcessor|kapt|testImplementation|testCompileOnly|testRuntimeOnly|androidTestImplementation";
-  const line = new RegExp(`^\\s*(?:${configurations})\\s*(?:\\(\\s*)?([^\\r\\n]+)`, "gmi");
-  let match;
-  while ((match = line.exec(source))) {
-    const expression = match[1].trim().replace(/[),;]+\s*$/, "");
-    const coordinate = /["']([^"']+:[^"']+)["']/.exec(expression)?.[1] || "";
-    const catalog = /\blibs(?:\.[A-Za-z_]\w*)+/.exec(expression)?.[0] || "";
-    declarations.push(coordinate || catalog || "unresolved-declaration");
-  }
-  return declarations;
+function bestDependency(spec, dependencies) {
+  const ranked = dependencies.map((dependency) => ({ dependency, score: mappingScore(spec, dependency) }))
+    .filter((item) => item.score > 0).sort((left, right) => right.score - left.score || left.dependency.name.localeCompare(right.dependency.name));
+  if (!ranked.length || (ranked[1] && ranked[1].score === ranked[0].score)) return null;
+  return ranked[0].dependency;
 }
 
-export function collectJvmDependencyEvidence(repoRoot, { files = listRepoFiles(repoRoot) } = {}) {
+function analyze(ecosystem, manifests, dependencies, imports, unresolvedDeclarations, mappingDependencies = dependencies, includeMissing = true) {
+  const findings = [], used = new Map(), missing = new Map();
+  const owned = new Set(dependencies.map((dependency) => dependency.name));
+  for (const item of imports) {
+    const dependency = bestDependency(item.spec || item.pkg, mappingDependencies);
+    if (dependency) {
+      if (owned.has(dependency.name)) {
+        const list = used.get(dependency.name) || [];
+        list.push(item); used.set(dependency.name, list);
+      }
+    } else {
+      const key = item.spec || item.pkg;
+      const list = missing.get(key) || [];
+      list.push(item); missing.set(key, list);
+    }
+  }
+  const runtimeOnly = /runtime|provided|classpath|annotationProcessor|kapt/i;
+  for (const dependency of dependencies) {
+    const evidence = used.get(dependency.name) || [];
+    if (evidence.length || dependency.optional || runtimeOnly.test(dependency.scope || "")) continue;
+    findings.push(makeFinding({
+      category: "unused", rule: "unused-dep", severity: "low", confidence: "low",
+      title: `Unused ${ecosystem} dependency: ${dependency.name}`,
+      reason: "No indexed Java import mapped to this declared artifact; reflection, service loading, generated code and runtime-only use remain possible.",
+      detail: `"${dependency.name}" is declared in ${dependency.file}, but no indexed Java import maps to it. Review framework, reflection, ServiceLoader and generated-source use before removal.`,
+      package: dependency.name, version: dependency.version, manifest: dependency.file, source: "internal",
+      verification: dependencyVerification(dependency.file, [], "REVIEW_REQUIRED", "group-prefix/artifact-token"),
+      fixHint: `remove ${dependency.name} only after the ${ecosystem} build and tests confirm it is unused`,
+    }));
+  }
+  for (const [spec, evidence] of includeMissing ? missing : []) {
+    if (javaBuiltin(spec)) continue;
+    findings.push(makeFinding({
+      category: "unused", rule: "missing-dep", severity: "medium", confidence: "medium",
+      title: `Unmapped Java import: ${spec}`,
+      reason: `The indexed Java import did not map to any declared ${ecosystem} artifact.`,
+      detail: `"${spec}" is imported by ${evidence.length} file(s), but no ${ecosystem} declaration has a matching group prefix or artifact token. Add the owning artifact or configure/build the source that supplies it.`,
+      package: spec, file: evidence[0].file, line: evidence[0].line || 0,
+      evidence: evidence.slice(0, 5).map((item) => ({ file: item.file, line: item.line || 0, snippet: item.spec || "" })),
+      source: "internal",
+      verification: { evidenceModel: "MANIFEST_PLUS_INDEXED_SOURCE", decision: "ACTION_REQUIRED", manifestDeclaration: { status: "NOT_FOUND", files: manifests }, indexedSourceImports: { status: "FOUND", count: evidence.length, files: evidence.map((item) => item.file).slice(0, 10) }, mapping: "group-prefix/artifact-token" },
+      fixHint: `identify the artifact that owns ${spec} and declare it in the nearest ${ecosystem} manifest`,
+    }));
+  }
+  const present = manifests.length > 0;
+  return {
+    present,
+    status: present ? "CHECKED" : "NOT_PRESENT",
+    completeness: present ? (unresolvedDeclarations ? "PARTIAL" : "COMPLETE") : "NOT_APPLICABLE",
+    manifests,
+    declared: dependencies.length,
+    mappedImports: [...used.values()].reduce((sum, list) => sum + list.length, 0),
+    unmappedImports: [...missing.values()].reduce((sum, list) => sum + list.length, 0),
+    unresolvedDeclarations,
+    sample: dependencies.slice(0, 20).map(({ file, name, version }) => ({ file, identity: name, version })),
+    reason: !present
+      ? `No ${ecosystem === "maven" ? "pom.xml" : "Gradle build file"} was discovered.`
+      : unresolvedDeclarations
+        ? `${dependencies.length} declarations and all indexed Java imports were checked, but ${unresolvedDeclarations} dynamic/property/catalog declaration(s) could not be resolved statically.`
+        : `${dependencies.length} declarations were compared with every indexed non-JDK Java import using bounded group-prefix and artifact-token evidence. Missing and unused results remain review evidence, not compiler proof.`,
+    findings,
+  };
+}
+
+export function collectJvmDependencyEvidence(repoRoot, { files = listRepoFiles(repoRoot), externalImports = [] } = {}) {
   const boundary = createRepoBoundary(repoRoot);
   const mavenFiles = files.filter((file) => /(^|\/)pom\.xml$/i.test(file));
-  const gradleFiles = files.filter((file) => /(^|\/)build\.gradle(?:\.kts)?$/i.test(file));
-  const maven = mavenFiles.flatMap((file) => mavenDeclarations(readRepoText(boundary, file)).map((identity) => ({ file, identity })));
-  const gradle = gradleFiles.flatMap((file) => gradleDeclarations(readRepoText(boundary, file)).map((identity) => ({ file, identity })));
+  const gradleFiles = files.filter((file) => /(^|\/)(?:build|settings|[^/]+)\.gradle(?:\.kts)?$/i.test(file));
+  const catalogFiles = files.filter((file) => /(^|\/)libs\.versions\.toml$/i.test(file));
+  const catalog = new Map();
+  for (const file of catalogFiles) for (const [alias, entry] of parseGradleVersionCatalog(readRepoText(boundary, file))) catalog.set(alias, entry);
+  let mavenUnresolved = 0, gradleUnresolved = 0;
+  const mavenDependencies = mavenFiles.flatMap((file) => {
+    const parsed = parseMavenPom(readRepoText(boundary, file));
+    mavenUnresolved += parsed.unresolvedDeclarations;
+    return parsed.dependencies.map((dependency) => ({ ...dependency, file }));
+  });
+  const gradleDependencies = gradleFiles.flatMap((file) => {
+    const parsed = parseGradleDependencies(readRepoText(boundary, file), catalog);
+    gradleUnresolved += parsed.unresolvedDeclarations || 0;
+    return parsed.map((dependency) => ({ ...dependency, file }));
+  });
+  const javaImports = externalImports.filter((entry) => entry.ecosystem === "Maven" && entry.pkg && !entry.builtin && !entry.unresolved);
+  const allDependencies = [...mavenDependencies, ...gradleDependencies];
   return {
-    maven: {
-      present: mavenFiles.length > 0,
-      status: mavenFiles.length ? "NOT_SUPPORTED" : "NOT_PRESENT",
-      completeness: mavenFiles.length ? "PARTIAL" : "NOT_APPLICABLE",
-      manifests: mavenFiles,
-      declared: maven.length,
-      sample: maven.slice(0, 20),
-      reason: mavenFiles.length
-        ? "Maven manifests and declaration counts were detected, but Java package imports were not mapped to Maven artifacts; unused/missing dependency verdicts are not supported."
-        : "No pom.xml was discovered.",
-    },
-    gradle: {
-      present: gradleFiles.length > 0,
-      status: gradleFiles.length ? "NOT_SUPPORTED" : "NOT_PRESENT",
-      completeness: gradleFiles.length ? "PARTIAL" : "NOT_APPLICABLE",
-      manifests: gradleFiles,
-      declared: gradle.length,
-      sample: gradle.slice(0, 20),
-      reason: gradleFiles.length
-        ? "Gradle manifests and bounded dependency declarations were detected, but version catalogs/build logic and Java package-to-artifact mapping were not resolved; unused/missing dependency verdicts are not supported."
-        : "No build.gradle/build.gradle.kts was discovered.",
-    },
+    maven: analyze("maven", mavenFiles, mavenDependencies, javaImports, mavenUnresolved, allDependencies, true),
+    gradle: analyze("gradle", [...gradleFiles, ...catalogFiles], gradleDependencies, javaImports, gradleUnresolved, allDependencies, mavenFiles.length === 0),
   };
 }

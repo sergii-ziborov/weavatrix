@@ -3,12 +3,9 @@
 // the surrounding behavior is wrong.
 import { makeFinding } from "./findings.js";
 import {retryFindings} from './source-correctness/retry-patterns.js'
+import {lineNumberAt} from '../util.js'
 
-const lineAt = (text, index) => {
-  let line = 1;
-  for (let i = 0; i < index && i < text.length; i++) if (text[i] === "\n") line++;
-  return line;
-};
+const lineAt = lineNumberAt;
 
 const lineText = (text, index) => {
   const start = text.lastIndexOf("\n", Math.max(0, index - 1)) + 1;

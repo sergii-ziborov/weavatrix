@@ -6,11 +6,13 @@ import {
     typeScriptLanguageId,
     typeScriptLspContract,
 } from './discovery.js'
+import {isolateTypeScriptRuntime} from './isolated-runtime.js'
 
 /** Starts Weavatrix's bundled TypeScript server without executing repository configuration. */
 export async function createTypeScriptLspClient({repoRoot, timeoutMs = 10_000} = {}) {
     const discovered = discoverTypeScriptProvider()
     const absoluteRepoRoot = resolve(repoRoot)
+    const isolated = isolateTypeScriptRuntime(discovered.tsserverPath)
     let client
     let reportedTypeScript = null
     try {
@@ -41,11 +43,16 @@ export async function createTypeScriptLspClient({repoRoot, timeoutMs = 10_000} =
             initializationOptions: {
                 hostInfo: 'weavatrix',
                 disableAutomaticTypingAcquisition: true,
-                tsserver: {path: discovered.tsserverPath},
+                tsserver: {path: isolated.tsserverPath},
+                // An explicit empty list keeps the language-server plugin manager
+                // from adding --globalPlugins or --pluginProbeLocations. tsserver's
+                // local-plugin loading remains disabled by default as well.
+                plugins: [],
             },
         })
     } catch (error) {
         client?.kill(error)
+        isolated.cleanup()
         throw error
     }
     return Object.freeze({
@@ -63,7 +70,13 @@ export async function createTypeScriptLspClient({repoRoot, timeoutMs = 10_000} =
         },
         definition(relPath, position) { return client.definition({filePath: relPath, position}) },
         closeDocument(relPath) { return client.closeDocument(relPath) },
-        close(shutdownTimeoutMs = timeoutMs) { return client.shutdown({timeoutMs: shutdownTimeoutMs}) },
-        kill() { client.kill() },
+        async close(shutdownTimeoutMs = timeoutMs) {
+            try { return await client.shutdown({timeoutMs: shutdownTimeoutMs}) }
+            finally { isolated.cleanup() }
+        },
+        kill() {
+            try { client.kill() }
+            finally { isolated.cleanup() }
+        },
     })
 }

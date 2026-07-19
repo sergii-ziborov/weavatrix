@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { computeDead, computeUnusedExports } from "./dead-check.js";
-import { computeGoDepFindings, computePyDepFindings, computeScopedDepFindings } from "./dep-check.js";
+import { computePyDepFindings, computeScopedDepFindings } from "./dep-check.js";
 import { computeStructureFindings } from "./dep-rules.js";
 import { makeFinding, sortFindings, summarizeFindings } from "./findings.js";
 import { graphOutDirForRepo } from "../graph/layout.js";
@@ -15,17 +15,17 @@ import {
   listRepoFiles,
   readJson,
   readRepoJson,
-  readRepoText,
   workspacePkgNames,
 } from "./internal-audit.collect.js";
 import { computeReachability, entryFiles } from "./internal-audit.reach.js";
-import { parseGoMod } from "./manifests.js";
 import { PATH_CLASS_NAMES, createPathClassifier, hasPathClass } from "../path-classification.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { analyzeSourceCorrectness } from "./source-correctness.js";
 import { collectJvmDependencyEvidence } from "./jvm-dependency-evidence.js";
 import { buildDependencyHealth } from "./internal-audit/dependency-health.js";
 import { runSupplyChainChecks } from "./internal-audit/supply-chain.js";
+import { collectGoDependencyEvidence } from "./go-dependency-evidence.js";
+import { collectCargoDependencyEvidence } from "./cargo-dependency-evidence.js";
 
 export async function runInternalAudit(repoPath, {
   graph,
@@ -90,8 +90,7 @@ export async function runInternalAudit(repoPath, {
     nonRuntimeRoots,
     sourceFiles: [...sources.keys()],
   });
-  const goModText = readRepoText(boundary, "go.mod");
-  const goDep = computeGoDepFindings({ externalImports, goMod: goModText != null ? parseGoMod(goModText) : null, nonRuntimeRoots });
+  const goDep = collectGoDependencyEvidence(repoPath, { files: repoFiles, externalImports, nonRuntimeRoots });
   const asList = (value) => Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   const pyRules = rules.python || {}, depRules = rules.dependencies || {};
   const managedPython = [...new Set([
@@ -109,12 +108,17 @@ export async function runInternalAudit(repoPath, {
     ignoredDependencies: ignoredPython,
     nonRuntimeRoots,
   });
-  const jvmDependencies = collectJvmDependencyEvidence(repoPath, { files: repoFiles });
+  const jvmDependencies = collectJvmDependencyEvidence(repoPath, { files: repoFiles, externalImports });
+  const cargoDep = collectCargoDependencyEvidence(repoPath, { files: repoFiles, externalImports });
 
   const externalImportFiles = new Set(externalImports.filter((entry) => entry.pkg && !entry.builtin).map((entry) => entry.file));
   const structure = computeStructureFindings(graph, { rules, entrySet: entries, externalImportFiles });
   const correctness = analyzeSourceCorrectness(sources, { isNonProductPath });
-  const findings = [...dep.findings, ...goDep.findings, ...pyDep.findings, ...correctness.findings];
+  const findings = [
+    ...dep.findings, ...goDep.findings, ...pyDep.findings,
+    ...jvmDependencies.maven.findings, ...jvmDependencies.gradle.findings, ...cargoDep.findings,
+    ...correctness.findings,
+  ];
   const deadFileSet = new Set(dead.deadFiles.map((finding) => finding.file));
   for (const finding of structure.findings) {
     if (!(finding.rule === "orphan-file" && deadFileSet.has(finding.file))) findings.push(finding);
@@ -190,6 +194,7 @@ export async function runInternalAudit(repoPath, {
     goDep,
     pyDep,
     jvmDependencies,
+    cargoDep,
     externalImports,
     findings: sorted,
     packageScopes,

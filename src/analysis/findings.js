@@ -6,6 +6,18 @@ import { createHash } from "node:crypto";
 export const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
 export const FINDING_CATEGORIES = ["unused", "structure", "vulnerability", "malware"];
 
+export function dependencyVerification(manifest, imports, decision, mapping) {
+  return {
+    evidenceModel: "MANIFEST_PLUS_INDEXED_SOURCE",
+    decision,
+    manifestDeclaration: { status: "FOUND", file: manifest },
+    indexedSourceImports: imports.length
+      ? { status: "FOUND", count: imports.length, files: [...new Set(imports.map((item) => item.file))].slice(0, 10) }
+      : { status: "ZERO_FOUND", completeness: "COMPLETE_FOR_GRAPH_SCOPE", count: 0, files: [] },
+    mapping,
+  };
+}
+
 // Stable id: survives re-runs so the UI can persist expand/dismiss state per finding.
 export function makeFinding(f) {
   const cycleIdentity = Array.isArray(f.cycleMembers)

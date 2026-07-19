@@ -116,7 +116,7 @@ test("lang-rust: resolves outlined modules, use trees, re-exports, and qualified
     assert.ok(has("src/lib.rs", "src/api/types.rs", "re_exports"), "pub use is retained as a re-export edge");
     assert.equal(g.edgeTypesV, 2);
     assert.ok(edges.length > 0 && edges.every((link) => link.compileOnly === true), "Rust module/use edges are compile-only, never runtime imports");
-    assert.equal(g.externalImports.filter((item) => item.file === "src/lib.rs").length, 0, "Rust std/external uses are not misclassified by the internal module resolver");
+    assert.deepEqual(g.externalImports.filter((item) => item.file === "src/lib.rs").map((item) => [item.ecosystem, item.pkg]), [["crates.io", "serde"]], "external crates are dependency evidence while std remains builtin");
 
     const ep = (value) => String(value && typeof value === "object" ? value.id : value);
     assert.ok(g.links.some((link) => link.relation === "calls" && ep(link.source).includes("lib.rs#boot") && ep(link.target).includes("util.rs#run")), "aliased and qualified calls still resolve to the imported Rust symbol");

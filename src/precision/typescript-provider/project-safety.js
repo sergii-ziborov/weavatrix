@@ -57,6 +57,7 @@ export function typeScriptProjectSafety(repoRoot, relFiles = [], options = {}) {
 
     const configRecords = new Map()
     const projectFiles = new Set()
+    const configuredPlugins = new Set()
     const projects = {}
     for (let cursor = 0; cursor < queue.length; cursor++) {
         if (Date.now() >= budget.deadline) return {safe: false, reason: 'SAFETY_DEADLINE', fingerprint: null}
@@ -68,7 +69,9 @@ export function typeScriptProjectSafety(repoRoot, relFiles = [], options = {}) {
         projects[configRel] = {
             projectFiles: parsed.projectFiles,
             configFiles: [...parsed.configRecords.keys()].sort(),
+            configuredPlugins: parsed.plugins,
         }
+        for (const plugin of parsed.plugins || []) configuredPlugins.add(plugin)
         for (const [file, digest] of parsed.configRecords) {
             configRecords.set(file, digest)
             if (configRecords.size > MAX_CONFIG_FILES) {
@@ -133,6 +136,8 @@ export function typeScriptProjectSafety(repoRoot, relFiles = [], options = {}) {
         projectFiles: [...projectFiles].sort(),
         fileConfigs,
         projects,
+        configuredPlugins: [...configuredPlugins].sort(),
+        pluginsSuppressed: configuredPlugins.size,
     }
 }
 

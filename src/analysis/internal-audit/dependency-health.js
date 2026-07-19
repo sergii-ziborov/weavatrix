@@ -10,6 +10,7 @@ export function buildDependencyHealth({
   goDep,
   pyDep,
   jvmDependencies,
+  cargoDep,
   externalImports,
   findings,
   packageScopes,
@@ -20,8 +21,8 @@ export function buildDependencyHealth({
   const dependencyFindings = findings.filter((finding) => ["unused-dep", "missing-dep", "duplicate-dep"].includes(finding.rule));
   const graphComplete = !((graph.graphBuildMode && graph.graphBuildMode !== "full") || graph.graphBuildScope);
   const npmManifests = repoFiles.filter((file) => /(^|\/)package\.json$/i.test(file));
-  const goManifests = repoFiles.filter((file) => /(^|\/)go\.mod$/i.test(file));
   const pythonManifests = [...new Set((pyManifest.scopes || []).flatMap((scope) => scope.manifests || []))];
+  const publicEvidence = ({ findings: _findings, ...item }) => item;
   const ecosystems = {
     npm: {
       ecosystem: "npm",
@@ -36,28 +37,29 @@ export function buildDependencyHealth({
     },
     go: {
       ecosystem: "go",
-      present: goManifests.length > 0,
-      status: goManifests.length ? "CHECKED" : "NOT_PRESENT",
-      completeness: goManifests.length ? "PARTIAL" : "NOT_APPLICABLE",
-      manifests: goManifests,
+      present: goDep.present,
+      status: goDep.status,
+      completeness: graphComplete && goDep.completeness === "COMPLETE" ? "COMPLETE" : goDep.completeness,
+      manifests: goDep.manifests,
       declared: goDep.declared.size,
-      reason: goManifests.length
-        ? "Go dependency checks use indexed imports and the root go.mod; nested modules and build-tag-specific resolution are not fully modeled."
-        : "No go.mod was discovered.",
+      reason: goDep.reason,
     },
     python: {
       ecosystem: "python",
       present: pyManifest.present,
       status: pyManifest.present ? "CHECKED" : "NOT_PRESENT",
-      completeness: pyManifest.present ? "PARTIAL" : "NOT_APPLICABLE",
+      completeness: pyManifest.present ? (graphComplete && pyManifest.completeness === "COMPLETE" ? "COMPLETE" : "PARTIAL") : "NOT_APPLICABLE",
       manifests: pythonManifests,
       declared: pyDep.declared.size,
       reason: pyManifest.present
-        ? "Python declarations were compared with indexed imports; environment markers, extras and dynamic imports remain bounded static evidence."
+        ? pyManifest.reasons?.length
+          ? `Python declarations were compared with indexed imports, but ${pyManifest.reasons.join("; ")}.`
+          : "Every discovered supported Python manifest scope was compared with indexed imports. Environment markers and extras are normalized as declarations; runtime-computed imports remain outside static proof."
         : "No supported Python dependency manifest was discovered.",
     },
-    maven: { ecosystem: "maven", ...jvmDependencies.maven },
-    gradle: { ecosystem: "gradle", ...jvmDependencies.gradle },
+    maven: { ecosystem: "maven", ...publicEvidence(jvmDependencies.maven), completeness: jvmDependencies.maven.present && !graphComplete ? "PARTIAL" : jvmDependencies.maven.completeness },
+    gradle: { ecosystem: "gradle", ...publicEvidence(jvmDependencies.gradle), completeness: jvmDependencies.gradle.present && !graphComplete ? "PARTIAL" : jvmDependencies.gradle.completeness },
+    rust: { ecosystem: "rust", ...publicEvidence(cargoDep), declared: cargoDep.declared.size, completeness: cargoDep.present && !graphComplete ? "PARTIAL" : cargoDep.completeness },
   };
   const present = Object.values(ecosystems).filter((item) => item.present);
   const status = present.length === 0
@@ -68,7 +70,7 @@ export function buildDependencyHealth({
   const importedPackages = new Set(externalImports
     .filter((entry) => entry?.pkg && !entry.builtin && !entry.unresolved)
     .map((entry) => `${entry.ecosystem || (/\.java$/i.test(entry.file || "") ? "maven-unresolved" : "npm")}:${entry.pkg}`));
-  const supportedDeclared = dep.declared.size + goDep.declared.size + pyDep.declared.size;
+  const supportedDeclared = dep.declared.size + goDep.declared.size + pyDep.declared.size + cargoDep.declared.size;
   const jvmDeclared = jvmDependencies.maven.declared + jvmDependencies.gradle.declared;
   const measuredCoverage = readCoverageForRepo(repoPath, sourceFiles);
   const healthCapabilities = buildHealthCapabilityMatrix({

@@ -51,8 +51,14 @@ function completedOverlay(session) {
       language: 'typescript/javascript',
       capability: 'textDocument/references',
       status: state,
+      configuredPluginsSuppressed: session.semanticInputs.pluginsSuppressed || 0,
+      repoLocalPluginLoads: false,
     }],
     semanticInputFingerprint: session.semanticInputs.fingerprint,
+    pluginPolicy: {
+      configuredPluginsSuppressed: session.semanticInputs.pluginsSuppressed || 0,
+      repoLocalPluginLoads: false,
+    },
     coverage: coverage(session),
     links: session.links,
     referenceEvidence: session.referenceEvidence,
@@ -181,6 +187,10 @@ export async function buildLspPrecisionOverlay({
     return persist(session, baseOverlay(graph, 'COMPLETE', {
       request: session.request,
       semanticInputFingerprint: session.semanticInputs.fingerprint,
+      pluginPolicy: {
+        configuredPluginsSuppressed: session.semanticInputs.pluginsSuppressed || 0,
+        repoLocalPluginLoads: false,
+      },
       reason: 'no eligible JavaScript/TypeScript semantic targets',
     }))
   }

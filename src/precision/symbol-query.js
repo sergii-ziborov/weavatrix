@@ -182,3 +182,42 @@ export async function querySymbolPrecision({
         inFlight.delete(flightKey)
     }
 }
+
+export async function querySymbolsPrecision({
+    repoRoot,
+    graphPath,
+    targetIds,
+    maxReferences = 5_000,
+    timeoutMs = 45_000,
+    clientFactory,
+} = {}) {
+    if (!repoRoot || !graphPath || !Array.isArray(targetIds) || !targetIds.length) {
+        throw new Error('batch symbol precision requires repoRoot, graphPath, and targetIds')
+    }
+    const ids = [...new Set(targetIds.map(String).filter(Boolean))].slice(0, 16)
+    const boundedReferences = boundedInteger(maxReferences, 5_000, 1, 16_384)
+    const boundedTimeout = boundedInteger(timeoutMs, 45_000, 1_000, 60_000)
+    const rawGraph = loadRawGraph(graphPath)
+    const graph = rawGraph.graphPrecisionMode === 'off' ? {...rawGraph, graphPrecisionMode: 'lsp'} : rawGraph
+    const nodes = new Map((graph.nodes || []).map((node) => [String(node?.id || ''), node]))
+    for (const id of ids) {
+        const target = nodes.get(id)
+        if (!target) throw new Error(`precision target is absent from the active graph: ${id}`)
+        if (!target.selection_start || !/\.(?:[cm]?[jt]sx?)$/i.test(String(target.source_file || ''))) {
+            throw new Error(`exact batch precision does not support target: ${id}`)
+        }
+    }
+    const startedAt = Date.now()
+    const overlay = await buildLspPrecisionOverlay({
+        repoRoot,
+        graph,
+        mode: 'lsp',
+        maxSymbols: ids.length,
+        maxReferences: boundedReferences,
+        maxLinks: boundedReferences,
+        timeoutMs: boundedTimeout,
+        targetIds: ids,
+        clientFactory,
+    })
+    return {overlay, targetIds: ids, elapsedMs: Date.now() - startedAt}
+}

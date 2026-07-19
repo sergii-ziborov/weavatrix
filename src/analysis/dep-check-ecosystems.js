@@ -194,6 +194,9 @@ export function computePyDepFindings(options = {}) {
     findings.push(...result.findings.map((finding) => ({
       ...finding,
       ...(scope.manifests?.length ? {manifest: scope.manifests[0]} : {}),
+      verification: finding.rule === "missing-dep"
+        ? { evidenceModel: "MANIFEST_PLUS_INDEXED_SOURCE", decision: "ACTION_REQUIRED", manifestDeclaration: { status: scope.present ? "NOT_FOUND" : "NOT_PRESENT", files: scope.manifests || [] }, indexedSourceImports: { status: "FOUND", count: finding.evidence?.length || 1, files: (finding.evidence || []).map((item) => item.file) }, mapping: "PEP 503 plus bounded import-to-distribution aliases" }
+        : { evidenceModel: "MANIFEST_PLUS_INDEXED_SOURCE", decision: "REVIEW_REQUIRED", manifestDeclaration: { status: "FOUND", files: scope.manifests || [] }, indexedSourceImports: { status: "ZERO_FOUND", completeness: "COMPLETE_FOR_GRAPH_SCOPE", count: 0, files: [] }, mapping: "PEP 503 plus bounded import-to-distribution aliases" },
     })));
     for (const name of result.declared) declared.add(`${scope.root || "."}:${name}`);
     for (const name of result.managed) managed.add(name);

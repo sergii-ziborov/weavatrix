@@ -19,7 +19,7 @@ import { typeScriptLspContract } from "../src/precision/typescript-lsp-provider.
 import { loadGraph } from "../src/mcp/graph-context.mjs";
 import {fileNode, fixtureGraph, makeRepo, symbolNode, withSnapshot} from './helpers/precision-overlay-fixtures.js'
 
-test("configured TypeScript plugins fail closed before the client factory is called", async () => {
+test("configured TypeScript plugins are suppressed without disabling semantic precision", async () => {
   const root = mkdtempSync(join(tmpdir(), "weavatrix-precision-plugin-preflight-"));
   mkdirSync(join(root, "src"), {recursive: true});
   writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
@@ -40,13 +40,23 @@ test("configured TypeScript plugins fail closed before the client factory is cal
     const overlay = await buildLspPrecisionOverlay({
       repoRoot: root,
       graph,
-      clientFactory: async () => { factoryCalled = true; throw new Error("must not spawn"); },
+      clientFactory: async () => {
+        factoryCalled = true;
+        return {
+          provider: "fixture-lsp",
+          async openDocument() {},
+          async references() { return []; },
+          async close() {},
+        };
+      },
     });
-    assert.equal(factoryCalled, false);
-    assert.equal(overlay.state, "UNAVAILABLE");
-    assert.match(overlay.reason, /plugins are not allowed/i);
+    assert.equal(factoryCalled, true);
+    assert.equal(overlay.state, "COMPLETE");
+    assert.equal(overlay.pluginPolicy.configuredPluginsSuppressed, 1);
+    assert.equal(overlay.pluginPolicy.repoLocalPluginLoads, false);
+    assert.equal(overlay.engines[0].configuredPluginsSuppressed, 1);
     assert.deepEqual(overlay.links, []);
-    assert.deepEqual(overlay.noReferenceSymbols, []);
+    assert.deepEqual(overlay.noReferenceSymbols, [orphan.id]);
   } finally {
     rmSync(root, {recursive: true, force: true});
   }
@@ -109,4 +119,3 @@ test("the target budget reserves a slot for an internal orphan", async () => {
     rmSync(root, {recursive: true, force: true});
   }
 });
-

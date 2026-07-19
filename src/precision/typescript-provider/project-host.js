@@ -154,7 +154,7 @@ export function parseRepoConfig(context, configPath, budget) {
     const state = {
         outsideAccess: false,
         limitExceeded: false,
-        configuredPlugins: false,
+        configuredPlugins: new Set(),
         bytes: 0,
         records: new Map(),
     }
@@ -197,8 +197,9 @@ export function parseRepoConfig(context, configPath, budget) {
             }
             try {
                 const raw = ts.parseConfigFileTextToJson(path, body.toString('utf8')).config
-                if (Array.isArray(raw?.compilerOptions?.plugins) && raw.compilerOptions.plugins.length) {
-                    state.configuredPlugins = true
+                for (const plugin of raw?.compilerOptions?.plugins || []) {
+                    const name = typeof plugin?.name === 'string' ? plugin.name.trim() : ''
+                    if (name) state.configuredPlugins.add(name.slice(0, 256))
                 }
             } catch { /* parser diagnostics below decide safety */ }
             return body.toString('utf8')
@@ -213,8 +214,9 @@ export function parseRepoConfig(context, configPath, budget) {
     try { parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, host) }
     catch { return {complete: false, reason: 'CONFIG_PARSE_FAILED'} }
     const errors = [...diagnostics, ...(parsed?.errors || [])]
-    if (state.configuredPlugins || (Array.isArray(parsed?.options?.plugins) && parsed.options.plugins.length)) {
-        return {complete: false, reason: 'CONFIGURED_TSSERVER_PLUGINS'}
+    for (const plugin of parsed?.options?.plugins || []) {
+        const name = typeof plugin?.name === 'string' ? plugin.name.trim() : ''
+        if (name) state.configuredPlugins.add(name.slice(0, 256))
     }
     if (budget.reason) return {complete: false, reason: budget.reason}
     if (!parsed || state.outsideAccess || state.limitExceeded
@@ -244,6 +246,9 @@ export function parseRepoConfig(context, configPath, budget) {
         projectFiles,
         projectKeys,
         configRecords: state.records,
-        plugins: [],
+        // The bundled provider runs an isolated tsserver copy whose plugin search
+        // root contains only TypeScript runtime files. Keep configured plugin names
+        // as evidence, but never execute them from the inspected repository/bundle.
+        plugins: [...state.configuredPlugins].sort(),
     }
 }

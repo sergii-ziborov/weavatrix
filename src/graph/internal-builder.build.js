@@ -248,7 +248,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   assignDeterministicCommunities(nodes);
   stampEdgeProvenance(links);
 
-  // extImportsV: bump when the externalImports schema/coverage changes (v2 = go/python ecosystems) —
+  // extImportsV: bump when the externalImports schema/coverage changes (v3 = Java/Rust ecosystems) —
   // deps-engine rebuilds in memory when a saved graph is older than this.
   // edgeTypesV 2 adds language-neutral compile-only edges (currently Rust mod/use/re-export) on top
   // of v1's TypeScript typeOnly classification.
@@ -256,7 +256,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     nodes,
     links,
     externalImports,
-    extImportsV: 2,
+    extImportsV: 3,
     edgeTypesV: 2,
     edgeProvenanceV: EDGE_PROVENANCE_V,
     complexityV: 2,

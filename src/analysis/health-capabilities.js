@@ -38,7 +38,7 @@ export function buildHealthCapabilityMatrix({
   const unsupportedDependencyRows = ecosystemRows.filter((item) => item.status === "NOT_SUPPORTED");
   const noDependencyEvidence = ecosystemRows.length === 0;
   const onlyUnsupportedDependencies = unsupportedDependencyRows.length > 0 && supportedDependencyRows.length === 0;
-  const advisorySupported = supportedDependencyRows.some((item) => ["npm", "go", "python"].includes(item.ecosystem));
+  const advisorySupported = supportedDependencyRows.some((item) => ["npm", "go", "python", "rust", "maven", "gradle"].includes(item.ecosystem));
   const malwareSupported = supportedDependencyRows.some((item) => ["npm", "go", "python"].includes(item.ecosystem));
   const coverageSupported = [...languages].some((language) => ["javascript/typescript", "python", "go"].includes(language));
   const runtimeFiles = Number(correctnessCoverage.runtimeCorrectnessFiles || 0);

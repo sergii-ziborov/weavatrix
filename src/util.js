@@ -16,6 +16,14 @@ export function uniqueBy(list, keyFn) {
   });
 }
 
+export function lineNumberAt(text, index) {
+  let line = 1;
+  for (let offset = 0; offset < index && offset < text.length; offset++) {
+    if (text[offset] === "\n") line++;
+  }
+  return line;
+}
+
 export function safeRead(path) {
   try {
     const st = statSync(path);

@@ -84,7 +84,7 @@ test("manifest, config, coverage and installed-package readers reject external d
     symlinkSync(outside, join(repo, "coverage"), process.platform === "win32" ? "junction" : "dir");
 
     assert.equal(collectConfigTexts(repo).size, 0);
-    assert.deepEqual(collectPyManifest(repo), { present: false, deps: [], scopes: [] });
+    assert.deepEqual(collectPyManifest(repo), { present: false, deps: [], scopes: [], completeness: "COMPLETE", reasons: [] });
     assert.equal(readCoverageForRepo(repo, ["src/a.js"]).size, 0);
     assert.ok(!collectInstalled(repo).installed.some((pkg) => pkg.name === "outside-secret-package"));
   } finally { rmSync(parent, { recursive: true, force: true }); }

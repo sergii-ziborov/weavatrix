@@ -91,7 +91,7 @@ function templateArgument(text, start, constants = null, requireStatic = false) 
     }
     if (depth !== 0) return null;
     const expression = text.slice(index + 2, cursor - 1).trim();
-    if (/^[A-Za-z_$][\w$]*$/.test(expression) && constants?.has(expression)) {
+    if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(expression) && constants?.has(expression)) {
       value += constants.get(expression);
       index = cursor - 1;
       continue;
@@ -109,7 +109,7 @@ function templateArgument(text, start, constants = null, requireStatic = false) 
   return null;
 }
 
-function extractStaticStringConstants(text) {
+function extractStaticStringConstants(text, runtimeValues = {}) {
   const source = String(text || "");
   const mask = maskNonCode(source);
   const declarations = [];
@@ -120,7 +120,8 @@ function extractStaticStringConstants(text) {
     while (/\s/.test(source[start] || "")) start++;
     declarations.push({ name: match[1], start });
   }
-  const constants = new Map();
+  const constants = new Map(Object.entries(runtimeValues || {})
+    .filter(([key, value]) => /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(key) && typeof value === "string" && value.length <= 2_048));
   for (const item of declarations) {
     const quote = source[item.start];
     if (quote !== "'" && quote !== '"') continue;
@@ -137,6 +138,19 @@ function extractStaticStringConstants(text) {
       changed = true;
     }
     if (!changed) break;
+  }
+  for (const item of declarations) {
+    if (constants.has(item.name)) continue;
+    const rest = source.slice(item.start);
+    const expression = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/.exec(rest)?.[0];
+    if (expression && constants.has(expression)) constants.set(item.name, constants.get(expression));
+    if (constants.has(item.name)) continue;
+    const fallback = /(?:\|\||\?\?)\s*(["'])/.exec(rest.slice(0, 500));
+    if (fallback) {
+      const start = item.start + fallback.index + fallback[0].lastIndexOf(fallback[1]);
+      const parsed = quotedArgument(source, start, fallback[1]);
+      if (parsed && parsed.value.length <= 2_048) constants.set(item.name, parsed.value);
+    }
   }
   return constants;
 }
@@ -211,7 +225,7 @@ const escapeRegex = (value) => String(value).replace(/[|\\{}()[\]^$+*?.-]/g, "\\
 export function extractHttpClientCallsFromText(text, file, options = {}) {
   const source = String(text || "");
   const mask = maskNonCode(source);
-  const constants = extractStaticStringConstants(source);
+  const constants = extractStaticStringConstants(source, options.runtimeValues);
   const allowed = normalizedClientNames(options.clientNames);
   const wrappers = normalizeHttpWrapperDescriptors(options.wrappers, "input").concat(Array.isArray(options.normalizedWrappers) ? options.normalizedWrappers : []);
   const maxCalls = boundedInteger(options.maxCalls, HTTP_CONTRACT_DEFAULTS.maxCallsPerClient, 1, HTTP_CONTRACT_HARD_LIMITS.maxCallsPerClient);

@@ -67,6 +67,7 @@ export function analyzeHttpContracts(input = {}) {
       autoDiscoverWrappers: descriptor.autoDiscoverWrappers ?? input.autoDiscoverWrappers,
       graph: descriptor.graph,
       includeTests: descriptor.includeTests ?? input.includeTests,
+      runtimeValues: descriptor.runtimeValues || input.runtimeValues,
     });
     if (detected.truncated) completeness.push(`${id}: client scan cap reached`);
     for (const reason of detected.reasons || []) completeness.push(`${id}: ${reason}`);
@@ -141,6 +142,7 @@ export function analyzeHttpContracts(input = {}) {
     })))
     .sort((left, right) => left.clientRepo.localeCompare(right.clientRepo) || left.file.localeCompare(right.file) || left.line - right.line);
   if (uncertainAll.length > limits.maxUncertain) completeness.push("uncertain callsite cap reached");
+  if (uncertainAll.length) completeness.push(`${uncertainAll.length} dynamic HTTP callsite(s) remain UNKNOWN`);
   if (results.some((endpoint) => !endpoint.affected.complete)) completeness.push("affected-file traversal cap reached");
 
   return {
