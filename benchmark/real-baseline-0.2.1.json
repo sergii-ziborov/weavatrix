@@ -38,27 +38,26 @@
       }
     },
     "analytics": {
-      "revision": "28002495199d4b152bd7990a2f3ac1f2b41894a2",
-      "fingerprint": "437ad7cb852b7496",
+      "revision": "10ff58b4b4110987ac0e99e255f749a2af7dc8d9",
+      "fingerprint": "ae6c136573d3bb7d",
       "metrics": {
         "files": 360,
         "languageFiles": 328,
-        "symbols": 2536,
-        "nodes": 2896,
-        "links": 8490,
+        "symbols": 2535,
+        "nodes": 2895,
+        "links": 8873,
         "relations": {
-          "calls": 4317,
-          "contains": 2536,
-          "imports": 1612,
+          "calls": 4630,
+          "contains": 2540,
+          "imports": 1678,
           "inherits": 6,
           "re_exports": 19
         },
         "symbolKinds": {
-          "class": 7,
-          "function": 1,
-          "method": 8,
-          "unknown": 151,
-          "variable": 2369
+          "class": 8,
+          "function": 85,
+          "method": 13,
+          "variable": 2429
         },
         "endpoints": 67,
         "endpointMethods": {
@@ -71,8 +70,8 @@
         "testFiles": 108,
         "generatedFiles": 0,
         "nonProductFiles": 127,
-        "graphBytes": 3550668,
-        "coldMs": 2405.69
+        "graphBytes": 4992572,
+        "coldMs": 3222.95
       }
     },
     "automation": {

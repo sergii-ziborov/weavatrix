@@ -392,6 +392,22 @@ metrics are not persisted or transmitted by Weavatrix. If a source checkout's pa
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
+### 0.2.15 self-audit precision patch
+
+- Dependency review now scopes nested manifests correctly, recognizes framework peer packages and
+  package references assembled from bounded dynamic path fragments, and avoids misclassifying
+  dependency-owned source as an unused root declaration.
+- Reachability follows source-owned HTML asset references, so maintained browser entry scripts and
+  styles remain part of the production surface instead of appearing as dead files.
+- Malware heuristics distinguish inert placeholders, comments, documentation URLs, and ordinary
+  Unicode text from executable registry or download behavior while retaining explicit review
+  evidence for actionable patterns.
+- Duplicate review ignores policy-like numeric tables and stable ordered-member declarations where
+  repetition is intentional, and the remaining reverse-reach, Git-output, member-order, path-term,
+  and retrieval logic now uses shared owners instead of drifting copies.
+
+Full patch notes: [docs/releases/v0.2.15.md](docs/releases/v0.2.15.md).
+
 ### 0.2.14 typed flows, honest Health, and architecture bootstrap
 
 - Go call resolution now follows receiver types through parameters, locals, constructor returns,

@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| `0.2.14.x` | Yes |
-| `0.2.13` and older | Upgrade to the latest release |
+| `0.2.15.x` | Yes |
+| `0.2.14` and older | Upgrade to the latest release |
 
 Security fixes are provided for the latest published version of Weavatrix. Upgrade before reporting
 an issue that may already be resolved.
