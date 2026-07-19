@@ -413,7 +413,7 @@ metrics are not persisted or transmitted by Weavatrix. If a source checkout's pa
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
-### 0.3.1 exact impact over oversized diffs
+### 0.3.2 exact impact over oversized diffs
 
 - `change_impact` now recovers a bounded per-file unified diff when one large asset exceeds the
   aggregate diff budget. Normal source files retain line/symbol classification; only the files that
@@ -424,7 +424,7 @@ while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fa
 - The global LSP overlay remains a bounded prewarm and can honestly be `PARTIAL`; `get_dependents`,
   `inspect_symbol`, and `change_impact` run revision-bound exact point/batch queries beyond that cap.
 
-Full patch notes: [docs/releases/v0.3.1.md](docs/releases/v0.3.1.md).
+Full patch notes: [docs/releases/v0.3.2.md](docs/releases/v0.3.2.md).
 
 ### 0.3.0 network-free core and exact dependency evidence
 

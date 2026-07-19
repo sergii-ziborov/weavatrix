@@ -56,8 +56,9 @@ function runGitDiff(repoRoot, base, limits) {
         encoding: 'utf8', windowsHide: true, timeout: 12_000,
         maxBuffer: limits.maxDiffBytes + 1, env: childProcessEnv(),
     })
-    if (result.status === 0) return {available: true, text: String(result.stdout || ''), error: null}
-    const oversized = result.error?.code === 'ENOBUFS' || Buffer.byteLength(String(result.stdout || '')) > limits.maxDiffBytes
+    const output = String(result.stdout || '')
+    const oversized = result.error?.code === 'ENOBUFS' || Buffer.byteLength(output) > limits.maxDiffBytes
+    if (result.status === 0 && !oversized) return {available: true, text: output, error: null}
     let fallbackFiles = []
     let fallbackTruncated = false
     let recoveredText = ''
