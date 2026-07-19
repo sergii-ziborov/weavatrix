@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 import {graphStorageKey} from '../src/graph/layout.js'
 import {persistedFreshnessMatches, repositoryFreshnessProbe} from '../src/graph/freshness-probe.js'
+import {loadGraph} from '../src/mcp/graph-context.mjs'
 import {startServer} from './helpers/mcp-stdio-fixture.js'
 
 function git(repo, args) {
@@ -42,6 +43,7 @@ test('persisted freshness skips the full snapshot after MCP restart and is repla
         const firstRaw = JSON.parse(readFileSync(graphPath, 'utf8'))
         const firstProbe = repositoryFreshnessProbe(repo)
         assert.equal(persistedFreshnessMatches(firstRaw, firstProbe, 'full'), true)
+        assert.equal(loadGraph(graphPath, {repoRoot: repo}).physicalFileLocV, 1)
 
         // A live canonical graph lock makes an accidental build path block. The restarted server must
         // answer through its persisted probe without touching the repository snapshot/build transaction.

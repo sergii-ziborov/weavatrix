@@ -57,6 +57,7 @@ export function loadGraph(path, {repoRoot = null} = {}) {
         extractorSchemaV: Number(raw.extractorSchemaV) || 0,
         extImportsV: Number(raw.extImportsV) || 0,
         complexityV: Number(raw.complexityV) || 0,
+        physicalFileLocV: Number(raw.physicalFileLocV) || 0,
         graphBuildMode: ['full', 'no-tests', 'tests-only'].includes(raw.graphBuildMode) ? raw.graphBuildMode : 'full',
         graphBuildScope: typeof raw.graphBuildScope === 'string' ? raw.graphBuildScope : null,
         graphRevision: typeof raw.graphRevision === 'string' ? raw.graphRevision : null,

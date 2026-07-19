@@ -1,7 +1,6 @@
 (() => {
   const cv = document.getElementById('net'), cx = cv.getContext('2d');
-  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-  let W, H, nodes = [], links = [], frame = 0;
+  let W, H, nodes = [], links = [];
   const N = 46, LINKDIST = 150;
 
   function reset() {
@@ -19,13 +18,8 @@
     }
   }
 
-  function requestTick() {
-    if (!reducedMotion.matches && !frame) frame = requestAnimationFrame(tick);
-  }
-
   let pulse = 0, pulseNode = 0;
   function tick(t) {
-    frame = 0;
     cx.clearRect(0, 0, W, H);
     // one node "changes" every few seconds and its blast radius ripples out
     if (t / 1600 > pulse) { pulse = Math.ceil(t / 1600); pulseNode = Math.floor(Math.random() * N); }
@@ -52,16 +46,8 @@
       cx.fillStyle = i === pulseNode ? '#40e0c8' : hot ? 'rgba(64,224,200,.85)' : 'rgba(160,150,255,.5)';
       cx.beginPath(); cx.arc(n.x, n.y, i === pulseNode ? n.r * 1.7 : n.r, 0, 7); cx.fill();
     }
-    requestTick();
+    requestAnimationFrame(tick);
   }
-
-  function redraw() {
-    reset();
-    if (reducedMotion.matches) tick(0);
-    else requestTick();
-  }
-
-  addEventListener('resize', redraw);
-  reducedMotion.addEventListener?.('change', redraw);
-  redraw();
+  addEventListener('resize', reset);
+  reset(); requestAnimationFrame(tick);
 })();

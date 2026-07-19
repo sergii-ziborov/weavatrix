@@ -1,7 +1,7 @@
 {
   "architectureContractV": 1,
   "name": "Weavatrix local repository intelligence boundaries",
-  "style": "ports-and-adapters",
+  "style": "modular-components",
   "enforcement": "strict",
   "components": [
     {

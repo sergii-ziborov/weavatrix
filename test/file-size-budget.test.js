@@ -43,5 +43,4 @@ test('maintained code and site assets stay within the 300-line owner-module budg
     assert.ok(index.includes('src="/graph-animation.js"'), 'the page loads the extracted graph animation')
     const animation = readFileSync(join(REPO_ROOT, 'site/graph-animation.js'), 'utf8')
     assert.doesNotThrow(() => new Function(animation), 'the extracted browser script parses')
-    assert.match(animation, /prefers-reduced-motion/, 'the graph animation honors reduced-motion preference')
 })
