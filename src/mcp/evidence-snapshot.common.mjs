@@ -83,9 +83,7 @@ export function moduleId(value) {
 }
 
 export function nonNegativeInteger(value) {
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0
-        ? Math.trunc(value)
-        : 0
+    return optionalNonNegativeInteger(value) ?? 0
 }
 
 export function optionalNonNegativeInteger(value) {

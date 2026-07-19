@@ -14,6 +14,26 @@ the defaults, no repository data leaves your machine.**
 - Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
 - npm: [`weavatrix`](https://www.npmjs.com/package/weavatrix) — `npx -y weavatrix <repoRoot>`
 
+## 0.3 boundary: offline stays MIT
+
+The next major boundary makes this package the complete offline engine: graph,
+local semantic precision, Health, dependencies, duplicates, impact, history and
+architecture safeguards remain here under the existing MIT license. The MIT
+license is not changing.
+
+Every outbound HTTP capability moves to a separately versioned public package,
+`weavatrix-online`, beginning at 0.1.0. That connector targets either the
+managed Weavatrix Cloud or a commercially licensed self-hosted Weavatrix
+Enterprise deployment through one source-free wire contract. It is a thin
+extension of this package, not a fork of the parser/graph/Health engine, so core
+updates arrive as normal dependency updates.
+
+Version 0.2.17 still contains the explicit opt-in compatibility profiles
+documented below. The paired 0.3/0.1 release removes their network
+implementations from this package; until then the new connector is not
+publishable. The decision and release gates are in
+[docs/adr/0001-v0.3-offline-online-split.md](docs/adr/0001-v0.3-offline-online-split.md).
+
 ## One graph, many views
 
 The 38 MCP methods are not one linear workflow. They project the same reusable graph into the
@@ -409,6 +429,20 @@ time, output bytes/token estimate, graph freshness/revision/update and graph-cac
 metrics are not persisted or transmitted by Weavatrix. If a source checkout's package version moves
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
+
+### 0.2.17 self-audit trust patch
+
+- Health no longer treats configured Drizzle schema modules as orphaned/test-only production code,
+  and scoped typosquat checks no longer compare legitimate scoped packages with unrelated unscoped
+  names.
+- Duplicate detection retains equality anchors for executable regular-expression bodies, preventing
+  unrelated validation/normalization pipelines from becoming perfect renamed clones.
+- Dogfooding removed obsolete test-only parsers and consolidated dependency-scope, graph-ID,
+  architecture-contract, bounded-option and safe repository-read helpers.
+- The accepted 0.3 product boundary keeps the offline engine MIT and moves all outbound HTTP tools
+  into the separately licensed `weavatrix-online` connector.
+
+Full patch notes: [docs/releases/v0.2.17.md](docs/releases/v0.2.17.md).
 
 ### 0.2.16 exact dependents, multi-ecosystem dependencies and transport contracts
 

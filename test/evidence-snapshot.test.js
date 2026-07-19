@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os'
 import {createEvidenceSnapshot} from '../src/mcp/evidence-snapshot.mjs'
 import {sanitizeFinding} from '../src/mcp/evidence-snapshot.common.mjs'
 import {buildDuplicatesSection} from '../src/mcp/evidence-snapshot.duplicates.mjs'
+import {buildHealthSection} from '../src/mcp/evidence-snapshot.health.mjs'
 import {buildPackagesSection} from '../src/mcp/evidence-snapshot.inventory.mjs'
 import {fixtureGraph, fixtureRepo} from './helpers/evidence-snapshot-fixtures.js'
 
@@ -112,6 +113,38 @@ test('finding evidence drops path-shaped symbol text', () => {
         file: 'src/a.js', symbol: 'x=/home/alice/.ssh/id_rsa',
     })
     assert.equal(finding.symbol, undefined)
+})
+
+test('hosted health evidence excludes classified-only findings and recomputes its summary', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'weavatrix-health-evidence-'))
+    try {
+        mkdirSync(join(repo, 'src'), {recursive: true})
+        mkdirSync(join(repo, 'benchmark', 'fixtures'), {recursive: true})
+        const production = {
+            id: 'a'.repeat(16), category: 'unused', rule: 'unused-export', severity: 'info',
+            file: 'src/product.js', symbol: 'productionExport',
+        }
+        const benchmark = {
+            id: 'b'.repeat(16), category: 'unused', rule: 'unused-dep', severity: 'low',
+            file: 'benchmark/fixtures/package.json', package: 'fixture-only',
+        }
+        const section = buildHealthSection({nodes: []}, {
+            ok: true,
+            findings: [production, benchmark],
+            summary: {
+                bySeverity: {critical: 0, high: 0, medium: 0, low: 1, info: 1},
+                byCategory: {unused: 2, structure: 0, vulnerability: 0, malware: 0},
+            },
+            checks: {osv: {status: 'NOT_CHECKED'}, malware: {status: 'NOT_CHECKED'}},
+            deadReport: {},
+            structureReport: {},
+        }, repo)
+
+        assert.deepEqual(section.findings.map((finding) => finding.file), ['src/product.js'])
+        assert.equal(section.summary.bySeverity.low, 0)
+        assert.equal(section.summary.bySeverity.info, 1)
+        assert.equal(section.summary.byCategory.unused, 1)
+    } finally { rmSync(repo, {recursive: true, force: true}) }
 })
 
 test('package evidence is COMPLETE and PASS when every bounded input and check is complete', () => {

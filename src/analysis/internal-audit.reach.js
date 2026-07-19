@@ -118,6 +118,20 @@ export function entryFiles(graph, pkgOrScopes, dynamicTargets = new Set(), { dec
       if (target) entries.add(target);
     }
   }
+  // Drizzle Kit loads schema modules from configuration strings rather than a
+  // runtime import. Resolve the bounded `schema:` value so the schema and its
+  // exported tables are not reported as orphan/test-only production code.
+  for (const [rawFile, rawText] of sources || []) {
+    const configFile = String(rawFile || "").replace(/\\/g, "/");
+    if (!/(^|\/)drizzle(?:\.[^/]*)?\.config\.[cm]?[jt]s$/i.test(configFile)) continue;
+    const value = /\bschema\s*:\s*(\[[\s\S]{0,1000}?\]|["'][^"']+["'])/i.exec(String(rawText || ""))?.[1] || "";
+    const quoted = /["']([^"']+)["']/g;
+    let match;
+    while ((match = quoted.exec(value))) {
+      const candidate = posix.normalize(posix.join(posix.dirname(configFile), match[1].replace(/^\.\//, "")));
+      if (fileSet.has(candidate)) entries.add(candidate);
+    }
+  }
   for (const evidence of springConventionEntries(sources, fileSet)) {
     entries.add(evidence.file);
     conventionEvidence.push(evidence);

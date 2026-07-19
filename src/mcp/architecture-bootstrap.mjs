@@ -49,13 +49,13 @@ function materializeCandidate(candidate, verification, baselineMode) {
     })
 }
 
-function activeContract(ctx) {
+export function activeArchitectureContract(ctx) {
     if (!ctx?.repoRoot) return {contract: null, source: null, error: 'no repository root is active'}
     return loadArchitectureContract(ctx.repoRoot, ctx.graphPath)
 }
 
 function preview(g, args, ctx) {
-    const active = activeContract(ctx)
+    const active = activeArchitectureContract(ctx)
     if (active.contract) return toolResult(
         `Architecture bootstrap refused: an active contract already exists at ${active.source}.`,
         {state: 'ALREADY_CONFIGURED', source: active.source, contractHash: active.contract.contractHash},
@@ -122,7 +122,7 @@ function approve(g, args, ctx) {
             state: 'REPOSITORY_CHANGED', wrote: false,
         })
     }
-    const active = activeContract(ctx)
+    const active = activeArchitectureContract(ctx)
     if (active.contract || active.error) return toolResult(
         `Architecture approval refused: ${active.source || 'a contract'} appeared or changed after preview.`,
         {state: active.error ? 'ERROR' : 'ALREADY_CONFIGURED', wrote: false, source: active.source, error: active.error || undefined},

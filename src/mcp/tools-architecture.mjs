@@ -1,6 +1,6 @@
 // Executable target architecture for agents: read the active contract before a change, then run the
 // same deterministic verifier after it. No tool silently edits policy or accepts debt.
-import {contractForChange, loadArchitectureContract, normalizeArchitectureContract, verifyArchitecture} from '../analysis/architecture-contract.js'
+import {contractForChange, normalizeArchitectureContract, verifyArchitecture} from '../analysis/architecture-contract.js'
 import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {detectRepoStack} from '../scan/discover.js'
 import {toolResult} from './tool-result.mjs'
@@ -13,6 +13,7 @@ const [starter, bootstrap] = await Promise.all([
 ])
 const {createArchitectureStarter, PROVISIONAL_BUDGETS} = starter
 export const tBootstrapArchitecture = bootstrap.tBootstrapArchitecture
+const activeContract = bootstrap.activeArchitectureContract
 
 const remediation = () => ({
     offlinePath: '.weavatrix/architecture.json',
@@ -27,11 +28,6 @@ const stackIds = (repoRoot) => {
             .flatMap((category) => (Array.isArray(stack?.[category]) ? stack[category] : []))
             .map((item) => String(item?.id || '')).filter(Boolean)
     } catch { return [] }
-}
-
-function activeContract(ctx) {
-    if (!ctx?.repoRoot) return {contract: null, source: null, error: 'no repository root is active'}
-    return loadArchitectureContract(ctx.repoRoot, ctx.graphPath)
 }
 
 function notConfiguredResult(g, action, {includeStarter = false, repoRoot = null} = {}) {

@@ -31,7 +31,9 @@ const KNOWN_LEGIT = new Set([
   "markdown-it", "babel-loader", "css-loader", "style-loader", "query-string",
 ]);
 
-const norm = (name) => String(name || "").toLowerCase().replace(/^@[^/]+\//, ""); // drop scope for the compare
+const rawName = (name) => String(name || "").trim().toLowerCase();
+const isScoped = (name) => /^@[^/]+\/.+/.test(name);
+const unscopedTail = (name) => name.replace(/^@[^/]+\//, "");
 
 // Damerau-Levenshtein (optimal string alignment) — includes adjacent transposition.
 export function damerau(a, b) {
@@ -56,12 +58,19 @@ export function damerau(a, b) {
 // Threshold: distance 1 always; distance 2 only for names ≥8 chars (short names collide too easily).
 // Skip: exact popular names, known-legit pairs, names <4 chars.
 export function classifyTyposquat(name) {
-  const raw = String(name || "");
-  const n = norm(raw);
-  if (n.length < 4 || TOP_PACKAGES.has(raw) || TOP_PACKAGES.has(n) || KNOWN_LEGIT.has(raw) || KNOWN_LEGIT.has(n)) return null;
+  const raw = rawName(name);
+  const scoped = isScoped(raw);
+  const tail = unscopedTail(raw);
+  // A package scope is an ownership boundary, not punctuation to discard.
+  // Comparing every scoped basename with unscoped popular names made the
+  // official @playwright/test package look like a one-edit misspelling of jest.
+  if (tail.length < 4 || TOP_PACKAGES.has(raw) || TOP_PACKAGES.has(tail)
+    || KNOWN_LEGIT.has(raw) || KNOWN_LEGIT.has(tail)) return null;
+  const candidates = [...TOP_PACKAGES].filter((top) => isScoped(top) === scoped);
+  const n = scoped ? raw : tail;
   let best = null;
-  for (const top of TOP_PACKAGES) {
-    const t = norm(top);
+  for (const top of candidates) {
+    const t = rawName(top);
     if (t === n) return null; // scope-only difference of a popular name → not a squat
     const dist = damerau(n, t);
     if (dist === 0) return null;

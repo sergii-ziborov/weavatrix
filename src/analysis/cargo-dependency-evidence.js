@@ -1,19 +1,13 @@
-import { dirname } from "node:path";
 import { createRepoBoundary } from "../repo-path.js";
 import { cargoName, parseCargoToml } from "./cargo-manifests.js";
 import { dependencyVerification, makeFinding } from "./findings.js";
 import { listRepoFiles, readRepoText } from "./internal-audit.collect.js";
-
-const rootOf = (file) => {
-  const root = dirname(String(file || "").replace(/\\/g, "/"));
-  return root === "." ? "" : root;
-};
-const owns = (root, file) => !root || file === root || String(file || "").replace(/\\/g, "/").startsWith(`${root}/`);
+import { dependencyScopeOwnsFile, dependencyScopeRoot } from "./dependency/scoped-dependencies.js";
 
 export function collectCargoDependencyEvidence(repoRoot, { files = listRepoFiles(repoRoot), externalImports = [] } = {}) {
   const boundary = createRepoBoundary(repoRoot);
   const manifests = files.filter((file) => /(^|\/)Cargo\.toml$/i.test(file));
-  const scopes = manifests.map((file) => ({ file, root: rootOf(file), ...parseCargoToml(readRepoText(boundary, file)) }))
+  const scopes = manifests.map((file) => ({ file, root: dependencyScopeRoot(file), ...parseCargoToml(readRepoText(boundary, file)) }))
     .sort((left, right) => right.root.length - left.root.length || left.root.localeCompare(right.root));
   const workspaceDeps = new Map();
   for (const scope of scopes) for (const dependency of scope.workspaceDependencies) workspaceDeps.set(cargoName(dependency.alias), dependency);
@@ -29,7 +23,7 @@ export function collectCargoDependencyEvidence(repoRoot, { files = listRepoFiles
   const importsByScope = new Map(scopes.map((scope) => [scope, []]));
   for (const entry of externalImports) {
     if (entry.ecosystem !== "crates.io" || !entry.pkg || entry.builtin || entry.unresolved) continue;
-    const owner = scopes.find((scope) => owns(scope.root, entry.file));
+    const owner = scopes.find((scope) => dependencyScopeOwnsFile(scope.root, entry.file));
     if (owner) importsByScope.get(owner).push(entry);
   }
   const findings = [], declared = new Set();

@@ -99,6 +99,31 @@ test("duplicates: JS regex literals containing quotes don't swallow the function
   } finally { fx.cleanup(); }
 });
 
+test("duplicates: unrelated regex pipelines do not become perfect renamed clones", () => {
+  const normalizeIdentifier = `function normalizeIdentifier(value) {
+    return String(value || "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .toUpperCase();
+  }`;
+  const stripModuleStatements = `function stripModuleStatements(value) {
+    return String(value || "")
+      .replace(/\\bimport\\s+[\\s\\S]*?\\s+from\\s+['"][^'"]+['"]\\s*;?/g, "")
+      .replace(/\\bexport\\s+\\{[\\s\\S]*?\\}\\s+from\\s+['"][^'"]+['"]\\s*;?/g, "")
+      .replace(/\\brequire\\(\\s*['"][^'"]+['"]\\s*\\)/g, "")
+      .trim();
+  }`;
+  const fx = buildFixture({ "a.js": normalizeIdentifier + "\n", "b.js": stripModuleStatements + "\n" });
+  try {
+    const r = computeDuplicates(fx.dir, fx.graphJson);
+    const pair = r.modes.renamed.find(([i, j]) =>
+      [r.frags[i].id, r.frags[j].id].some((id) => id.includes("normalizeIdentifier")) &&
+      [r.frags[i].id, r.frags[j].id].some((id) => id.includes("stripModuleStatements")));
+    assert.equal(pair, undefined, `different regex behavior must stay below the clone threshold: ${JSON.stringify(pair)}`);
+  } finally { fx.cleanup(); }
+});
+
 test("duplicates: division after ++/-- and binary -/+ is NOT mis-scanned as a regex", () => {
   // a `/` after '+' or '-' is always division (i++ / 2, a - b / c) — regex must not eat the line
   const fn = `function ratios(items) {

@@ -134,6 +134,43 @@ test("internal audit suppresses convention/generated/config-excluded dead and un
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
+test("internal audit does not call framework and configured schema exports test-only or orphaned", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-framework-entry-"));
+  try {
+    mkdirSync(join(repo, "app", "dashboard"), { recursive: true });
+    mkdirSync(join(repo, "db"), { recursive: true });
+    mkdirSync(join(repo, "test"), { recursive: true });
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "fixture" }));
+    writeFileSync(join(repo, "drizzle.config.ts"), `export default { schema: "./db/schema.ts" };\n`);
+    writeFileSync(join(repo, "app", "dashboard", "page.tsx"), "export default function DashboardPage() { return null; }\n");
+    writeFileSync(join(repo, "db", "schema.ts"), "export const repositories = {};\n");
+    writeFileSync(join(repo, "test", "page.test.ts"), "DashboardPage();\n");
+    const nodes = [
+      { id: "app/dashboard/page.tsx", source_file: "app/dashboard/page.tsx", file_type: "code" },
+      { id: "app/dashboard/page.tsx#DashboardPage@1", label: "DashboardPage()", source_file: "app/dashboard/page.tsx", exported: true },
+      { id: "db/schema.ts", source_file: "db/schema.ts", file_type: "code" },
+      { id: "db/schema.ts#repositories@1", label: "repositories", source_file: "db/schema.ts", exported: true },
+      { id: "drizzle.config.ts", source_file: "drizzle.config.ts", file_type: "code" },
+      { id: "test/page.test.ts", source_file: "test/page.test.ts", file_type: "test" },
+      { id: "test/page.test.ts#test@1", label: "test()", source_file: "test/page.test.ts" },
+    ];
+    const links = [
+      { source: "app/dashboard/page.tsx", target: "app/dashboard/page.tsx#DashboardPage@1", relation: "contains" },
+      { source: "db/schema.ts", target: "db/schema.ts#repositories@1", relation: "contains" },
+      { source: "test/page.test.ts", target: "test/page.test.ts#test@1", relation: "contains" },
+      { source: "test/page.test.ts#test@1", target: "app/dashboard/page.tsx#DashboardPage@1", relation: "calls" },
+    ];
+    const audit = await runInternalAudit(repo, {
+      graph: { nodes, links, externalImports: [] },
+      advisoryStorePath: join(repo, "missing-advisories.json"),
+      skipMalwareScan: true,
+    });
+    for (const file of ["app/dashboard/page.tsx", "db/schema.ts"]) {
+      assert.ok(!audit.findings.some((finding) => finding.file === file && ["unused-export", "test-only-symbol", "orphan-file"].includes(finding.rule)), file);
+    }
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test("internal audit maps Java imports to Maven and Gradle declarations with review evidence", async () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-jvm-deps-"));
   try {

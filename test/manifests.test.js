@@ -2,7 +2,7 @@
 // PEP 508 requirement lines, pyproject (PEP 621 + poetry + build-system), Pipfile tables.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseGoMod, requirementName, parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps, parsePoetryLockDeps, parseUvLockDeps, parseDistMetadata } from "../src/analysis/manifests.js";
+import { parseGoMod, requirementName, parseRequirementsNames, parsePyprojectDeps, parsePipfileDeps } from "../src/analysis/manifests.js";
 
 test("parseGoMod: module, require block + single-line, indirect flag, replace", () => {
   const gm = parseGoMod(`module github.com/acme/speaker
@@ -85,63 +85,6 @@ pytest = "^7.4"
 `);
   assert.equal(r.present, true);
   assert.deepEqual(r.deps.map((d) => [d.name, d.dev]), [["httpx", false], ["pytest", true]]);
-});
-
-test("parsePoetryLockDeps: per-package dependencies tables; extras sections ignored", () => {
-  const out = parsePoetryLockDeps(`[[package]]
-name = "requests"
-version = "2.31.0"
-
-[package.dependencies]
-certifi = ">=2017"
-urllib3 = {version = ">=1.21"}
-
-[package.extras]
-socks = ["PySocks"]
-
-[[package]]
-name = "certifi"
-version = "2024.2.2"
-`);
-  assert.deepEqual(out.map((p) => [p.name, p.version, p.deps]), [
-    ["requests", "2.31.0", ["certifi", "urllib3"]],
-    ["certifi", "2024.2.2", []],
-  ]);
-});
-
-test("parseUvLockDeps: dependencies inline-table arrays, single and multi-line", () => {
-  const out = parseUvLockDeps(`[[package]]
-name = "httpx"
-version = "0.27.0"
-dependencies = [
-    { name = "certifi" },
-    { name = "httpcore" },
-]
-
-[[package]]
-name = "anyio"
-version = "4.3.0"
-dependencies = [{ name = "idna" }]
-`);
-  assert.deepEqual(out.map((p) => [p.name, p.deps]), [["httpx", ["certifi", "httpcore"]], ["anyio", ["idna"]]]);
-});
-
-test("parseDistMetadata: Requires-Dist without extras; repository from Project-URL; stops at body", () => {
-  const m = parseDistMetadata(`Metadata-Version: 2.1
-Name: Flask
-Version: 3.0.2
-Home-page: https://flask.palletsprojects.com/
-Project-URL: Source, https://github.com/pallets/flask
-Requires-Dist: Werkzeug>=3.0
-Requires-Dist: click>=8.1.3
-Requires-Dist: python-dotenv; extra == "dotenv"
-
-This is the long description mentioning Requires-Dist: fake
-`);
-  assert.equal(m.name, "Flask");
-  assert.equal(m.version, "3.0.2");
-  assert.deepEqual(m.deps, ["Werkzeug", "click"]); // dotenv extra skipped, body line ignored
-  assert.match(m.repository, /^https:\/\//);
 });
 
 test("parsePipfileDeps: packages vs dev-packages", () => {

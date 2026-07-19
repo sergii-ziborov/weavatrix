@@ -6,14 +6,14 @@
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.16",
+  "version": "0.2.17",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.16",
+      "version": "0.2.17",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [

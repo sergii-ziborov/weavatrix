@@ -5,14 +5,12 @@ import {readCoverageForRepo, normalizeRepoParts} from './coverage-reports.js'
 import {computeStaticTestReachability} from './static-test-reachability.js'
 import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {isStructuralRelation} from '../graph/relations.js'
+import {boundedInteger} from '../util.js'
 
 const NON_PRODUCT = ['generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
 const endpoint = (value) => String(value && typeof value === 'object' ? value.id : value || '')
 const normalize = (value) => String(value || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
-const boundedInt = (value, fallback, min, max) => {
-    const number = Number(value)
-    return Number.isInteger(number) ? Math.max(min, Math.min(max, number)) : fallback
-}
+const boundedInt = boundedInteger
 const round = (value) => Math.round(Number(value || 0) * 100) / 100
 const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, Number(value) || 0))
 

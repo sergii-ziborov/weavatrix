@@ -1,13 +1,8 @@
 import {ENTRY_FILE} from '../dead-check.js'
+import {fileOfId, graphEndpointId} from '../../graph/node-id.js'
 
 const TEST_FILE_RE = /(^|[/])(test|tests|__tests__|spec|e2e|__mocks__)([/]|$)|[._-](test|spec)\.[a-z0-9]+$/i
 const NON_CODE_RE = /\.(json|ya?ml|sh|ps1|md|txt|html?|css|scss|less)$|(^|[/])(dockerfile|containerfile)/i
-const endpoint = (value) => String(value && typeof value === 'object' ? value.id : value)
-const fileOf = (value) => {
-    const id = endpoint(value)
-    const hash = id.indexOf('#')
-    return hash < 0 ? id : id.slice(0, hash)
-}
 const dirOf = (file) => file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : ''
 
 export function buildFileImportGraph(graph, {includeTypeOnly = false, includeCompileOnly = false} = {}) {
@@ -23,7 +18,7 @@ export function buildFileImportGraph(graph, {includeTypeOnly = false, includeCom
     }
     for (const link of graph.links || []) {
         if (link.relation !== 'imports' && link.relation !== 're_exports') continue
-        const source = endpoint(link.source), target = endpoint(link.target)
+        const source = graphEndpointId(link.source), target = graphEndpointId(link.target)
         if (!fileIds.has(source) || !fileIds.has(target) || source === target) continue
         if (source.endsWith('.go') && target.endsWith('.go') && dirOf(source) === dirOf(target)) continue
         const key = `${source}\0${target}`
@@ -112,7 +107,7 @@ export function findOrphans(graph, {entrySet = new Set(), externalImportFiles = 
     const degree = new Map()
     for (const link of graph.links || []) {
         if (link.relation === 'contains') continue
-        const source = fileOf(link.source), target = fileOf(link.target)
+        const source = fileOfId(graphEndpointId(link.source)), target = fileOfId(graphEndpointId(link.target))
         if (source === target) continue
         degree.set(source, (degree.get(source) || 0) + 1)
         degree.set(target, (degree.get(target) || 0) + 1)

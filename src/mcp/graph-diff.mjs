@@ -2,6 +2,7 @@
 import {buildFileImportGraph, findSccs} from '../analysis/dep-rules.js'
 import {folderModuleOf} from '../analysis/graph-analysis.aggregate.js'
 import {isStructuralRelation} from '../graph/relations.js'
+import {fileOfId} from '../graph/node-id.js'
 
 // ---- graph diff ----------------------------------------------------------------------------------
 // One previous state is enough (4-13 MB per repo — cheap): rebuild_graph snapshots the outgoing
@@ -10,7 +11,7 @@ import {isStructuralRelation} from '../graph/relations.js'
 // the signal is aggregated: module-dependency drift, cycle count changes, newly orphaned symbols.
 export const prevGraphPathFor = (graphPath) => String(graphPath).replace(/\.json$/, '.prev.json')
 export const edgeEndpoint = (v) => String(v && typeof v === 'object' ? v.id : v)
-export const fileOfId = (id) => { const s = String(id); const h = s.indexOf('#'); return h < 0 ? s : s.slice(0, h) }
+export {fileOfId}
 const folderOfFile = folderModuleOf
 
 const terminalLineSuffix = (id) => {

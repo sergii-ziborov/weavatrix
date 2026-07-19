@@ -1,4 +1,5 @@
 import {isAbsolute} from 'node:path'
+import {boundedInteger} from '../../util.js'
 
 export const GIT_HISTORY_V = 1
 export const GIT_HISTORY_WINDOWS = Object.freeze([3, 6, 12])
@@ -28,10 +29,7 @@ export const roundHistoryNumber = (value, digits = 4) => {
     const scale = 10 ** digits
     return Math.round(value * scale) / scale
 }
-export const boundedHistoryInteger = (value, fallback, min, max) => {
-    const number = Number(value)
-    return Number.isInteger(number) ? Math.max(min, Math.min(max, number)) : fallback
-}
+export const boundedHistoryInteger = boundedInteger
 
 export function safeHistoryPath(value) {
     const path = String(value || '').replace(/\\/g, '/').replace(/^\.\//, '')

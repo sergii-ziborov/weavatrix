@@ -12,15 +12,14 @@ export const readJson = (path) => {
     try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
 }
 
-export const readRepoText = (boundary, relativePath) => {
+const readRepoFile = (boundary, relativePath, reader) => {
     const resolved = boundary.resolve(relativePath)
-    return resolved.ok ? readText(resolved.path) : null
+    return resolved.ok ? reader(resolved.path) : null
 }
 
-export const readRepoJson = (boundary, relativePath) => {
-    const resolved = boundary.resolve(relativePath)
-    return resolved.ok ? readJson(resolved.path) : null
-}
+export const readRepoText = (boundary, relativePath) => readRepoFile(boundary, relativePath, readText)
+
+export const readRepoJson = (boundary, relativePath) => readRepoFile(boundary, relativePath, readJson)
 
 const SKIP_DIRS = new Set([
     '.git', '.hg', '.svn', 'node_modules', 'vendor', 'dist', 'build', 'coverage', '.next', 'out',

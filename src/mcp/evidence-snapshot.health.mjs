@@ -3,6 +3,8 @@ import {
     normalizeCheckState, numericRecord, optionalNonNegativeInteger, privacySafeText, repoRelativePath,
     sanitizeFinding,
 } from './evidence-snapshot.common.mjs'
+import {summarizeFindings} from '../analysis/findings.js'
+import {auditFindingPathScope} from './health/audit-format.mjs'
 
 function buildHotspots(graph) {
     let analyzed = 0
@@ -40,7 +42,7 @@ function buildHotspots(graph) {
     return {analyzed, ...bounded(facts, CAPS.hotspots)}
 }
 
-export function buildHealthSection(graph, audit) {
+export function buildHealthSection(graph, audit, repoRoot = null) {
     if (!audit?.ok) {
         return {
             state: STATE.ERROR,
@@ -52,7 +54,12 @@ export function buildHealthSection(graph, audit) {
             complexity: {thresholds: COMPLEXITY_THRESHOLDS, analyzed: 0, hotspots: []},
         }
     }
-    const findings = bounded((audit.findings || []).map(sanitizeFinding).filter(Boolean)
+    // Public/private hosted evidence follows the same production-first path policy as
+    // run_audit. Classified-only findings remain available locally through
+    // include_classified:true, but must not turn a hosted production snapshot red.
+    const scopedFindings = auditFindingPathScope(audit.findings, {repoRoot}).findings
+    const scopedSummary = summarizeFindings(scopedFindings)
+    const findings = bounded(scopedFindings.map(sanitizeFinding).filter(Boolean)
         .sort((a, b) => compareText(a.severity, b.severity) || compareText(a.category, b.category) ||
             compareText(a.rule, b.rule) || compareText(a.file || a.package || '', b.file || b.package || '') || compareText(a.id, b.id)),
     CAPS.findings)
@@ -76,8 +83,8 @@ export function buildHealthSection(graph, audit) {
             reasons: state === STATE.PARTIAL ? ['OPTIONAL_CHECKS_INCOMPLETE'] : [],
         },
         summary: {
-            bySeverity: numericRecord(audit.summary?.bySeverity, ['critical', 'high', 'medium', 'low', 'info']),
-            byCategory: numericRecord(audit.summary?.byCategory, ['unused', 'structure', 'vulnerability', 'malware']),
+            bySeverity: numericRecord(scopedSummary.bySeverity, ['critical', 'high', 'medium', 'low', 'info']),
+            byCategory: numericRecord(scopedSummary.byCategory, ['unused', 'structure', 'vulnerability', 'malware']),
             dead: numericRecord(audit.deadReport, ['deadSymbols', 'deadFiles', 'unusedExports']),
             structure: numericRecord(audit.structureReport, [
                 'runtimeImportEdges', 'typeOnlyImportEdges', 'compileOnlyImportEdges', 'runtimeCycles',

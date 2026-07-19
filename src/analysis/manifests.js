@@ -99,55 +99,6 @@ export function parsePyprojectDeps(text) {
   return { present, deps };
 }
 
-// ---- poetry.lock → [{name, version, deps}] — [[package]] blocks + their [package.dependencies] keys ----
-export function parsePoetryLockDeps(text) {
-  const out = [];
-  let cur = null, inDeps = false;
-  for (const raw of String(text || "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line === "[[package]]") { cur = { name: "", version: "", deps: [] }; out.push(cur); inDeps = false; continue; }
-    if (line.startsWith("[")) { inDeps = cur != null && line === "[package.dependencies]"; if (line.startsWith("[[")) cur = null; continue; }
-    if (!cur) continue;
-    if (inDeps) { const m = line.match(/^["']?([A-Za-z0-9][\w.-]*)["']?\s*=/); if (m) cur.deps.push(m[1]); continue; }
-    let m = line.match(/^name\s*=\s*"([^"]+)"/); if (m && !cur.name) { cur.name = m[1]; continue; }
-    m = line.match(/^version\s*=\s*"([^"]+)"/); if (m && !cur.version) cur.version = m[1];
-  }
-  return out.filter((p) => p.name);
-}
-
-// ---- uv.lock → [{name, version, deps}] — [[package]] blocks with dependencies = [{ name = "x" }, …] ----
-export function parseUvLockDeps(text) {
-  const out = [];
-  let cur = null, inArr = false;
-  for (const raw of String(text || "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line === "[[package]]") { cur = { name: "", version: "", deps: [] }; out.push(cur); inArr = false; continue; }
-    if (line.startsWith("[") && !inArr) { if (line.startsWith("[[")) cur = null; continue; }
-    if (!cur) continue;
-    if (inArr) { for (const m of line.matchAll(/name\s*=\s*"([^"]+)"/g)) cur.deps.push(m[1]); if (/\]\s*$/.test(line)) inArr = false; continue; }
-    if (/^dependencies\s*=\s*\[/.test(line)) { for (const m of line.matchAll(/name\s*=\s*"([^"]+)"/g)) cur.deps.push(m[1]); inArr = !/\]\s*$/.test(line); continue; }
-    let m = line.match(/^name\s*=\s*"([^"]+)"/); if (m && !cur.name) { cur.name = m[1]; continue; }
-    m = line.match(/^version\s*=\s*"([^"]+)"/); if (m && !cur.version) cur.version = m[1];
-  }
-  return out.filter((p) => p.name);
-}
-
-// ---- installed dist-info METADATA → { name, version, deps, repository } (headers until the first blank
-// line; Requires-Dist entries gated behind `extra ==` markers are optional extras — skipped) ----
-export function parseDistMetadata(text) {
-  const out = { name: "", version: "", deps: [], repository: "" };
-  for (const raw of String(text || "").split(/\r?\n/)) {
-    if (raw.trim() === "") break;
-    let m = raw.match(/^Name:\s*(.+)$/i); if (m) { out.name = m[1].trim(); continue; }
-    m = raw.match(/^Version:\s*(.+)$/i); if (m) { out.version = m[1].trim(); continue; }
-    m = raw.match(/^Requires-Dist:\s*([A-Za-z0-9][\w.-]*)(.*)$/i);
-    if (m) { if (!/extra\s*==/.test(m[2])) out.deps.push(m[1]); continue; }
-    m = raw.match(/^(?:Home-page:\s*|Project-URL:\s*(?:Source|Repository|Homepage|Home|Code)[^,]*,\s*)(https?:\/\/\S+)/i);
-    if (m && !out.repository) out.repository = m[1];
-  }
-  return out;
-}
-
 // ---- Pipfile → { present, deps: [{name, dev}] } — [packages] / [dev-packages] table keys ----
 export function parsePipfileDeps(text) {
   const deps = [];

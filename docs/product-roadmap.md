@@ -152,25 +152,40 @@ endpoint-recall gate; it does not displace these deliverables. The executable co
   and backend remain on their independent upgrade track; payload v3 stays wire-compatible and is
   checked against the Hosted contract suite.
 
-### Public `0.3.0` — precision expansion
+### Public offline `0.3.0` — strict local boundary and precision expansion
 
-- Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded ambiguous edges and
-  conservatively complete dead-code candidates, with explicit `COMPLETE`/`PARTIAL`/`UNAVAILABLE`/`OFF`
-  states. This is not a clone of another tool surface.
-- Next: Java pilot and broader exact-reference enrichment for architecture evidence; keep unsupported
-  languages explicit instead of relabeling parser evidence as exact.
-- Provenance/completeness contract and bounded Git-ref timeline/report API.
+- Keep the existing MIT license unchanged.
+- Extract every outbound HTTP implementation into `weavatrix-online`; remove
+  hosted URL/token inputs and compatibility aliases from offline npm/MCPB
+  artifacts.
+- Publish a stable extension API so online updates consume the core as a
+  dependency instead of forking parsers, graph schemas or Health analyzers.
+- Delivered early in 0.2.4: lazy local TS/JS LSP verification for bounded
+  ambiguous edges and conservatively complete dead-code candidates, with
+  explicit `COMPLETE`/`PARTIAL`/`UNAVAILABLE`/`OFF` states.
+- Continue exact-reference enrichment and bounded Git-ref history without
+  relabeling unsupported languages as exact.
 
-### Hosted `0.3.0` — EvidenceSnapshot V2
+### Public online `0.1.0` — Cloud/Enterprise MCP connector
 
-- Source-free Git-history trends and exact/inferred provenance.
-- Target-editor/ratchet round trip, reconstructed release history and agent-readable decisions.
+- Public source under a permission-required license whose exact text must pass
+  legal review before publication; the scaffold remains `UNLICENSED`
+  meanwhile, and the MIT core dependency remains MIT.
+- Own advisory refresh, sync preview/confirmation, sync, contract pull,
+  endpoint capability negotiation and authentication.
+- Target managed Cloud and licensed self-hosted Enterprise through one
+  source-free, versioned wire contract.
 
-### Hosted `0.4.0` — company layer
+### Managed Cloud `0.3.0` and Enterprise `0.1.0`
 
-- Organizations, roles, recovery, scoped tokens and immutable audit events.
-- Company dependency/technology inventory and endpoint/event/database/package joins.
-- Ownership and review routing; billing only after operational controls are complete.
+- Cloud moves from one operator workspace to workspace-scoped multi-tenancy,
+  scoped tokens, roles, recovery and immutable audit events.
+- Enterprise is a private licensed deployment shell over the versioned private
+  Hosted core, not a full fork of the Cloud tree.
+- Both retain EvidenceSnapshot evolution, target/ratchet round trips,
+  reconstructed release history and agent-readable decisions.
+- Company joins, ownership/review routing and billing follow operational,
+  privacy and recovery controls.
 
 ## Comparison findings mapped without duplicating delivered work
 

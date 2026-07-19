@@ -35,7 +35,7 @@ export async function createEvidenceSnapshot({repoRoot, graph}) {
     const sections = {
         architecture: buildArchitectureSection(inputGraph, aggregate, audit, structure),
         duplicates: buildDuplicatesSection(repoRoot, inputGraph),
-        health: buildHealthSection(inputGraph, audit),
+        health: buildHealthSection(inputGraph, audit, repoRoot),
         technologies: buildTechnologiesSection(stack, stackError),
         packages: buildPackagesSection(installedResult, installedError, inputGraph, audit, repoRoot),
     }

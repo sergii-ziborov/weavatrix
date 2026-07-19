@@ -2,6 +2,7 @@
 // classifier/evidence contract can be tested without perturbing get_dependents or graph_diff.
 import {spawnSync} from 'node:child_process'
 import {childProcessEnv} from '../child-env.js'
+import {fileOfId} from '../graph/node-id.js'
 import {classifyChangeImpact} from '../analysis/change-classification.js'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
 import {computeStaticTestReachability} from '../analysis/static-test-reachability.js'
@@ -28,12 +29,6 @@ function resolveImpactBase(repoRoot, requested) {
 const impactKind = (entry) => entry?.runtimeDepth != null
     ? (entry.compileDepth != null ? `runtime + compile-time(d${entry.compileDepth})` : 'runtime')
     : 'compile-time'
-
-const fileOfNode = (id) => {
-    const value = String(id)
-    const hash = value.indexOf('#')
-    return hash < 0 ? value : value.slice(0, hash)
-}
 
 const partialResult = (text, reason, status = 'UNAVAILABLE') => toolResult(text, {
     status,
@@ -105,8 +100,8 @@ export function tChangeImpactV2(g, args = {}, ctx = {}) {
     const cap = Math.max(5, Math.min(120, Number(args.max_nodes) || 40))
     const reached = seeds.size ? reverseReach(g, seeds, maxDepth) : new Map()
     const impacted = [...reached.entries()]
-        .filter(([id]) => !seeds.has(id) && !changedSet.has(fileOfNode(id)))
-        .map(([id, entry]) => ({id, depth: entry.depth, entry, degree: degreeOf(g, id), file: fileOfNode(id)}))
+        .filter(([id]) => !seeds.has(id) && !changedSet.has(fileOfId(id)))
+        .map(([id, entry]) => ({id, depth: entry.depth, entry, degree: degreeOf(g, id), file: fileOfId(id)}))
         .sort((left, right) => left.depth - right.depth
             || Number(left.entry.compileOnly) - Number(right.entry.compileOnly)
             || right.degree - left.degree

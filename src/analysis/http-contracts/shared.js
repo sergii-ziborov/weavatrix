@@ -1,3 +1,5 @@
+import { boundedInteger } from "../../util.js";
+
 export const HTTP_CONTRACTS_V = 2;
 export const HTTP_CONTRACT_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
@@ -38,10 +40,7 @@ export function normalizeContractFile(value) {
   return normalized.split("/").some((part) => !part || part === "." || part === "..") ? "" : normalized;
 }
 
-export function boundedInteger(value, fallback, min, max) {
-  const number = Number(value);
-  return Number.isInteger(number) ? Math.max(min, Math.min(max, number)) : fallback;
-}
+export { boundedInteger };
 
 export function safeContractName(value, fallback) {
   const text = String(value || "").trim();

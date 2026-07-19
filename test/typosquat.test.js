@@ -27,6 +27,12 @@ test("classifyTyposquat: legit popular names + known pairs are NOT flagged", () 
   assert.equal(classifyTyposquat("querystring"), null);
   // scope-only difference of a popular name is not a squat
   assert.equal(classifyTyposquat("@myorg/react"), null);
+  assert.equal(classifyTyposquat("@playwright/test"), null, "official scoped packages must not be compared to unrelated unscoped names");
+});
+
+test("classifyTyposquat: scoped lures compare within the scoped package grammar", () => {
+  assert.equal(classifyTyposquat("@bable/core")?.nearest, "@babel/core");
+  assert.equal(classifyTyposquat("@apolo/client")?.nearest, "@apollo/client");
 });
 
 test("classifyTyposquat: unrelated + very-short names ignored", () => {

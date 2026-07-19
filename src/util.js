@@ -24,6 +24,11 @@ export function lineNumberAt(text, index) {
   return line;
 }
 
+export function boundedInteger(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isInteger(number) ? Math.max(min, Math.min(max, number)) : fallback;
+}
+
 export function safeRead(path) {
   try {
     const st = statSync(path);

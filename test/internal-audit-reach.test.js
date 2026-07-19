@@ -54,3 +54,17 @@ test("entry discovery: local HTML assets are externally loaded entry surfaces", 
   assert.ok(entries.has("site/theme.css"));
   assert.ok(!entries.has("src/orphan.js"));
 });
+
+test("entry discovery: Drizzle config roots configured schema modules", () => {
+  const graph = {
+    nodes: ["drizzle.config.ts", "db/schema.ts", "db/orphan.ts"].map(file),
+    links: [],
+  };
+  const entries = entryFiles(graph, {}, new Set(), {
+    sources: new Map([
+      ["drizzle.config.ts", `export default { schema: "./db/schema.ts", out: "./drizzle" }`],
+    ]),
+  });
+  assert.ok(entries.has("db/schema.ts"));
+  assert.ok(!entries.has("db/orphan.ts"));
+});

@@ -121,7 +121,7 @@ export async function runInternalAudit(repoPath, {
   ];
   const deadFileSet = new Set(dead.deadFiles.map((finding) => finding.file));
   for (const finding of structure.findings) {
-    if (!(finding.rule === "orphan-file" && deadFileSet.has(finding.file))) findings.push(finding);
+    if (!(finding.rule === "orphan-file" && (deadFileSet.has(finding.file) || entries.has(finding.file)))) findings.push(finding);
   }
 
   const actionableDeadFiles = dead.deadFiles.filter((finding) => !isNonProductPath(finding.file));
@@ -142,7 +142,7 @@ export async function runInternalAudit(repoPath, {
   }
   let unusedExportCount = 0;
   for (const symbol of unusedExports) {
-    if (symbol.test || isNonProductPath(symbol.file)) continue;
+    if (symbol.test || isNonProductPath(symbol.file) || entries.has(symbol.file) || dynamicTargets.has(symbol.file)) continue;
     if (/(^|\/)[^/]*\.config\.[a-z0-9]+$|(^|\/)\.[^/]+rc(\.[a-z]+)?$/i.test(symbol.file)) continue;
     findings.push(makeFinding({
       category: "unused",
@@ -159,7 +159,7 @@ export async function runInternalAudit(repoPath, {
     unusedExportCount++;
   }
   for (const symbol of dead.testOnlySymbols || []) {
-    if (isNonProductPath(symbol.file)) continue;
+    if (isNonProductPath(symbol.file) || entries.has(symbol.file) || dynamicTargets.has(symbol.file)) continue;
     findings.push(makeFinding({
       category: "unused",
       rule: "test-only-symbol",

@@ -3,9 +3,16 @@
 
 const K = 8;               // k-gram length (tokens)
 const W = 4;               // winnowing window → guaranteed detection of matches ≥ K+W-1 tokens
-const STRLIT = String.fromCharCode(0); // opaque-literal sentinel for every string/regex body: a NUL
+const STRLIT = String.fromCharCode(0); // opaque-literal sentinel for string bodies: a NUL
                            // its own class (never an identifier "I" nor a number "N"), so a literal can
                            // never masquerade as code in either mode
+const REGEXLIT = String.fromCharCode(1); // regex bodies are executable behavior, so retain an equality anchor
+const literalHash = (value) => {
+  let hash = 2166136261;
+  for (const char of String(value || "")) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return (hash >>> 0).toString(16);
+};
+const regexMarker = (value) => ` ${REGEXLIT} 0x${literalHash(value)} `;
 
 const KEYWORDS = new Set(("if else for while do switch case break continue return function const let var new class extends async await try catch finally throw import from export default typeof instanceof in of delete void yield static get set this super null undefined true false def elif except lambda pass raise with as is not and or None True False func go defer chan map range struct interface type package nil err string int bool byte float64 public private protected final void long double boolean").split(" "));
 
@@ -16,9 +23,9 @@ const KEYWORDS = new Set(("if else for while do switch case break continue retur
 // regex and ate the rest of the line.
 const REGEX_PREV = new Set("(,=:[!&|?{};~*%^<>".split(""));
 
-// Replace comments with nothing and string/regex BODIES with the sentinel, so their contents never
-// count as code. Handles Python triple-quoted docstrings (embedded quotes no longer desync the scan)
-// and JS regex literals (a quote inside /['"]/ no longer opens a phantom string).
+// Replace comments with nothing and string bodies with an opaque sentinel. Regex bodies retain only
+// a one-way equality anchor: their source is executable behavior, and collapsing every pattern to the
+// same token creates false clone groups for unrelated replace/validate pipelines.
 export function stripNonCode(text, py) {
   let out = "", i = 0, prevSig = "";
   const s = String(text || "");
@@ -34,7 +41,7 @@ export function stripNonCode(text, py) {
     if (!py && two === "//") { while (i < s.length && s[i] !== "\n") i++; continue; }
     if (!py && two === "/*") { i += 2; while (i < s.length && s.slice(i, i + 2) !== "*/") i++; i += 2; continue; }
     if (!py && ch === "/" && REGEX_PREV.has(prevSig)) {
-      i++; let inClass = false; // '/' inside a [...] char class is literal, not the terminator
+      i++; const regexStart = i; let inClass = false; // '/' inside a [...] char class is literal, not the terminator
       while (i < s.length && s[i] !== "\n") {
         const c = s[i];
         if (c === "\\") { i += 2; continue; }
@@ -44,7 +51,7 @@ export function stripNonCode(text, py) {
         i++;
       }
       while (i < s.length && /[a-z]/i.test(s[i])) i++; // regex flags (gimsuy)
-      push(` ${STRLIT} `); continue;
+      push(regexMarker(s.slice(regexStart, i))); continue;
     }
     if (ch === '"' || ch === "'" || ch === "`") {
       const q = ch; i++;

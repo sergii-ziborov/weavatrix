@@ -1,25 +1,19 @@
-import { dirname } from "node:path";
 import { createRepoBoundary } from "../repo-path.js";
 import { computeGoDepFindings } from "./dep-check-ecosystems.js";
 import { listRepoFiles, readRepoText } from "./internal-audit.collect.js";
 import { parseGoMod } from "./manifests.js";
 import { makeFinding } from "./findings.js";
-
-const rootOf = (file) => {
-  const root = dirname(String(file || "").replace(/\\/g, "/"));
-  return root === "." ? "" : root;
-};
-const owns = (root, file) => !root || file === root || String(file || "").replace(/\\/g, "/").startsWith(`${root}/`);
+import { dependencyScopeOwnsFile, dependencyScopeRoot } from "./dependency/scoped-dependencies.js";
 
 export function collectGoDependencyEvidence(repoRoot, { files = listRepoFiles(repoRoot), externalImports = [], nonRuntimeRoots = [] } = {}) {
   const boundary = createRepoBoundary(repoRoot);
   const manifests = files.filter((file) => /(^|\/)go\.mod$/i.test(file));
-  const scopes = manifests.map((file) => ({ file, root: rootOf(file), parsed: parseGoMod(readRepoText(boundary, file)) }))
+  const scopes = manifests.map((file) => ({ file, root: dependencyScopeRoot(file), parsed: parseGoMod(readRepoText(boundary, file)) }))
     .sort((left, right) => right.root.length - left.root.length || left.root.localeCompare(right.root));
   const importsByScope = new Map(scopes.map((scope) => [scope, []]));
   for (const entry of externalImports) {
     if (entry.ecosystem !== "Go") continue;
-    const owner = scopes.find((scope) => owns(scope.root, entry.file));
+    const owner = scopes.find((scope) => dependencyScopeOwnsFile(scope.root, entry.file));
     if (owner) importsByScope.get(owner).push(entry);
   }
   const findings = [], declared = new Set(), issues = [];
