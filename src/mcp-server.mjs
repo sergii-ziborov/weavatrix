@@ -1,9 +1,4 @@
-// weavatrix MCP server — the stdio entry point. The tool implementations live in src/mcp/*:
-//   graph-context.mjs  — graph load + indexes, node resolution, staleness, raw-graph cache, diffs
-//   tools-graph.mjs    — graph query tools        tools-impact.mjs  — dependents / diff / change impact
-//   tools-health.mjs   — audit / clones / coverage / endpoints
-//   tools-actions.mjs  — rebuild / open_repo / list_known_repos + the 'online' group
-//   catalog.mjs        — tool catalog, capability filter, hot-reload loader
+// Weavatrix MCP stdio entry point; implementations and extension composition live in src/mcp/*.
 // Spawned by Claude Code / Codex as a plain Node child (node mcp-server.mjs <graph.json> <repoRoot>).
 // Speaks newline-delimited JSON-RPC 2.0 over stdio (the MCP stdio transport).
 //
@@ -17,6 +12,8 @@
 //   weavatrix-mcp <repoRoot> [caps]               — graph path derived from the standard layout
 //   weavatrix-mcp <graph.json> <repoRoot> [caps]  — explicit graph file (classic form)
 import process from 'node:process'
+import {resolve} from 'node:path'
+import {pathToFileURL} from 'node:url'
 import {loadGraph} from './mcp/graph-context.mjs'
 import {createStalenessNoticeGate} from './mcp/staleness-notice.mjs'
 import {normalizeToolResult} from './mcp/tool-result.mjs'
@@ -32,23 +29,33 @@ import {
 const DEFAULT_PROTOCOL = '2024-11-05'
 const log = (...a) => process.stderr.write(`[weavatrix] ${a.join(' ')}\n`)
 
-const target = resolveServerTarget(process.argv, log)
-const GRAPH_PATH = target.graphPath, REPO_ROOT = target.repoRoot, CAPS_ARG = target.capabilities
-
 // ---- hot reload of tool implementations -----------------------------------------------------------
 // Node caches modules at spawn, so edits to the tool code would otherwise be invisible until the MCP
 // client reconnects. Before each tools/list|call we stat the hot-reloadable files (HOT_FILES); when
 // any changed on disk we re-import them through catalog.loadHotApi with a cache-busting version and
 // swap the tool table, then notify the client. The stdio shell, graph-context (its caches), and the
 // analysis engines are NOT swapped — changing those still needs a reconnect.
-async function main() {
+export async function startMcpServer({
+    argv = process.argv,
+    defaultCapabilities,
+    loadExtensions = async () => [],
+    packageJsonPath = PACKAGE_JSON_PATH,
+    packageVersion = PKG_VERSION,
+    serverInfo = SERVER_INFO,
+} = {}) {
+    const target = resolveServerTarget(argv, log)
+    const GRAPH_PATH = target.graphPath
+    const REPO_ROOT = target.repoRoot
+    const CAPS_ARG = target.capabilities ?? defaultCapabilities
     let catalog = await loadCatalog()
-    let api = await catalog.loadHotApi(0, CAPS_ARG)
+    let extensions = await loadExtensions({version: 0})
+    let api = await catalog.loadHotApi(0, CAPS_ARG, {extensions})
     const runtimeInfo = () => ({
-        ...runtimeVersionStatus({runningVersion: PKG_VERSION, packageJsonPath: PACKAGE_JSON_PATH}),
+        ...runtimeVersionStatus({runningVersion: packageVersion, packageJsonPath}),
         profile: api.profile || 'custom',
         capabilities: [...api.caps],
         toolCount: api.tools.length,
+        ...(api.extensions.items.length ? {extensions: api.extensions.items} : {}),
     })
     const runtimeInstructions = () => {
         const runtime = runtimeInfo()
@@ -61,7 +68,7 @@ async function main() {
     let graphError = null
     // ctx owns the CURRENT target: rebuild_graph reloads it, open_repo retargets graphPath/repoRoot
     // at runtime. loadInto always reads ctx.graphPath so both paths share one loader.
-    const ctx = {graphPath: GRAPH_PATH, repoRoot: REPO_ROOT, reload: null, runtime: runtimeInfo()}
+    const ctx = {graphPath: GRAPH_PATH, repoRoot: REPO_ROOT, reload: null, runtime: runtimeInfo(), extensions: api.extensions}
     const loadInto = () => { graph = loadGraph(ctx.graphPath, {repoRoot: ctx.repoRoot}); graphError = null; return graph }
     ctx.reload = () => { api.resetStalenessCache(); try { return loadInto() } catch (e) { graphError = e.message; return null } }
     try {
@@ -114,10 +121,13 @@ async function main() {
         if (v <= loadedVersion || v === lastFailedVersion) return
         try {
             const nextCatalog = await loadCatalog(v)
-            const nextApi = await nextCatalog.loadHotApi(v, CAPS_ARG)
+            const nextExtensions = await loadExtensions({version: v})
+            const nextApi = await nextCatalog.loadHotApi(v, CAPS_ARG, {extensions: nextExtensions})
             catalog = nextCatalog
             api = nextApi
+            extensions = nextExtensions
             ctx.runtime = runtimeInfo()
+            ctx.extensions = api.extensions
             loadedVersion = v
             log(`hot-reloaded tool implementations from changed source (${api.tools.length} tools)`)
             send({jsonrpc: '2.0', method: 'notifications/tools/list_changed'})
@@ -145,7 +155,7 @@ async function main() {
         if (method === 'initialize') {
             if (params?.protocolVersion) protocolVersion = String(params.protocolVersion)
             return reply(id, {
-                protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo: SERVER_INFO,
+                protocolVersion, capabilities: {tools: {listChanged: true}}, serverInfo,
                 instructions: runtimeInstructions(), _meta: {'weavatrix/runtime': runtimeInfo()},
             })
         }
@@ -281,7 +291,8 @@ async function main() {
 
 // Guard: hot-reload re-imports of tool modules never touch this entry, but keep the start guard so a
 // stray re-import of the entry itself can never spawn a second stdio loop.
-if (!globalThis.__weavatrixMcpStarted) {
+const directEntry = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+if (directEntry && !globalThis.__weavatrixMcpStarted) {
     globalThis.__weavatrixMcpStarted = true
-    main()
+    startMcpServer()
 }

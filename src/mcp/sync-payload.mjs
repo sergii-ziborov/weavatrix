@@ -1,4 +1,4 @@
-// Versioned, explicit wire schema for sync_graph. Never forward graph.json wholesale.
+// Versioned, explicit source-free extension schema. Never forward graph.json wholesale.
 import {sanitizeEvidenceSnapshot} from './sync-evidence.mjs';
 import {
     MAX_SYNC_EXTERNAL_IMPORTS, MAX_SYNC_LINKS, MAX_SYNC_NODES, assertArrayLimit,

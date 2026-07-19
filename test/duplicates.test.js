@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { computeDuplicates, runDuplicates } from "../src/analysis/duplicates.js";
 import { tFindDuplicates } from "../src/mcp/tools-health.mjs";
-import { compareDuplicateGroups, isFrameworkBoilerplateCloneGroup } from "../src/analysis/duplicate-groups.js";
+import { compareDuplicateGroups, isDeclarativeCatalogCloneGroup, isFrameworkBoilerplateCloneGroup } from "../src/analysis/duplicate-groups.js";
 
 const CLONE = `function collectRows(items) {
   const out = [];
@@ -39,6 +39,11 @@ test("duplicates: conventional router-only groups are recognized as framework bo
     {file: "services/auth/auth.router.js", label: "router"},
     {file: "services/attack/attack.controller.js", label: "startMitigate()"},
   ]}), false);
+});
+
+test("duplicates: immutable declarative catalogs are reviewable data shapes, not executable clones", () => {
+  assert.equal(isDeclarativeCatalogCloneGroup({members: [{declarative: true}, {declarative: true}]}), true);
+  assert.equal(isDeclarativeCatalogCloneGroup({members: [{declarative: true}, {declarative: false}]}), false);
 });
 
 function makeRepo() {

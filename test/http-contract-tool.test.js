@@ -48,6 +48,7 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         const result = await tTraceApiContract(null, {
             backend: backend.repositoryId,
             clients: ['frontend-web'],
+            transport: 'http',
             method: 'GET',
             path: '/api/users/{id}',
             changed_files: ['src/routes.js'],
@@ -56,7 +57,7 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         assert.equal(result.__weavatrixToolResult, true)
         assert.match(result.text, /^VERDICT CLIENTS_AT_RISK/)
         assert.equal(result.result.crossRepoHttpContractV, 3)
-        assert.equal(result.result.transportContracts.transportContractsV, 1)
+        assert.equal(result.result.transportContracts.transportContractsV, 2)
         assert.equal(result.result.verdict.callsites, 1)
         assert.equal(result.result.verdict.affectedScreens, 1)
         assert.equal(result.result.totals.endpoints, 1)
@@ -80,6 +81,7 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         const refreshed = await tTraceApiContract(null, {
             backend: backend.repositoryId,
             clients: ['frontend-web'],
+            transport: 'http',
             method: 'GET',
             path: '/api/users/{id}',
             max_impact_depth: 2,

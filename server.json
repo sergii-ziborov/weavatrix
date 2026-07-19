@@ -1,32 +1,32 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sergii-ziborov/weavatrix",
-  "description": "Local graph for fast app understanding, Health, dead code, clones, history and architecture safety.",
+  "description": "Local repository graph, LSP-backed impact, Health, dependencies, duplicates and architecture.",
   "repository": {
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.2.19",
+  "version": "0.3.0",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.2.19",
+      "version": "0.3.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
         {
           "type": "positional",
           "valueHint": "repoRoot",
-          "description": "Absolute path to the initial Git repository (the offline open_repo tool can explicitly switch repositories)",
+          "description": "Absolute path to the initial Git repository; open_repo can explicitly switch local repositories",
           "isRequired": true
         },
         {
           "type": "positional",
           "valueHint": "capabilities",
-          "description": "Security profile (offline, pinned, osv, hosted, full) or exact comma-separated groups graph,search,source,health,build,retarget,crossrepo,advisories,hosted; legacy online aliases advisories plus hosted",
+          "description": "Local profile (offline or pinned) or exact comma-separated local groups graph,search,source,health,build,retarget,crossrepo",
           "format": "string",
           "default": "offline",
           "isRequired": false
@@ -37,19 +37,6 @@
           "name": "WEAVATRIX_PRECISION",
           "description": "Optional semantic precision mode: lsp (default) uses the bundled bounded TypeScript/JavaScript language-server overlay; off keeps parser-only graphs",
           "format": "string",
-          "isRequired": false
-        },
-        {
-          "name": "WEAVATRIX_SYNC_URL",
-          "description": "Optional endpoint used only by explicit hosted-profile calls; preview_sync is local-only and sync_graph requires dry_run:false plus its exact short-lived confirmation before sending",
-          "format": "string",
-          "isRequired": false
-        },
-        {
-          "name": "WEAVATRIX_SYNC_TOKEN",
-          "description": "Optional bearer token for confirmed sync_graph requests to the configured hosted endpoint; required by pull_architecture_contract",
-          "format": "string",
-          "isSecret": true,
           "isRequired": false
         },
         {

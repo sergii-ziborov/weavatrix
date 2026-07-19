@@ -17,7 +17,7 @@ const activeContract = bootstrap.activeArchitectureContract
 
 const remediation = () => ({
     offlinePath: '.weavatrix/architecture.json',
-    hostedAction: 'Open Architecture -> choose intended style -> Save target & baseline',
+    extensionAction: 'A composing extension may provide owner-approved remote contract storage',
     nextTool: 'verify_architecture',
 })
 
@@ -38,7 +38,7 @@ function notConfiguredResult(g, action, {includeStarter = false, repoRoot = null
         : ''
     return toolResult([
         `Architecture ${action} is NOT_CONFIGURED — no target contract is active.${starterText}`,
-        'Next: save .weavatrix/architecture.json (offline) or approve a target in Hosted, then call verify_architecture.',
+        'Next: save .weavatrix/architecture.json, then call verify_architecture.',
     ].join('\n'), {
         state: 'NOT_CONFIGURED',
         remediation: remediation(),

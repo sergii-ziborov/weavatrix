@@ -13,29 +13,29 @@ test('MCP stdio identifies its runtime profile and exact registered catalog', {t
     const graphPath = join(parent, 'graph', 'graph.json')
     mkdirSync(join(repo, 'src'), {recursive: true})
     writeFileSync(join(repo, 'src', 'main.js'), 'export const value = 1\n')
-    const server = startServer(graphPath, repo, join(parent, 'graph-home'), {WEAVATRIX_PRECISION: 'off'}, 'full')
+    const server = startServer(graphPath, repo, join(parent, 'graph-home'), {WEAVATRIX_PRECISION: 'off'}, 'offline')
     try {
         const initialized = await server.request('initialize', {
             protocolVersion: '2024-11-05', capabilities: {},
             clientInfo: {name: 'weavatrix-test', version: '1.0.0'},
         })
-        assert.match(initialized.instructions, new RegExp(`^Weavatrix ${initialized.serverInfo.version}; diskVersion=${initialized.serverInfo.version}; profile=full; tools=38;`))
+        assert.match(initialized.instructions, new RegExp(`^Weavatrix ${initialized.serverInfo.version}; diskVersion=${initialized.serverInfo.version}; profile=offline; tools=34;`))
         const listed = await server.request('tools/list')
-        assert.equal(listed.tools.length, 38)
+        assert.equal(listed.tools.length, 34)
         assert.deepEqual(listed._meta['weavatrix/runtime'], {
             version: initialized.serverInfo.version,
             diskVersion: initialized.serverInfo.version,
             staleRuntime: false,
             staleRuntimeAllowed: false,
-            profile: 'full',
-            capabilities: ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo', 'advisories', 'hosted'],
-            toolCount: 38,
+            profile: 'offline',
+            capabilities: ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo'],
+            toolCount: 34,
         })
-        for (const name of ['trace_endpoint', 'trace_api_contract', 'preview_sync']) {
+        for (const name of ['trace_endpoint', 'trace_api_contract']) {
             assert.ok(listed.tools.some((tool) => tool.name === name), name)
         }
         const stats = await server.request('tools/call', {name: 'graph_stats', arguments: {}}, 90_000)
-        assert.match(stats.content[0].text, /stale no; profile full; 38 registered tools/)
+        assert.match(stats.content[0].text, /stale no; profile offline; 34 registered tools/)
     } finally {
         await server.stop()
         rmSync(parent, {recursive: true, force: true})
@@ -53,7 +53,7 @@ test('MCP stdio fails loudly when package.json changes under a running process',
     cpSync(join(PROJECT_ROOT, 'src'), stagedSrc, {recursive: true})
     writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: currentPackage.version, type: 'module'}))
     mkdirSync(repo, {recursive: true})
-    const server = startServer(graphPath, repo, join(parent, 'graph-home'), {WEAVATRIX_PRECISION: 'off'}, 'full', stagedServer)
+    const server = startServer(graphPath, repo, join(parent, 'graph-home'), {WEAVATRIX_PRECISION: 'off'}, 'offline', stagedServer)
     try {
         await server.request('ping')
         writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: '99.0.0', type: 'module'}))
@@ -66,7 +66,7 @@ test('MCP stdio fails loudly when package.json changes under a running process',
     writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: currentPackage.version, type: 'module'}))
     const override = startServer(graphPath, repo, join(parent, 'override-graph-home'), {
         WEAVATRIX_PRECISION: 'off', WEAVATRIX_ALLOW_STALE_RUNTIME: '1',
-    }, 'full', stagedServer)
+    }, 'offline', stagedServer)
     try {
         await override.request('ping')
         writeFileSync(stagedPackage, JSON.stringify({name: 'weavatrix-stale-fixture', version: '99.0.0', type: 'module'}))
@@ -78,7 +78,7 @@ test('MCP stdio fails loudly when package.json changes under a running process',
         assert.equal(initialized._meta['weavatrix/runtime'].staleRuntimeAllowed, true)
         assert.match(initialized.instructions, /Development override is active/)
         const listed = await override.request('tools/list')
-        assert.equal(listed.tools.length, 38)
+        assert.equal(listed.tools.length, 34)
         assert.equal(listed._meta['weavatrix/runtime'].staleRuntime, true)
     } finally {
         await override.stop()

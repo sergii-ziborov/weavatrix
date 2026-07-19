@@ -111,7 +111,7 @@ function symbolRanges(graph) {
     if (!line) continue;
     let arr = byFile.get(n.source_file);
     if (!arr) byFile.set(n.source_file, (arr = []));
-    arr.push({ id: n.id, label: n.label || n.id, line });
+    arr.push({ id: n.id, label: n.label || n.id, line, symbolKind: n.symbol_kind || "" });
   }
   for (const arr of byFile.values()) arr.sort((a, b) => a.line - b.line);
   return byFile;
@@ -175,9 +175,14 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
       if (end - start < 2) continue;
       const toks = tokenize(stripNonCode(body.join("\n"), py));
       if (toks.strict.length < scanTokenFloor) continue;
+      const strippedBody = stripNonCode(body.join("\n"), py);
+      const declarativeValue = /^(?:export\s+)?(?:const|let|var)\s+[\w$]+(?:\s*:[^=]+)?\s*=\s*(?:Object\.(?:freeze|seal)\s*\(\s*)?[\[{]/s.test(strippedBody.trim())
+        && !/=>|\b(?:function|if|for|while|switch|try|await|yield|return|throw|new)\b/.test(strippedBody);
+      const declarativeFactory = /^(?:export\s+)?const\s+[\w$]+(?:\s*:[^=]+)?\s*=\s*(?:sqliteTable|pgTable|mysqlTable)\s*\(/s.test(strippedBody.trim());
+      const declarative = declarativeValue || declarativeFactory || /^(?:interface|type|enum)$/i.test(syms[i].symbolKind);
       frags.push({
         id: syms[i].id, label: syms[i].label, file, start, end,
-        n: toks.strict.length,
+        n: toks.strict.length, declarative,
         ...classificationFields(pathInfo),
         fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
       });

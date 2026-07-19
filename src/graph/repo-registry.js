@@ -1,5 +1,5 @@
-// Global local registry for repository graphs. Absolute paths never leave the machine; hosted sync
-// uses the opaque UUID. Identity is anchored in each canonical graph folder so simultaneous MCP
+// Global local registry for repository graphs. Absolute paths never leave the machine; composing
+// extensions may use the opaque UUID. Identity is anchored in each canonical graph folder so simultaneous MCP
 // processes cannot mint different IDs for the same repository.
 import {randomUUID} from 'node:crypto'
 import {existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync} from 'node:fs'

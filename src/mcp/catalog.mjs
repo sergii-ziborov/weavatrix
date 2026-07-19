@@ -8,21 +8,18 @@ import {fileURLToPath} from 'node:url'
 import {resolveNode, isSymbol, stalenessLine, resetStalenessCache} from './graph-context.mjs'
 import {createRgResolver} from '../mcp-rg.mjs'
 import {readSource, searchCode} from '../mcp-source-tools.mjs'
+import {extensionRuntimeSummary, normalizeWeavatrixExtensions} from './extension-api.mjs'
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url))
 const resolveRg = createRgResolver(SELF_DIR)
-// The default profile is fully offline and includes explicit local repository retargeting. Operators
-// who want a hard single-repository boundary can select the `pinned` profile instead. HTTP tools are
-// split into explicit `advisories` and `hosted` capabilities; the old `online` name remains an alias
-// for both so existing registrations keep working.
+// The core artifact has only local profiles. Online packages compose their own profiles through the
+// public extension API; the MIT package never contains a capability alias that can enable HTTP.
 export const DEFAULT_CAPS = Object.freeze(['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo'])
 const PROFILE_CAPS = Object.freeze({
     offline: DEFAULT_CAPS,
     pinned: ['graph', 'search', 'source', 'health', 'build'],
-    osv: [...DEFAULT_CAPS, 'advisories'],
-    hosted: [...DEFAULT_CAPS, 'advisories', 'hosted'],
-    full: [...DEFAULT_CAPS, 'advisories', 'hosted'],
 })
+const MOVED_PROFILES = new Set(['online', 'osv', 'hosted', 'full'])
 
 // The files whose mtime the stdio shell watches for hot reload — keep in sync with the imports in
 // loadHotApi below (catalog.mjs itself is last: a change here re-derives the whole table).
@@ -36,8 +33,7 @@ const HOT_OWNERS = [
     'graph/tools-core.mjs', 'graph/tools-query.mjs', 'tools-graph-hubs.mjs',
     'health/duplicates.mjs', 'health/dead-code.mjs', 'health/audit-format.mjs',
     'health/audit.mjs', 'health/structure.mjs', 'health/endpoints.mjs',
-    'actions/graph-lifecycle.mjs', 'actions/advisories.mjs',
-    'actions/hosted-architecture.mjs', 'actions/graph-sync.mjs',
+    'actions/graph-lifecycle.mjs',
     'architecture-starter.mjs', 'architecture-bootstrap.mjs',
     'company-contract-verdict.mjs',
 ]
@@ -76,13 +72,13 @@ function buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps}) {
         {
             cap: 'crossrepo',
             name: 'trace_api_contract',
-            description: 'Cross-repository HTTP, GraphQL, gRPC and event/topic contract, handler-liveness and blast-radius evidence. Joins static backend contracts to registered client repositories; dynamic URLs/topics, reflection and unresolved runtime configuration remain explicit UNKNOWN evidence. Medium/high-confidence external matches mark a handler/contract NOT_DEAD_EXTERNAL_USE. Repository paths stay local and cannot be supplied through this tool.',
+            description: 'Cross-repository HTTP, GraphQL, gRPC and event/topic contract, handler-liveness and blast-radius evidence. Joins static models with optional revision-bound runtime/OTLP evidence; unobserved dynamic URLs/topics/reflection remain explicit UNKNOWN. Medium/high-confidence external matches mark a handler/contract NOT_DEAD_EXTERNAL_USE. Repository paths stay local and runtime report paths are repository-contained.',
             inputSchema: {
                 type: 'object',
                 properties: {
                     backend: {type: 'string', description: 'Backend repository UUID or exact unambiguous registry label'},
                     clients: {type: 'array', items: {type: 'string'}, minItems: 1, maxItems: 20, description: 'Client repository UUIDs or exact unambiguous registry labels'},
-                    transport: {type: 'string', enum: ['all', 'http', 'graphql', 'grpc', 'event'], default: 'all', description: 'Contract family to trace; all runs every supported static detector'},
+                    transport: {type: 'string', enum: ['all', 'http', 'graphql', 'grpc', 'event'], default: 'all', description: 'Contract family to trace; all runs static and revision-bound runtime evidence for every supported transport'},
                     method: {type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']},
                     path: {type: 'string', maxLength: 2048, description: 'Optional full route or segment-aligned route fragment; /query matches /edgeAnalytics/query/... and {id}, :id and concrete parameter values are normalized'},
                     changed_files: {type: 'array', items: {type: 'string'}, maxItems: 500, description: 'Optional backend repo-relative changed files; only endpoints declared in those files are traced'},
@@ -107,6 +103,8 @@ function buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps}) {
                     },
                     auto_discover_wrappers: {type: 'boolean', default: true, description: 'Discover only simple unambiguous functions that forward a URL parameter directly to a known object-style HTTP client'},
                     runtime_config: {type: 'object', maxProperties: 50, additionalProperties: {type: 'string', maxLength: 2048}, description: 'Optional non-secret static bindings for runtime URL prefixes, e.g. process.env.API_BASE. Values are used locally for this call and are not returned.'},
+                    runtime_evidence_files: {type: 'object', maxProperties: 21, additionalProperties: {type: 'string', maxLength: 512}, description: 'Optional repository-label/UUID to repository-relative weavatrix.transport-runtime.v1 JSON path. Defaults to .weavatrix/transport-runtime.json or .weavatrix/reports/transport-runtime.json in each repository.'},
+                    runtime_evidence_max_age_hours: {type: 'integer', minimum: 1, maximum: 8760, default: 168, description: 'Maximum accepted age for a revision-matched runtime evidence report'},
                     include_tests: {type: 'boolean', default: false},
                     max_impact_depth: {type: 'integer', minimum: 0, maximum: 5, default: 2},
                     max_endpoints: {type: 'integer', minimum: 1, maximum: 500, default: 250},
@@ -123,7 +121,7 @@ function buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps}) {
           {cap: 'source', name: 'read_source', description: "Read the actual source of a node (by label/ID) or a repo-relative file path — the symbol's lines with context. The graph stores only locations, not source text. For a path read, pass start_line to anchor the window anywhere in the file (otherwise it shows the head).", inputSchema: {type: 'object', properties: {label: {type: 'string', description: 'node label or ID'}, path: {type: 'string', description: 'or a repo-relative file path'}, start_line: {type: 'integer', description: 'anchor line: window = start_line-before .. start_line+after'}, before: {type: 'integer', default: 3}, after: {type: 'integer', default: 40}}}, run: (g, a, ctx) => readSource({repoRoot: ctx.repoRoot, resolveNode, isSymbol}, g, a)},
           {cap: 'source', refreshGraph: true, name: 'inspect_symbol', description: 'Inspect one exact symbol with an on-demand TypeScript/JavaScript LSP reference query, grouped occurrence containers, graph blast radius, complexity facts and bounded local source context. Ambiguous labels fail closed; point queries never replace the broad precision overlay.', inputSchema: {type: 'object', properties: {label: {type: 'string', description: 'Exact node ID or unambiguous symbol label'}, precision: {type: 'string', enum: ['auto', 'graph', 'lsp'], default: 'auto'}, max_references: {type: 'integer', minimum: 1, maximum: 5000, default: 1000}, max_containers: {type: 'integer', minimum: 1, maximum: 50, default: 15}, context_lines: {type: 'integer', minimum: 0, maximum: 40, default: 8}, timeout_ms: {type: 'integer', minimum: 1000, maximum: 60000, default: 30000}}, required: ['label']}, run: (g, a, ctx) => ts.tInspectSymbol(g, a, ctx)},
           {cap: 'source', refreshGraph: true, name: 'context_bundle', description: 'Return one compact, bounded source bundle for an exact symbol: definition, production-first inbound/outbound containers, exact re-export sites, on-demand TS/JS reference evidence and diverse excerpts around call sites. Use before an edit when query_graph would be too broad.', inputSchema: {type: 'object', properties: {label: {type: 'string', description: 'Exact node ID or unambiguous symbol label'}, precision: {type: 'string', enum: ['auto', 'graph', 'lsp'], default: 'auto'}, max_references: {type: 'integer', minimum: 1, maximum: 5000, default: 1000}, max_related: {type: 'integer', minimum: 1, maximum: 30, default: 10}, max_reexports: {type: 'integer', minimum: 1, maximum: 100, default: 20}, max_source_files: {type: 'integer', minimum: 1, maximum: 8, default: 4}, context_lines: {type: 'integer', minimum: 0, maximum: 12, default: 4}, include_classified: {type: 'boolean', default: false, description: 'Include test/e2e/generated/mock/story/docs/benchmark/temp callers after production callers'}, timeout_ms: {type: 'integer', minimum: 1000, maximum: 60000, default: 30000}}, required: ['label']}, run: (g, a, ctx) => tb.tContextBundle(g, a, ctx, ts.tInspectSymbol)},
-        {cap: 'health', name: 'find_duplicates', description: "Content-based clone detection over production code (MOSS winnowing over method bodies). Supports high-confidence small clones down to 12 tokens when min_tokens is lowered. Tests, classified non-product paths, and all-router framework boilerplate clone groups are excluded by default; opt them in explicitly.", inputSchema: {type: 'object', properties: {min_similarity: {type: 'integer', description: '50-100, default 80 (ignored in semantic mode)'}, min_tokens: {type: 'integer', minimum: 12, maximum: 400, description: 'min fragment size, 12-400; default 50'}, mode: {type: 'string', enum: ['renamed', 'strict', 'semantic'], default: 'renamed'}, include_tests: {type: 'boolean', default: false}, include_classified: {type: 'boolean', default: false, description: 'Include generated/mock/story/docs/benchmark/temp and paths explicitly classified as excluded; tests still require include_tests'}, include_boilerplate: {type: 'boolean', default: false, description: 'Include clone groups made entirely of conventional *.router.js/ts router symbols'}, include_strings: {type: 'boolean', description: 'Also clone-check large multi-line string literals', default: false}, top_n: {type: 'integer', default: 15}}}, run: (g, a, ctx) => th.tFindDuplicates(g, a, ctx)},
+        {cap: 'health', name: 'find_duplicates', description: "Content-based clone detection over production code (MOSS winnowing over method bodies). Supports high-confidence small clones down to 12 tokens when min_tokens is lowered. Tests, classified non-product paths, all-router framework boilerplate and immutable declarative catalogs are excluded by default; opt them in explicitly.", inputSchema: {type: 'object', properties: {min_similarity: {type: 'integer', description: '50-100, default 80 (ignored in semantic mode)'}, min_tokens: {type: 'integer', minimum: 12, maximum: 400, description: 'min fragment size, 12-400; default 50'}, mode: {type: 'string', enum: ['renamed', 'strict', 'semantic'], default: 'renamed'}, include_tests: {type: 'boolean', default: false}, include_classified: {type: 'boolean', default: false, description: 'Include generated/mock/story/docs/benchmark/temp and paths explicitly classified as excluded; tests still require include_tests'}, include_boilerplate: {type: 'boolean', default: false, description: 'Include clone groups made entirely of conventional *.router.js/ts router symbols'}, include_declarative: {type: 'boolean', default: false, description: 'Include repeated immutable array/object catalogs that contain no executable control flow'}, include_strings: {type: 'boolean', description: 'Also clone-check large multi-line string literals', default: false}, top_n: {type: 'integer', default: 15}}}, run: (g, a, ctx) => th.tFindDuplicates(g, a, ctx)},
         {cap: 'health', name: 'find_dead_code', description: 'Conservative review queue for statically unreferenced files, functions, methods and symbols. Returns confidence, reason, bounded evidence and explicit framework/dynamic/reflection/public-API caveats; never an auto-delete verdict. Tests, generated code, mocks, stories, docs, benchmarks and temporary roots are excluded by default.', inputSchema: {type: 'object', properties: {path: {type: 'string', maxLength: 1024, description: 'Optional repo-relative path prefix'}, kinds: {type: 'array', items: {type: 'string', enum: ['file', 'function', 'method', 'symbol']}, maxItems: 4, uniqueItems: true, description: 'Optional candidate kinds; defaults to all'}, min_confidence: {type: 'string', enum: ['high', 'medium', 'low'], default: 'medium', description: 'Minimum confidence to include. low explicitly includes public/framework/dynamic review candidates'}, include_tests: {type: 'boolean', default: false}, include_classified: {type: 'boolean', default: false, description: 'Include generated/mock/story/docs/benchmark/temp and paths explicitly classified as excluded; tests still require include_tests'}, top_n: {type: 'integer', minimum: 1, maximum: 100, default: 30}}}, run: (g, a, ctx) => th.tFindDeadCode(g, a, ctx)},
         {cap: 'health', name: 'run_audit', description: 'Core production-first repository Health review with an explicit capability/completeness matrix for structure, dependencies, bounded runtime-correctness/concurrency patterns, advisories, malware and coverage. Unsupported Maven/Gradle import verification is NOT_SUPPORTED/PARTIAL, never a clean zero. Findings whose evidence is entirely test/e2e/generated/mock/story/docs/benchmark/temp or explicitly excluded are suppressed by default; opt them in with include_classified. category=dependencies is a dedicated dependency-health projection across missing, unused and duplicate declarations while preserving each finding\'s native category. With base_ref, builds and audits an immutable Git checkout and compares stable deterministic finding IDs; debt defaults to genuinely new findings. Supply-chain checks remain explicitly uncomparable across the source-only baseline. changed_files without base_ref is only changed-scope, never a new-debt claim.', inputSchema: {type: 'object', properties: {category: {type: 'string', enum: ['dependencies', 'unused', 'structure', 'vulnerability', 'malware'], description: 'Only findings of this category; dependencies selects dependency manifest/import findings across native categories'}, min_severity: {type: 'string', enum: ['critical', 'high', 'medium', 'low', 'info'], description: 'Minimum severity to include'}, max_findings: {type: 'integer', description: 'Max findings to list, default 30'}, include_classified: {type: 'boolean', default: false, description: 'Include findings whose evidence is entirely tests/e2e/generated/mocks/stories/docs/benchmarks/temp or explicitly excluded'}, include_malware_scan: {type: 'boolean', description: 'Also grep installed packages for malware heuristics (slow)', default: false}, base_ref: {type: 'string', maxLength: 200, description: 'Optional immutable Git baseline (for example HEAD~1 or origin/main). Enables honest new/existing/fixed debt comparison'}, changed_files: {type: 'array', items: {type: 'string'}, minItems: 1, maxItems: 500, description: 'Optional explicit repo-relative scope. Without base_ref this is changed-scope only; when omitted with base_ref, files are derived from the Git diff'}, debt: {type: 'string', enum: ['new', 'existing', 'all'], default: 'new', description: 'Baseline comparison view. Defaults to genuinely new deterministic findings when base_ref is present'}}}, run: (g, a, ctx) => th.tRunAudit(g, a, ctx)},
         {cap: 'health', name: 'coverage_map', description: 'Map a real existing coverage report onto the graph. If no report exists, return clearly labelled static test reachability (a test imports/reaches a source file) with actualCoverage=NOT_AVAILABLE; reachability is never presented as measured coverage.', inputSchema: {type: 'object', properties: {top_n: {type: 'integer', description: 'Max risk hotspots to list, default 15'}, path: {type: 'string', description: 'Optional repo-relative path prefix filter, e.g. src/query'}}}, run: (g, a, ctx) => th.tCoverageMap(g, a, ctx)},
@@ -141,10 +139,6 @@ function buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps}) {
         {cap: 'health', name: 'propose_architecture_exception', description: 'Prepare, but never apply, a bounded exception proposal for human review.', inputSchema: {type: 'object', properties: {fingerprint: {type: 'string'}, reason: {type: 'string'}, expires: {type: 'string', description: 'Optional YYYY-MM-DD'}}, required: ['fingerprint', 'reason']}, run: (g, a, ctx) => tar.tProposeArchitectureException(g, a, ctx)},
         {cap: 'retarget', name: 'open_repo', description: 'OFFLINE RETARGET: switch this server to another local Git repository, building its graph when missing. This explicit tool call changes the active repository boundary; pass build:false to probe without building. Omitted mode/precision preserve an existing graph; a new graph uses full and the startup precision setting (lsp unless WEAVATRIX_PRECISION=off). Omit the retarget capability at registration to pin one repository.', inputSchema: {type: 'object', properties: {path: {type: 'string', description: 'Absolute path to a Git working tree'}, build: {type: 'boolean', description: 'Build the graph when missing (default true)', default: true}, mode: {type: 'string', enum: ['full', 'no-tests', 'tests-only'], description: 'Optional build mode override; omit to preserve an existing graph'}, precision: {type: 'string', enum: ['lsp', 'off'], description: 'Optional semantic precision override; omit to preserve an existing graph or use the startup setting for a new graph'}} , required: ['path']}, run: (g, a, ctx) => ta.tOpenRepo(g, a, ctx)},
         {cap: 'retarget', name: 'list_known_repos', description: 'OFFLINE RETARGET: list every registered local repository graph from the global per-user registry, regardless of parent folder.', inputSchema: {type: 'object', properties: {}}, run: (g, a, ctx) => ta.tListKnownRepos(g, a, ctx)},
-        {cap: 'advisories', name: 'refresh_advisories', description: "NETWORK / explicit advisories profile: refresh the local OSV advisory store for this repo's concrete npm/PyPI/Go/Maven/Gradle/Cargo package versions. Sends package names + versions to OSV.dev — never automatic, never source code. Afterwards run_audit reads the refreshed store fully offline (~/.weavatrix/advisories.json).", inputSchema: {type: 'object', properties: {timeout_ms: {type: 'integer', description: 'Per-request timeout, default 20000'}}}, run: (g, a, ctx) => ta.tRefreshAdvisories(g, a, ctx)},
-        {cap: 'hosted', name: 'pull_architecture_contract', description: 'NETWORK / explicit hosted profile: fetch the owner-approved target architecture for the active stable repository UUID, validate it and cache it locally. Sends only the opaque UUID with bearer auth; never source or paths. HTTP failures are returned as actionable AUTH_REQUIRED/FORBIDDEN/NOT_FOUND/REPOSITORY_NOT_READY states.', inputSchema: {type: 'object', properties: {timeout_ms: {type: 'integer', minimum: 1000, maximum: 120000, default: 30000}}}, run: (g, a, ctx) => ta.tPullArchitectureContract(g, a, ctx)},
-        {cap: 'hosted', name: 'preview_sync', description: 'LOCAL SAFETY PREVIEW / no network: serialize the exact bounded hosted payload, validate the HTTPS destination, and show hostname/path, repository UUID, fields, sections, node/edge counts, bytes and body hash. Returns a five-minute confirmation token for sync_graph. Source bodies, snippets, absolute paths, environment values, credentials, Git remotes and unknown fields are excluded.', inputSchema: {type: 'object', properties: {payload_version: {type: 'integer', enum: [2, 3], default: 3, description: '3 includes bounded architecture/health/stack/package evidence; 2 is explicit graph-only compatibility'}}}, run: (g, a, ctx) => ta.tPreviewSyncGraph(g, a, ctx)},
-        {cap: 'hosted', name: 'sync_graph', description: 'NETWORK / explicit hosted profile. Uploads only the exact payload created by preview_sync and requires dry_run:false plus its short-lived confirm_token after user approval. Calling without dry_run:false remains a no-network preview compatibility alias. Source bodies, snippets, absolute paths and unknown fields are never uploaded.', inputSchema: {type: 'object', properties: {payload_version: {type: 'integer', enum: [2, 3], default: 3, description: 'Used only when producing a compatibility preview; the approved token pins the exact serialized payload'}, dry_run: {type: 'boolean', default: true, description: 'Compatibility safety switch. Must be explicitly false to send.'}, confirm_token: {type: 'string', maxLength: 64, description: 'Short-lived token returned by preview_sync for the exact destination and payload'}, timeout_ms: {type: 'integer', minimum: 1000, maximum: 120000, default: 30000, description: 'Network timeout in milliseconds'}}}, run: (g, a, ctx) => ta.tSyncGraph(g, a, ctx)},
     ]
     // Every tool supports the same machine-output switch. Text mode is TextContent-only so large
     // analysis payloads are not duplicated into an agent's context; JSON opts into structuredContent
@@ -170,7 +164,7 @@ function buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps}) {
 // Import the tool modules (cache-busted when version > 0), build the catalog, apply the caps filter.
 // capsArg semantics: undefined/null = offline defaults; a
 // present string (even '') is an explicit selection, so "select nothing" really exposes nothing.
-export async function loadHotApi(version, capsArg) {
+export async function loadHotApi(version, capsArg, {extensions: extensionDefinitions = []} = {}) {
     const v = version ? `?v=${version}` : ''
     const [tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv] = await Promise.all([
         import(new URL(`./tools-graph.mjs${v}`, import.meta.url).href),
@@ -185,18 +179,50 @@ export async function loadHotApi(version, capsArg) {
         import(new URL(`./tools-company.mjs${v}`, import.meta.url).href),
         import(new URL(`./tools-verified-change.mjs${v}`, import.meta.url).href),
     ])
+    const extensions = normalizeWeavatrixExtensions(extensionDefinitions)
+    const extensionProfiles = Object.assign({}, ...extensions.map((extension) => extension.profiles))
+    for (const name of Object.keys(extensionProfiles)) {
+        if (Object.hasOwn(PROFILE_CAPS, name)) throw new TypeError(`extension profile collides with core profile: ${name}`)
+    }
+    const profiles = {...PROFILE_CAPS, ...extensionProfiles}
     const raw = capsArg == null ? 'offline' : String(capsArg).trim()
-    const profile = Object.hasOwn(PROFILE_CAPS, raw) ? raw : 'custom'
-    const selected = PROFILE_CAPS[raw] || raw.split(',').map((s) => s.trim()).filter(Boolean)
-        .flatMap((cap) => cap === 'online' ? ['advisories', 'hosted'] : [cap])
+    if (MOVED_PROFILES.has(raw) && !Object.hasOwn(extensionProfiles, raw)) {
+        throw new Error(`MCP profile "${raw}" moved to weavatrix-online; the MIT core exposes only offline network-free profiles`)
+    }
+    const profile = Object.hasOwn(profiles, raw) ? raw : 'custom'
+    const selected = profiles[raw] || raw.split(',').map((s) => s.trim()).filter(Boolean)
     const caps = new Set(selected)
-    const all = buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps})
+    const coreTools = buildTools({tg, ti, th, ts, tb, te, ta, tar, thi, tc, tv, caps})
+    const extensionTools = extensions.flatMap((extension) => extension.tools.map((tool) => ({...tool, extension: extension.name})))
+    const all = [...coreTools, ...extensionTools.map((tool) => ({
+        ...tool,
+        inputSchema: {
+            ...(tool.inputSchema || {type: 'object'}),
+            properties: {
+                ...(tool.inputSchema?.properties || {}),
+                output_format: {
+                    type: 'string', enum: ['text', 'json'], default: 'text',
+                    description: 'text returns concise TextContent; json also returns the stable structuredContent envelope',
+                },
+            },
+        },
+    }))]
+    const toolNames = new Set()
+    for (const tool of all) {
+        if (toolNames.has(tool.name)) throw new TypeError(`extension tool collides with an existing tool: ${tool.name}`)
+        toolNames.add(tool.name)
+    }
     const tools = all.filter((t) => caps.has(t.cap))
     return {
         tools,
         byName: new Map(tools.map((t) => [t.name, t])),
         caps,
         profile,
+        extensions: {
+            items: extensionRuntimeSummary(extensions),
+            auditProviders: extensions.flatMap((extension) => extension.auditProviders.map((provider) => ({...provider, extension: extension.name}))),
+            skills: extensions.flatMap((extension) => extension.skills.map((skill) => ({...skill, extension: extension.name}))),
+        },
         stalenessLine,
         resetStalenessCache,
     }

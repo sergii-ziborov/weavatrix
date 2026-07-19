@@ -200,26 +200,26 @@ test("internal audit maps Java imports to Maven and Gradle declarations with rev
     });
 
     assert.equal(audit.ok, true);
-    assert.equal(audit.dependencyReport.status, "COMPLETE");
+    assert.equal(audit.dependencyReport.status, "PARTIAL");
     assert.equal(audit.dependencyReport.ecosystems.maven.status, "CHECKED");
-    assert.equal(audit.dependencyReport.ecosystems.maven.completeness, "COMPLETE");
+    assert.equal(audit.dependencyReport.ecosystems.maven.completeness, "PARTIAL");
     assert.equal(audit.dependencyReport.ecosystems.maven.declared, 2);
     assert.equal(audit.dependencyReport.ecosystems.gradle.status, "CHECKED");
-    assert.equal(audit.dependencyReport.ecosystems.gradle.completeness, "COMPLETE");
+    assert.equal(audit.dependencyReport.ecosystems.gradle.completeness, "PARTIAL");
     assert.equal(audit.dependencyReport.ecosystems.gradle.declared, 1);
     assert.equal(audit.dependencyReport.declared, 3);
     assert.equal(audit.dependencyReport.missing, 0, "an unmapped Java package must not become a false npm missing-dependency finding");
     assert.equal(audit.dependencyReport.unused, 2);
-    assert.match(audit.dependencyReport.reason, /complete supported manifest-to-import evidence/);
+    assert.match(audit.dependencyReport.reason, /partial/);
     assert.equal(audit.healthCapabilities.dependencies.status, "CHECKED");
-    assert.equal(audit.healthCapabilities.dependencies.completeness, "COMPLETE");
+    assert.equal(audit.healthCapabilities.dependencies.completeness, "PARTIAL");
     assert.equal(audit.healthCapabilities.advisories.status, "NOT_CHECKED");
     assert.equal(audit.healthCapabilities.malware.status, "NOT_SUPPORTED");
     assert.equal(audit.healthCapabilities.coverage.status, "NOT_SUPPORTED");
     assert.equal(audit.healthCapabilities.concurrency.status, "CHECKED");
     assert.match(audit.healthCapabilities.concurrency.detail, /No race detector ran/);
     const text = formatOrdinaryAudit(audit, {});
-    assert.match(text, /Dependency manifests: COMPLETE/);
+    assert.match(text, /Dependency manifests: PARTIAL/);
     assert.match(text, /checked 3 declared package/);
     assert.match(text, /unused 2, missing 0/);
   } finally {
@@ -250,7 +250,7 @@ test("mixed npm and Maven dependency summary reports both checked ecosystems", a
       skipMalwareScan: true,
     });
 
-    assert.equal(audit.dependencyReport.status, "COMPLETE");
+    assert.equal(audit.dependencyReport.status, "PARTIAL");
     assert.equal(audit.dependencyReport.ecosystems.npm.status, "CHECKED");
     assert.equal(audit.dependencyReport.ecosystems.maven.status, "CHECKED");
     const text = formatOrdinaryAudit(audit, {});

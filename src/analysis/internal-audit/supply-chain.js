@@ -3,6 +3,7 @@ import { advisoryQueryFingerprint, loadStore, queryStore } from "../../security/
 import { matchAdvisories } from "../../security/match.js";
 import { scanMalware } from "../../security/malware-heuristics.js";
 import { classifyTyposquat } from "../../security/typosquat.js";
+import { loadRustAdvisoryReport } from "../../security/rust-advisory-report.js";
 import { makeFinding } from "../findings.js";
 import { packageReachability } from "../package-reachability.js";
 
@@ -31,8 +32,9 @@ export async function runSupplyChainChecks(repoPath, {
   let installedCount = 0;
   let inst = { installed: [], drift: [] };
   const checks = {
-    osv: { status: "NOT_CHECKED", detail: "Advisory cache was never refreshed for this repository. Enable the osv profile (or advisories capability), then call refresh_advisories explicitly to opt in to sending pinned package names and versions to OSV.dev." },
+    osv: { status: "NOT_CHECKED", detail: "Advisory cache was never refreshed for this repository. The MIT core remains offline; use the separate Weavatrix Online connector only if you choose to query OSV with pinned package names and versions." },
     malware: { status: skipMalwareScan ? "NOT_CHECKED" : "PENDING", detail: skipMalwareScan ? "Installed-package malware scan is opt-in and was not requested." : "" },
+    rustsec: { status: "NOT_CHECKED", detail: "No saved cargo audit --json report was inspected." },
   };
 
   try {
@@ -48,7 +50,7 @@ export async function runSupplyChainChecks(repoPath, {
       const coverage = typeof repoStamp === "object" && Number.isFinite(repoStamp.queried)
         ? ` (${repoStamp.queried_ok ?? repoStamp.queried}/${repoStamp.queried} package versions queried successfully)`
         : "";
-      const drift = fingerprintMatches ? "" : " Dependency versions changed, or this is a legacy stamp without a package fingerprint; enable the osv profile (or advisories capability) and call refresh_advisories for complete coverage.";
+      const drift = fingerprintMatches ? "" : " Dependency versions changed, or this is a legacy stamp without a package fingerprint; refresh through the separate Weavatrix Online connector for complete advisory coverage.";
       checks.osv = {
         status,
         detail: `${status === "PARTIAL" ? "Partially matched" : "Matched"} installed packages against the cached OSV snapshot from ${advisoryDbDate}${coverage}.${drift}`,
@@ -112,6 +114,19 @@ export async function runSupplyChainChecks(repoPath, {
         version: item.installed,
         source: "internal",
         fixHint: "npm ci (clean install from the lockfile)",
+      }));
+    }
+    const rustsec = loadRustAdvisoryReport(repoPath);
+    checks.rustsec = { status: rustsec.status, detail: rustsec.detail, checkedAt: rustsec.checkedAt || null };
+    for (const issue of rustsec.findings) {
+      findings.push(makeFinding({
+        category: "vulnerability", rule: issue.kind === "vulnerability" ? "known-vuln" : "rust-advisory-warning",
+        severity: issue.kind === "vulnerability" ? "high" : "medium", confidence: "high",
+        title: `${issue.id}: ${issue.package}${issue.version ? `@${issue.version}` : ""}`,
+        detail: `${issue.title}${issue.patched.length ? ` Patched: ${issue.patched.join(", ")}.` : ""}`,
+        package: issue.package, version: issue.version, source: "rustsec",
+        evidence: issue.url ? [{ file: issue.url, line: 0, snippet: `imported from ${rustsec.file}` }] : [{ file: rustsec.file, line: 0, snippet: issue.id }],
+        fixHint: issue.patched.length ? `upgrade ${issue.package} to a patched RustSec range (${issue.patched.join(", ")})` : `review or replace ${issue.package}; no patched range was reported`,
       }));
     }
   } catch (error) {

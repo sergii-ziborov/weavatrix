@@ -28,8 +28,7 @@ test('hot reload watches every direct owner introduced by facade splits', () => 
     'graph/tools-core.mjs', 'graph/tools-query.mjs', 'tools-graph-hubs.mjs',
     'health/duplicates.mjs', 'health/dead-code.mjs', 'health/audit-format.mjs',
     'health/audit.mjs', 'health/structure.mjs', 'health/endpoints.mjs',
-    'actions/graph-lifecycle.mjs', 'actions/advisories.mjs',
-    'actions/hosted-architecture.mjs', 'actions/graph-sync.mjs',
+    'actions/graph-lifecycle.mjs',
     'architecture-starter.mjs', 'architecture-bootstrap.mjs',
   ]
   for (const owner of owners) assert.ok(HOT_FILES.includes(owner), owner)

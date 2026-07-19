@@ -5,7 +5,26 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseCargoLockPackages, parseCargoToml } from "../src/analysis/cargo-manifests.js";
 import { parseGradleDependencies, parseGradleLockPackages, parseGradleVersionCatalog, parseMavenPom } from "../src/analysis/jvm-manifests.js";
+import { collectJvmArtifactIndex, readJarClassNames } from "../src/analysis/jvm-artifact-index.js";
 import { collectInstalled } from "../src/security/installed.js";
+
+function centralDirectoryJar(names) {
+  const entries = names.map((name) => {
+    const encoded = Buffer.from(name);
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(encoded.length, 28);
+    return Buffer.concat([header, encoded]);
+  });
+  const central = Buffer.concat(entries);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(0, 16);
+  return Buffer.concat([central, end]);
+}
 
 test("Cargo manifests resolve renamed/workspace declarations and Cargo.lock yields crates.io pins", () => {
   const manifest = parseCargoToml(`
@@ -52,6 +71,20 @@ test("Maven properties and Gradle version catalogs/locks resolve concrete artifa
     ["org.slf4j:slf4j-api", "2.0.13"],
   ]);
   assert.deepEqual(parseGradleLockPackages("org.slf4j:slf4j-api:2.0.13=runtimeClasspath\n").map((item) => item.name), ["org.slf4j:slf4j-api"]);
+});
+
+test("installed JVM JAR central directories give exact import-to-artifact ownership without executing Java", () => {
+  const home = mkdtempSync(join(tmpdir(), "weavatrix-jvm-cache-"));
+  try {
+    const jar = join(home, ".m2", "repository", "org", "slf4j", "slf4j-api", "2.0.13", "slf4j-api-2.0.13.jar");
+    mkdirSync(join(jar, ".."), { recursive: true });
+    writeFileSync(jar, centralDirectoryJar(["org/slf4j/Logger.class", "org/slf4j/impl/Helper$Nested.class"]));
+    assert.deepEqual([...readJarClassNames(jar).classes], ["org.slf4j.Logger", "org.slf4j.impl.Helper.Nested"]);
+    const index = collectJvmArtifactIndex([{ group: "org.slf4j", artifact: "slf4j-api", name: "org.slf4j:slf4j-api", version: "2.0.13" }], { home });
+    assert.equal(index.artifactsIndexed, 1);
+    assert.deepEqual(index.resolve("org.slf4j.Logger"), ["org.slf4j:slf4j-api"]);
+    assert.deepEqual(index.resolve("org.slf4j.*"), ["org.slf4j:slf4j-api"]);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test("collectInstalled scans deeply nested Cargo, Maven, Gradle, Python, and Go package evidence", () => {

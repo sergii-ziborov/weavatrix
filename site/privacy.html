@@ -7,20 +7,7 @@
 <meta name="description" content="Weavatrix privacy policy: local-first defaults, explicit opt-in network tools, and the access-controlled hosted preview.">
 <link rel="canonical" href="https://weavatrix.com/privacy">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>
-  :root { --bg: #0b0d14; --text: #e8eaf6; --muted: #9aa0c0; --accent2: #40e0c8; --line: #23284a; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font: 16px/1.7 system-ui, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
-  a { color: var(--accent2); text-decoration: none; }
-  h1 { font-size: 32px; margin-bottom: 6px; }
-  .date { color: var(--muted); font-size: 14px; margin-bottom: 36px; }
-  h2 { font-size: 20px; margin: 32px 0 10px; }
-  p, li { color: var(--muted); }
-  ul { padding-left: 22px; margin: 10px 0; }
-  code { font-family: ui-monospace, Consolas, monospace; color: var(--accent2); font-size: 14px; }
-  .back { display: inline-block; margin-bottom: 28px; font-size: 14px; }
-</style>
+<link rel="stylesheet" href="/legal.css">
 </head>
 <body>
 <div class="wrap">
@@ -33,7 +20,8 @@
   by default. Each response includes transient local execution/output/freshness metrics for the caller;
   Weavatrix does not persist, aggregate or transmit them as telemetry. Network tools are absent from
   the default profile. Any request
-  requires an explicit profile choice and tool call; graph upload also requires a configured destination.</p>
+  is not implemented by the MIT package. Online requests require the separately installed
+  <code>weavatrix-online</code> product, a configured destination and an explicit tool call.</p>
 
   <h2>What the software processes</h2>
   <p>The Weavatrix MCP server analyzes source code repositories on your own computer. All analysis
@@ -50,7 +38,8 @@
   configuration, dependencies and type declarations. It makes no Weavatrix network request and can be
   disabled with <code>WEAVATRIX_PRECISION=off</code>.</p>
 
-  <h2>Network-capable features (opt-in)</h2>
+  <h2>Separate network-capable product (opt-in)</h2>
+  <p>The following tools belong to <code>weavatrix-online</code>, not to the MIT core:</p>
   <ul>
     <li><code>refresh_advisories</code> — when the tool is invoked, the names and versions of
     packages pinned in your lockfiles are sent to <a href="https://osv.dev">OSV.dev</a> (a Google-run
@@ -73,10 +62,9 @@
     embedded URL credentials and fragments are rejected. Merely enabling the group or requesting a
     preview does not upload anything.</li>
   </ul>
-  <p>The <code>offline</code> and <code>pinned</code> profiles expose none of these tools.
-  <code>osv</code> exposes only <code>refresh_advisories</code>; <code>hosted</code> and
-  <code>full</code> expose all three. The former <code>online</code> name is a compatibility alias.
-  Enabling a profile alone sends nothing.</p>
+  <p>The MIT core exposes only <code>offline</code> and <code>pinned</code>. Legacy <code>osv</code>,
+  <code>hosted</code>, <code>full</code> and <code>online</code> profile names fail loudly and direct the
+  caller to the separate Online MCP. Enabling Online alone sends nothing.</p>
 
   <h2>Optional Weavatrix Hosted preview</h2>
   <p>If you explicitly configure <code>app.weavatrix.com</code> as the sync destination, inspect the

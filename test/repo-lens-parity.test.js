@@ -42,13 +42,12 @@ test("default MCP profile never regresses below the portable Repo Lens baseline"
   );
 });
 
-test("Repo Lens app analysis actions retain direct portable MCP paths", async () => {
-  const api = await loadHotApi(0, "full");
+test("Repo Lens app analysis actions retain direct portable offline MCP paths", async () => {
+  const api = await loadHotApi(0, "offline");
   const available = new Set(api.tools.map((tool) => tool.name));
   const scenarioPaths = {
     rebuild_graph: ["rebuild_graph"],
     run_health: ["run_audit"],
-    refresh_advisories: ["refresh_advisories"],
     measure_coverage: ["verified_change", "coverage_map"],
     find_duplicates: ["find_duplicates"],
   };

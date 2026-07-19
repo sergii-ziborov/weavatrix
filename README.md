@@ -7,42 +7,38 @@ inheritance, health findings, clone families and Git-history coupling. It gives 
 or any MCP client a bounded map for fast application understanding and lower repeated context, then
 reuses the same graph for change impact, Health, dead-code review, duplicates, history and intended-
 architecture safeguards. Text search is included as a supporting source check, not the product core.
-**38 tools available; 34 enabled by the default offline profile. Local-first: with
-the defaults, no repository data leaves your machine.**
+**34 network-free tools. No repository data leaves your machine.**
 
 - Website: [weavatrix.com](https://weavatrix.com)
 - Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
 - npm: [`weavatrix`](https://www.npmjs.com/package/weavatrix) — `npx -y weavatrix <repoRoot>`
 
-## 0.3 boundary: offline stays MIT
+## 0.3: the MIT core
 
-The next major boundary makes this package the complete offline engine: graph,
+This package is the complete offline engine: graph,
 local semantic precision, Health, dependencies, duplicates, impact, history and
 architecture safeguards remain here under the existing MIT license. The MIT
 license is not changing.
 
-Every outbound HTTP capability moves to a separately versioned public package,
+Every outbound HTTP capability belongs to the separately versioned package
 `weavatrix-online`, beginning at 0.1.0. That connector targets either the
 managed Weavatrix Cloud or a commercially licensed self-hosted Weavatrix
-Enterprise deployment through one source-free wire contract. It is a thin
-extension of this package, not a fork of the parser/graph/Health engine, so core
-updates arrive as normal dependency updates.
+Enterprise deployment through one source-free wire contract. It is an expanded
+superset that depends on this package, not a fork: it may add proprietary tools,
+skills and analyzers through the supported extension API while graph/parser/LSP/
+Health fixes continue to ship once in the MIT core.
 
-Version 0.2.19 still contains the explicit opt-in compatibility profiles
-documented below. The paired 0.3/0.1 release removes their network
-implementations from this package; until then the new connector is not
-publishable. The decision and release gates are in
+The decision and release gates are in
 [docs/adr/0001-v0.3-offline-online-split.md](docs/adr/0001-v0.3-offline-online-split.md).
 
 ## One graph, many views
 
-The 38 MCP methods are not one linear workflow. They project the same reusable graph into the
+The 34 MCP methods are not one linear workflow. They project the same reusable graph into the
 smallest view needed for a task: repository and build state; modules, communities, hubs, neighbors
 and paths; exact symbols and bounded source context; endpoint and cross-repository API flow; symbol
 and change-set blast radius; graph revision and behavioral Git history; Health, dependencies,
 vulnerabilities, dead code, clones, coverage and hot paths; proof-carrying change verification;
-intended-architecture contracts and ratchets; local multi-repository work; and explicit,
-preview-confirmed Hosted exchange.
+intended-architecture contracts and ratchets; and local multi-repository work.
 
 ## Why
 
@@ -234,38 +230,29 @@ startup_timeout_sec = 20
 tool_timeout_sec = 60
 ```
 
-The package has one binary and several explicit security profiles. The omitted profile is `offline`:
-all local analysis plus `open_repo`, with every HTTP tool absent. Pass one profile as the final
-argument when a stricter repository boundary or a network feature is wanted:
+The package has one binary and two local security profiles. The omitted profile is `offline`:
+all local analysis plus `open_repo`. Pass `pinned` as the final argument for a stricter repository
+boundary:
 
-| Profile | Local repository switching | Cross-repo graph reads | OSV requests | Hosted sync / contract pull |
-|---|---:|---:|---:|---:|
-| `offline` (default) | Yes, only through `open_repo` | Yes, only through `trace_api_contract` | No | No |
-| `pinned` | No | No | No | No |
-| `osv` | Yes | Yes, only when called | Only when `refresh_advisories` is called | No |
-| `hosted` / `full` | Yes | Yes, only when called | Only when called | `preview_sync` is local; only `sync_graph` or `pull_architecture_contract` can make a request |
+| Profile | Local repository switching | Cross-repo graph reads | Network requests |
+|---|---:|---:|---:|
+| `offline` (default) | Yes, only through `open_repo` | Yes, only through `trace_api_contract` | None |
+| `pinned` | No | No | None |
 
 ```sh
 # Hard-pin one repository and expose no network tools:
 claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot> pinned
 
-# Add only explicit OSV refresh:
-claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot> osv
-
-# Enable the owner-authenticated hosted workflow:
-claude mcp add -s user weavatrix -- npx -y weavatrix <repoRoot> hosted
 ```
 
 Advanced registrations may still pass an exact comma-separated capability set:
-`graph,search,source,health,build,retarget,crossrepo,advisories,hosted`. The former `online` capability remains
-a compatibility alias for `advisories,hosted`; new registrations should use the named profiles or
-the narrower capability names.
+`graph,search,source,health,build,retarget,crossrepo`. The former `online`, `osv`, `hosted` and `full`
+profiles fail loudly and direct the user to `weavatrix-online`; none can re-enable HTTP in this artifact.
 
 After an upgrade, reconnect the MCP server or start a new agent task before checking its tool list:
 many clients snapshot `tools/list` and input schemas for the lifetime of one connection. The expected
-counts are 31 for `pinned`, 34 for `offline`, 35 for `osv`, and all 38 for `hosted` / `full`. A custom
-capability list must include `crossrepo` to expose `trace_api_contract`; `online` alone adds only the
-legacy advisory/Hosted groups. `graph_stats` reports the running package version, enabled capabilities
+counts are 31 for `pinned` and 34 for `offline`. A custom capability list must include `crossrepo` to
+expose `trace_api_contract`. `graph_stats` reports the running package version, enabled capabilities
 and registered-tool count so a cached process can be distinguished from the installed package.
 
 Or clone it:
@@ -347,7 +334,7 @@ lockfile drift; accepts an immutable `base_ref`, `changed_files`, and `debt: new
 review-scoped results; production paths are the default and `include_classified:true` opts into
 test/generated/docs evidence), `find_duplicates` (MOSS winnowing over method bodies — catches copy-paste even
 after renames and can inspect strict small clones down to 12 tokens; homogeneous router boilerplate
-is suppressed unless `include_boilerplate:true`), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
+is suppressed unless `include_boilerplate:true`; immutable declarative catalog shapes require `include_declarative:true`), `coverage_map` (existing coverage reports mapped onto the graph; untested hotspots
 ranked by connectivity — tests are never executed), `hot_path_review` (bounded local-cost evidence
 with separate graph/test risk), `verify_architecture`,
 `explain_architecture_violation`, `propose_architecture_exception`
@@ -411,13 +398,9 @@ are hidden unless `include_low_signal:true`. Broad ranking remains orientation e
 `seed_files`, `seed_symbols`, an exact endpoint, or `inspect_symbol` when the intended entry point is already known.
 Instruction words such as “REST”, “path”, and “inspect” do not become fuzzy code seeds.
 
-**advisories** *(network, explicit opt-in)* — `refresh_advisories`
-
-**hosted** *(explicit opt-in; preview is local, send/pull are networked)* — `preview_sync`,
-`pull_architecture_contract`, `sync_graph`. `preview_sync` performs no request and returns the destination,
-repository UUID, exact payload fields/sections/size/hash and a short-lived confirmation token for
-the cached payload. `sync_graph` sends only with both that token and `dry_run:false`; its legacy
-dry-run form remains a no-network compatibility alias.
+Remote advisory refresh, source-free sync and shared architecture-contract exchange are supplied by
+the separate `weavatrix-online` superset. The core keeps offline advisory matching and the local
+extension services used to validate imported records and source-free payloads.
 
 Quality of life: graph/health reads auto-reconcile and expose `none` / `incremental` / `full`
 freshness, with a short clean-read debounce to avoid rescanning the repository for every tool call;
@@ -429,6 +412,21 @@ time, output bytes/token estimate, graph freshness/revision/update and graph-cac
 metrics are not persisted or transmitted by Weavatrix. If a source checkout's package version moves
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
+
+### 0.3.0 network-free core and exact dependency evidence
+
+- The MIT package now contains 34 local tools and no outbound HTTP implementation. Online OSV,
+  Cloud and licensed self-hosted workflows live in the separately installed `weavatrix-online`
+  0.1.0 superset, which depends on this core through a supported extension API.
+- Cargo.lock provides exact crates.io pins; saved `cargo audit --json` results add RustSec evidence.
+  Missing or stale advisory evidence stays incomplete.
+- Maven/Gradle imports map to exact class ownership from already installed JARs. Missing JARs,
+  unresolved build expressions and heuristic fallbacks are `PARTIAL`, never a false `COMPLETE`.
+- Real self-dogfood produced persisted `EXACT_LSP` edges and an exact direct caller for
+  `startMcpServer`; GraphQL, gRPC and event/Kafka contract joins remain explicit about dynamic
+  `UNKNOWN` targets.
+
+Full patch notes: [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md).
 
 ### 0.2.19 supply-chain signal precision
 
@@ -758,9 +756,36 @@ scope; ambiguous same-name definitions are skipped and reported as incomplete ev
 
 The same tool can select GraphQL, gRPC or event evidence. It joins static GraphQL schema fields and
 operations, proto service methods and typed stub calls, and static Kafka/event-bus topic producers
-and consumers across registered repositories. Computed URLs, runtime configuration, dynamic
-GraphQL documents/topics, reflection and dynamic stubs remain `UNKNOWN`; they are not converted into
-an absence claim.
+and consumers across registered repositories. It also imports a bounded, source-free
+`weavatrix.transport-runtime.v1` report from each repository. Normalized observations and OTLP JSON
+spans can confirm runtime GraphQL fields, gRPC service/methods and Kafka/event destinations. A report
+must match the active `graphRevision`, be fresh, declare per-transport capture completeness and map
+dynamic observations to a repository-relative file/line before that exact `UNKNOWN` is resolved.
+
+The default report paths are `.weavatrix/transport-runtime.json` and
+`.weavatrix/reports/transport-runtime.json`; `runtime_evidence_files` can select another contained
+path per repository label/UUID. The minimum envelope is:
+
+```json
+{
+  "schema": "weavatrix.transport-runtime.v1",
+  "repositoryRevision": "<active graphRevision>",
+  "generatedAt": "2026-07-19T12:00:00.000Z",
+  "coverage": { "graphql": "COMPLETE", "grpc": "COMPLETE", "event": "COMPLETE" },
+  "observations": [
+    { "transport": "graphql", "side": "client", "operation": "QUERY", "name": "viewer", "file": "src/api.ts", "line": 42 },
+    { "transport": "grpc", "side": "server", "service": "User", "name": "GetUser" },
+    { "transport": "event", "side": "publisher", "name": "user.created" }
+  ]
+}
+```
+
+OTLP `resourceSpans` may be placed at the envelope root or under `otlp`; standard `rpc.*`,
+`graphql.*`, `messaging.*` and `code.*` span attributes are normalized. Missing, stale, mismatched,
+partial or uncorrelated runtime evidence stays `PARTIAL`/`UNKNOWN`; it is never converted into an
+absence claim. The two default report files are excluded from the graph file universe so they do not
+change the revision they attest; a custom report path must be Git-ignored. Reports must omit payloads,
+headers, source text and credentials.
 
 Persistent per-client-repository configuration lives in `.weavatrix.json`:
 
@@ -819,53 +844,24 @@ Graph queries, audits, clone scans and repository switching run locally. The def
 is `graph,search,source,health,build,retarget,crossrepo`: no Weavatrix HTTP requests. `open_repo`
 changes the active local boundary only when called. Select `pinned` to remove repository switching,
 global repository listing, and cross-repository graph tracing too.
-Weavatrix itself initiates outbound HTTP only from three tools; all are absent from `offline` and
-`pinned`, and none runs merely because a profile is enabled:
-
-- `refresh_advisories` — queries [OSV.dev](https://osv.dev) with your lockfile's package
-  **names + versions** (that is what an OSV query is; never source code) and caches the advisories
-  in `~/.weavatrix/advisories.json`. `run_audit` then matches against that store fully offline.
-- `pull_architecture_contract` — sends the active repository's opaque stable UUID with bearer
-  authentication, downloads the owner-approved target-architecture contract, validates it, and
-  stores the contract in the local graph cache. It sends no source, symbol, or repository path.
-- `preview_sync` — builds a bounded evidence snapshot locally without sending anything. The preview
-  shows the destination host/path, normalized repository name, opaque UUID,
-  payload version, exact top-level fields, included sections, node/link/byte counts and canonical
-  SHA-256 hash. A `sync_graph` call with `dry_run:false` and its exact short-lived `confirm_token` sends
-  the cached payload to the same destination. A token alone does not send while the default dry-run
-  remains active. It
-  sends payload v3: the v2 graph
-  allowlist plus module dependencies, runtime/compile-time cycles, declared boundary violations,
-  health findings, complexity-threshold breaches, stack identifiers, a bounded direct/transitive
-  dependency graph, direct package usage, and bounded clone/divergence review candidates. Local
-  analyzers may read repository source and manifests to derive those
-  facts. The wire contract has no fields for file bodies, snippets, absolute host paths, environment
-  values or Git remotes; unknown fields are discarded and unsafe optional path metadata is omitted.
-  The confirmed request also carries the normalized repository display name used by the
-  hosted list. The endpoint is **yours**, configured through `WEAVATRIX_SYNC_URL` and the optional
-  `WEAVATRIX_SYNC_TOKEN`; the feature is off by default. Pass `payload_version: 2` only for an
-  intentional graph-only compatibility sync—there is no silent downgrade that discards evidence.
-  Graphs that predate current typed-edge/provenance metadata must be rebuilt once before V3 sync;
-  V3 also refuses a stale graph so
-  source-derived evidence cannot be mixed with old topology. HTTPS is required except for an
-  explicitly configured loopback endpoint; embedded URL credentials and fragments are rejected.
+Weavatrix 0.3 itself initiates no outbound HTTP. It can validate a connector-provided advisory cache,
+construct a bounded source-free payload locally and cache a validated architecture contract, but
+those local extension services have no transport or credential input. The separately installed
+`weavatrix-online` superset owns OSV requests, Cloud/Enterprise authentication, capability
+negotiation, consent and synchronization. It depends on this MIT core and may add proprietary tools,
+skills and local analyzers without replacing baseline implementations.
 
 Evidence sections carry independent `state` (`COMPLETE`, `PARTIAL`, `NOT_CHECKED`,
 `NOT_APPLICABLE`, `ERROR`) and `verdict` (`PASS`, `FAIL`, `UNKNOWN`) fields plus exact
 `total/returned/truncated` counts. An incomplete check is never converted into a clean zero. V3 is
 deterministic: volatile timestamps are excluded and the allowlisted snapshot has a canonical SHA-256
-fingerprint, so identical evidence does not manufacture a hosted revision. The client mirrors the
-hosted 8 MiB / 25,000-node / 100,000-edge / 50,000-external-import safety limits before networking.
+fingerprint. This local service exists so a separately licensed connector can reuse the same bounded
+wire validation without duplicating core logic; it cannot send the payload itself.
 
-If a network tool is not listed by the MCP client, that is the expected offline default. With the
-user's approval, select `osv` for advisory refresh only or `hosted` for the hosted workflow,
-restart/reconnect the MCP server, and then invoke the intended tool. Enabling a profile does not
-trigger a request by itself.
-
-Profiles (`offline`, `pinned`, `osv`, `hosted`, `full`) or exact capability groups (`graph`,
-`search`, `source`, `health`, `build`, `retarget`, `crossrepo`, `advisories`, `hosted`) are selectable through
-the final positional argument. Omitted caps use `offline`; an explicit capability list exposes
-exactly the named groups. Legacy `online` expands to `advisories,hosted` for compatibility.
+Profiles (`offline`, `pinned`) or exact local capability groups (`graph`, `search`, `source`, `health`,
+`build`, `retarget`, `crossrepo`) are selectable through the final positional argument. Omitted caps
+use `offline`; an explicit capability list exposes exactly the named groups. Legacy network profile
+names fail loudly and direct the user to `weavatrix-online`.
 
 ## Security model
 
@@ -874,12 +870,12 @@ vulnerability findings. This is where each capability comes from and how it is c
 
 | Capability alert | Why it exists | Activation and boundary |
 |---|---|---|
-| Network access | `refresh_advisories` sends pinned package names and versions to OSV; `pull_architecture_contract` sends an opaque repository UUID and receives an owner-approved contract; confirmed `sync_graph` sends a normalized repository label plus an allowlisted graph/evidence payload. Evidence is derived locally from source and manifests, but source bodies, snippets, absolute paths, environment values, credentials and Git remotes are excluded | `offline` and `pinned` expose no network tools. `osv` exposes only advisory refresh. `hosted`/`full` expose all three. Sync defaults to a no-network dry-run and then requires both `dry_run:false` and its exact short-lived token; hosted calls require `WEAVATRIX_SYNC_URL`, and non-loopback hosted endpoints require HTTPS |
+| Network access | None in the MIT core | `offline` and `pinned` expose only local tools; Online/Cloud/Enterprise integration is a separate package |
 | Shell access | Local `git` powers staleness/change impact; `rg` accelerates search; the bundled TLS/tsserver process supplies bounded JS/TS semantic evidence; timed-out Windows child trees may be terminated; `verified_change` can optionally run an existing package test/check/verify script | The semantic provider never invokes repository code. Test execution separately requires `run_tests:true` plus `WEAVATRIX_ALLOW_TEST_RUNS=1`, rejects arbitrary commands and shell-sensitive arguments, and should be enabled only for trusted repository scripts |
 | Debug / dynamic loading | Cache-busted `import()` hot-reloads watched MCP tool entry modules; `createRequire` loads package metadata and parser dependencies | Loads files from the installed package; no `eval` |
-| Environment access | Reads `WEAVATRIX_*` configuration; ordinary local helpers inherit a credential-stripped environment, while TLS/tsserver receives only allowlisted OS/temp/locale values and a constrained executable path | `WEAVATRIX_SYNC_TOKEN` is removed from every child-process and worker environment. TLS/tsserver also receives no registry/proxy/cloud credentials or `NODE_OPTIONS` |
+| Environment access | Reads local `WEAVATRIX_*` runtime settings; ordinary helpers inherit a credential-stripped environment, while TLS/tsserver receives only allowlisted OS/temp/locale values and a constrained executable path | Connector secrets are removed from child-process and worker environments. TLS/tsserver also receives no registry/proxy/cloud credentials or `NODE_OPTIONS` |
 | Filesystem access | Reads the active repository, graph, lockfiles and coverage reports; writes derived graphs and advisory/architecture caches | Realpath containment blocks traversal and symlink/junction escapes. The `pinned` profile removes `open_repo`; the default `offline` profile permits only explicit local switching. The optional malware dependency scan may inspect installed dependency caches such as GOPATH |
-| URL strings | Fixed OSV/documentation URLs plus a user-configured sync URL | A URL string causes no request by itself; only the three network-profile tools perform requests |
+| URL strings | Advisory findings may contain fixed OSV documentation links | The core has no outbound request implementation |
 
 `read_source` accepts repo-relative regular files only, caps a read at 2 MB, and refuses lexical or
 realpath escapes. Graph-derived paths pass through the same boundary before analysis tools read
@@ -923,8 +919,9 @@ loader) behind the thin stdio entry `src/mcp-server.mjs`.
   cross-repository wrapper/liveness fixture, framework/convention fixture, full MCP lifecycle gate
   and a portable real-repository runner. Six source-free 0.2.1 real-repository baselines are
   recorded; edge provenance is gated end-to-end and the strict six-repository release command passes.
-- **Cross-transport contracts** cover bounded HTTP wrappers plus static GraphQL, gRPC and event-bus
-  identities across registered local repositories, with explicit runtime/dynamic unknown states.
+- **Cross-transport contracts** combine bounded HTTP/static models with revision-bound GraphQL,
+  gRPC and Kafka/event runtime or OTLP evidence; unobserved dynamic identities stay explicit
+  `UNKNOWN`.
 - **Hosted architecture workbench** at
   [app.weavatrix.com](https://app.weavatrix.com) is an access-controlled preview for
   owner-authenticated source-free evidence and revision history. Its UI and backend evolve

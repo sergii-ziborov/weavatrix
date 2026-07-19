@@ -1,221 +1,173 @@
-// Local advisory cache for supply-chain scanning. SCANS are 100% offline (read this store only);
-// REFRESH is an explicit, user-triggered online call to OSV.dev (it necessarily sends the installed
-// package names+versions — surfaced in the UI, never automatic). OSV is the single source: CVE/GHSA
-// vulnerabilities AND OSSF malicious-package records (MAL-*) come through one schema/one matcher.
-//
-// Storage is a JSON file, not SQLite — deliberate P4 deviation from the plan: we cache advisories for
-// THIS machine's installed packages (hundreds of records), not the full npm snapshot (that's what
-// needed SQLite), and better-sqlite3 here is built for Electron's ABI so plain-node tests couldn't
-// load it. Same API surface; swap to SQLite if/when a full baked snapshot ships (P6).
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
-import { createHash } from "node:crypto";
-import { uniqueBy } from "../util.js";
+// Offline advisory cache. The MIT core plans source-free OSV coordinates, validates returned
+// records and reads/writes the local cache, but never performs network I/O. A connector extension
+// owns remote transport and passes bounded response data to commitAdvisoryRefresh().
+import {existsSync, readFileSync, writeFileSync, mkdirSync} from 'node:fs'
+import {join, dirname} from 'node:path'
+import {homedir} from 'node:os'
+import {createHash} from 'node:crypto'
+import {uniqueBy} from '../util.js'
 
-export const DEFAULT_STORE = join(homedir(), ".weavatrix", "advisories.json");
-const OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch";
-const OSV_VULN_URL = "https://api.osv.dev/v1/vulns/";
-const DEFAULT_FETCH_TIMEOUT_MS = Number(process.env.WEAVATRIX_OSV_TIMEOUT_MS || 20000);
-export const OSV_SUPPORTED_ECOSYSTEMS = new Set(["npm", "PyPI", "Go", "Maven", "crates.io"]);
+export const DEFAULT_STORE = join(homedir(), '.weavatrix', 'advisories.json')
+export const OSV_SUPPORTED_ECOSYSTEMS = new Set(['npm', 'PyPI', 'Go', 'Maven', 'crates.io'])
 
-const keyOf = (ecosystem, name) => `${ecosystem}|${ecosystem === "PyPI" ? String(name).toLowerCase().replace(/[-_.]+/g, "-") : name}`;
+const keyOf = (ecosystem, name) => `${ecosystem}|${ecosystem === 'PyPI' ? String(name).toLowerCase().replace(/[-_.]+/g, '-') : name}`
+const uniquePackages = (packages) => uniqueBy(packages, (item) => `${item.ecosystem}|${item.name}|${item.version}`)
 
-const uniquePackages = (pkgs) => uniqueBy(pkgs, (p) => `${p.ecosystem}|${p.name}|${p.version}`);
-
-export function advisoryQueryFingerprint(installed = []) {
-  const rows = uniquePackages(installed.filter((p) => p?.ecosystem && p?.name && p?.version && OSV_SUPPORTED_ECOSYSTEMS.has(p.ecosystem)))
-    .map((p) => `${p.ecosystem}|${p.name}|${p.version}`)
-    .sort();
-  return createHash("sha256").update(rows.join("\n"), "utf8").digest("hex");
+export function createAdvisoryQueryPlan(installed = []) {
+  const pinned = installed.filter((item) => item?.ecosystem && item?.name && item?.version)
+  const unsupported = pinned.filter((item) => !OSV_SUPPORTED_ECOSYSTEMS.has(item.ecosystem)).length
+  const packages = uniquePackages(pinned.filter((item) => OSV_SUPPORTED_ECOSYSTEMS.has(item.ecosystem)))
+    .map(({ecosystem, name, version}) => ({ecosystem, name, version}))
+  return Object.freeze({packages: Object.freeze(packages), unsupported})
 }
 
-async function fetchJson(fetcher, url, options, timeoutMs) {
-  const timeout = Math.max(50, Number(timeoutMs) || DEFAULT_FETCH_TIMEOUT_MS);
-  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
-  let timer;
-  try {
-    const request = fetcher(url, ctrl ? { ...options, signal: ctrl.signal } : options);
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        try { ctrl?.abort(); } catch { /* ignore */ }
-        reject(new Error(`OSV request timed out after ${Math.round(timeout / 1000)}s`));
-      }, timeout);
-    });
-    const res = await Promise.race([request, timeoutPromise]);
-    if (!res || typeof res.json !== "function") throw new Error("invalid response from OSV");
-    if (res.ok === false) throw new Error(`HTTP ${res.status || "error"} from OSV`);
-    return await res.json();
-  } catch (error) {
-    if (error?.name === "AbortError") throw new Error(`OSV request timed out after ${Math.round(timeout / 1000)}s`);
-    throw error;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+export function advisoryQueryFingerprint(installed = []) {
+  const rows = createAdvisoryQueryPlan(installed).packages
+    .map((item) => `${item.ecosystem}|${item.name}|${item.version}`)
+    .sort()
+  return createHash('sha256').update(rows.join('\n'), 'utf8').digest('hex')
 }
 
 export function loadStore(storePath = DEFAULT_STORE) {
   try {
-    const s = JSON.parse(readFileSync(storePath, "utf8"));
-    if (s && typeof s === "object" && s.records) return s;
-  } catch { /* missing/corrupt → empty */ }
-  return { meta: { fetched_at: null }, records: {} };
+    const store = JSON.parse(readFileSync(storePath, 'utf8'))
+    if (store && typeof store === 'object' && store.records) return store
+  } catch { /* missing/corrupt -> empty */ }
+  return {meta: {fetched_at: null}, records: {}}
 }
 
-export function queryStore(store, ecosystem, name) {
-  return (store && store.records && store.records[keyOf(ecosystem, name)]) || [];
-}
+export const queryStore = (store, ecosystem, name) => (store?.records?.[keyOf(ecosystem, name)]) || []
 
 export function storeMeta(storePath = DEFAULT_STORE) {
-  const s = loadStore(storePath);
-  return { fetchedAt: s.meta?.fetched_at || null, advisoryCount: Object.values(s.records || {}).reduce((n, l) => n + l.length, 0) };
-}
-
-// GHSA-style labels + CVSS score → our severity scale. MAL-* records are always critical.
-function severityOf(rec) {
-  if (String(rec.id || "").startsWith("MAL-")) return "critical";
-  const label = String(rec.database_specific?.severity || "").toLowerCase();
-  if (label === "critical") return "critical";
-  if (label === "high") return "high";
-  if (label === "moderate" || label === "medium") return "medium";
-  if (label === "low") return "low";
-  let best = 0;
-  for (const s of rec.severity || []) {
-    const m = String(s.score || "").match(/CVSS:[\d.]+\/.*?\bA[VC]?:/i) ? null : String(s.score || "").match(/^(\d+(\.\d+)?)$/);
-    if (m) best = Math.max(best, Number(m[1]));
-  }
-  if (best >= 9) return "critical";
-  if (best >= 7) return "high";
-  if (best >= 4) return "medium";
-  return "medium"; // unknown → medium, never silently info
-}
-
-// One normalized row per (record × matching affected entry): everything the matcher/UI needs, nothing else.
-function normalizeRecord(rec, ecosystem, name) {
-  const affected = (rec.affected || []).find((a) => a?.package && a.package.ecosystem === ecosystem && keyOf(ecosystem, a.package.name) === keyOf(ecosystem, name));
-  if (!affected) return null;
-  const fixed = [];
-  for (const r of affected.ranges || []) for (const e of r.events || []) if (e.fixed) fixed.push(e.fixed);
+  const store = loadStore(storePath)
   return {
-    id: rec.id,
-    kind: String(rec.id || "").startsWith("MAL-") ? "malicious" : "vuln",
-    severity: severityOf(rec),
-    summary: String(rec.summary || rec.details || "").slice(0, 300),
-    url: `https://osv.dev/vulnerability/${rec.id}`,
-    modified: rec.modified || "",
-    aliases: (rec.aliases || []).slice(0, 6),
-    fixedIn: [...new Set(fixed)].slice(0, 4),
-    affected: { versions: affected.versions || [], ranges: affected.ranges || [] },
-  };
+    fetchedAt: store.meta?.fetched_at || null,
+    advisoryCount: Object.values(store.records || {}).reduce((total, records) => total + records.length, 0),
+  }
 }
 
-// Refresh the cache from OSV for the given installed set. fetcher is injectable for tests.
-// Returns { queried, vulnerable, fetched, saved, errors }.
-export async function refreshAdvisories({ installed = [], storePath = DEFAULT_STORE, fetcher = globalThis.fetch, batchSize = 100, repoKey = "", repoKeys = [], timeoutMs = DEFAULT_FETCH_TIMEOUT_MS } = {}) {
-  if (typeof fetcher !== "function") return { ok: false, error: "no fetch available" };
-  const withVersions = installed.filter((p) => p && p.ecosystem && p.name && p.version);
-  const unsupported = withVersions.filter((p) => !OSV_SUPPORTED_ECOSYSTEMS.has(p.ecosystem)).length;
-  const pkgs = uniquePackages(withVersions.filter((p) => OSV_SUPPORTED_ECOSYSTEMS.has(p.ecosystem)));
-  if (!pkgs.length) {
-    return {
-      ok: false,
-      queried: 0,
-      unsupported,
-      error: "No OSV-supported pinned package versions found to check. Weavatrix queries OSV for npm, PyPI, Go, Maven/Gradle, and crates.io packages with concrete versions.",
-    };
+function severityOf(record) {
+  if (String(record.id || '').startsWith('MAL-')) return 'critical'
+  const label = String(record.database_specific?.severity || '').toLowerCase()
+  if (label === 'critical') return 'critical'
+  if (label === 'high') return 'high'
+  if (label === 'moderate' || label === 'medium') return 'medium'
+  if (label === 'low') return 'low'
+  let best = 0
+  for (const severity of record.severity || []) {
+    const value = String(severity.score || '')
+    const match = /CVSS:[\d.]+\/.*?\bA[VC]?:/i.test(value) ? null : value.match(/^(\d+(?:\.\d+)?)$/)
+    if (match) best = Math.max(best, Number(match[1]))
   }
-  const store = loadStore(storePath);
-  const idsByPkg = new Map(); // pkgIndex -> [vuln ids]
-  const errors = [];
-  let queriedOk = 0;
+  if (best >= 9) return 'critical'
+  if (best >= 7) return 'high'
+  return 'medium'
+}
 
-  for (let i = 0; i < pkgs.length; i += batchSize) {
-    const batch = pkgs.slice(i, i + batchSize);
-    try {
-      const json = await fetchJson(fetcher, OSV_BATCH_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ queries: batch.map((p) => ({ package: { ecosystem: p.ecosystem, name: p.name }, version: p.version })) }),
-      }, timeoutMs);
-      if (!Array.isArray(json?.results) || json.results.length !== batch.length) {
-        throw new Error(`OSV querybatch returned ${Array.isArray(json?.results) ? json.results.length : "no"} result(s) for ${batch.length} query item(s)`);
-      }
-      for (const [resultIndex, result] of json.results.entries()) {
-        if (!result || typeof result !== "object" || Array.isArray(result)) {
-          throw new Error(`OSV querybatch result ${resultIndex + 1} is not an object`);
-        }
-        if (result.vulns !== undefined && !Array.isArray(result.vulns)) {
-          throw new Error(`OSV querybatch result ${resultIndex + 1} has a non-array vulns field`);
-        }
-        if (Array.isArray(result.vulns) && result.vulns.some((v) => !v || typeof v.id !== "string" || !v.id.trim())) {
-          throw new Error(`OSV querybatch result ${resultIndex + 1} contains an advisory without a valid id`);
-        }
-      }
-      queriedOk += batch.length;
-      json.results.forEach((r, j) => { if (r && Array.isArray(r.vulns) && r.vulns.length) idsByPkg.set(i + j, r.vulns.map((v) => v.id)); });
-    } catch (error) {
-      errors.push(`querybatch ${Math.floor(i / batchSize) + 1}/${Math.ceil(pkgs.length / batchSize)}: ${error.message}`);
-    }
+export function normalizeOsvAdvisory(record, ecosystem, name) {
+  const affected = (record?.affected || []).find((item) => item?.package
+    && item.package.ecosystem === ecosystem
+    && keyOf(ecosystem, item.package.name) === keyOf(ecosystem, name))
+  if (!affected) return null
+  const fixed = []
+  for (const range of affected.ranges || []) for (const event of range.events || []) if (event.fixed) fixed.push(event.fixed)
+  return {
+    id: record.id,
+    kind: String(record.id || '').startsWith('MAL-') ? 'malicious' : 'vuln',
+    severity: severityOf(record),
+    summary: String(record.summary || record.details || '').slice(0, 300),
+    url: `https://osv.dev/vulnerability/${record.id}`,
+    modified: record.modified || '',
+    aliases: (record.aliases || []).slice(0, 6),
+    fixedIn: [...new Set(fixed)].slice(0, 4),
+    affected: {versions: affected.versions || [], ranges: affected.ranges || []},
   }
+}
 
-  const wanted = new Map(); // id -> [pkg,...] (an id can hit several packages)
-  for (const [pi, ids] of idsByPkg) for (const id of ids) (wanted.get(id) || wanted.set(id, []).get(id)).push(pkgs[pi]);
-
-  let fetched = 0;
-  for (const [id, pkgList] of wanted) {
-    try {
-      const rec = await fetchJson(fetcher, OSV_VULN_URL + encodeURIComponent(id), {}, timeoutMs);
-      if (!rec || typeof rec.id !== "string" || !rec.id) throw new Error("OSV detail response is missing its advisory id");
-      if (rec.id !== id) throw new Error(`OSV detail id mismatch (expected ${id}, received ${rec.id})`);
-      let normalized = 0;
-      for (const p of pkgList) {
-        const row = normalizeRecord(rec, p.ecosystem, p.name);
-        if (!row) {
-          errors.push(`${id}: OSV detail does not describe ${p.ecosystem}:${p.name} reported by querybatch`);
-          continue;
-        }
-        normalized++;
-        const key = keyOf(p.ecosystem, p.name);
-        const list = store.records[key] || (store.records[key] = []);
-        const at = list.findIndex((x) => x.id === row.id);
-        if (at >= 0) list[at] = row; else list.push(row);
-      }
-      // Count a detail response as fetched only after at least one package-specific row was
-      // validated. A malformed or unrelated response must never make coverage look complete.
-      if (normalized > 0) fetched++;
-    } catch (error) {
-      errors.push(`${id}: ${error.message}`);
-    }
-  }
-
-  // A refresh where NOTHING was fetched but errors occurred (offline, OSV blocked) must NOT stamp
-  // fetched_at — that would turn an empty cache into "No known vulnerabilities as of <today>".
+// idsByPackage is an array parallel to plan.packages; advisoryRecords is an id-keyed plain object.
+// Remote failures arrive explicitly in errors. A zero-response failure never stamps the cache fresh.
+export function commitAdvisoryRefresh({
+  plan,
+  idsByPackage = [],
+  advisoryRecords = {},
+  queriedOk = 0,
+  errors: initialErrors = [],
+  storePath = DEFAULT_STORE,
+  repoKey = '',
+  repoKeys = [],
+} = {}) {
+  const packages = plan?.packages || []
+  const unsupported = Number(plan?.unsupported) || 0
+  if (!packages.length) return {ok: false, queried: 0, unsupported, error: 'No OSV-supported pinned package versions found to check.'}
+  const errors = [...initialErrors.map(String)]
   if (errors.length && queriedOk === 0) {
-    return { ok: false, queried: pkgs.length, unsupported, error: `advisory refresh failed: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more)` : ""}`, errors };
+    return {ok: false, queried: packages.length, unsupported, error: `advisory refresh failed: ${errors[0]}`, errors}
   }
-  store.meta.fetched_at = new Date().toISOString();
-  const status = errors.length ? "PARTIAL" : "OK";
-  // per-repo stamp: the cache only covers packages that were QUERIED — a repo that never refreshed must
-  // show "fetch advisories", not "0 vulnerabilities as of <someone else's date>" (false assurance).
-  // repoKeys[] lets one online pass (a "refresh all repos") stamp every repo whose packages it covered.
-  const stampRepos = [...new Set([repoKey, ...repoKeys].filter(Boolean))];
+
+  const store = loadStore(storePath)
+  const wanted = new Map()
+  idsByPackage.forEach((ids, index) => {
+    for (const id of Array.isArray(ids) ? ids : []) {
+      if (!wanted.has(id)) wanted.set(id, [])
+      wanted.get(id).push(packages[index])
+    }
+  })
+
+  let fetched = 0
+  for (const [id, packageList] of wanted) {
+    const record = advisoryRecords[id]
+    if (!record || record.id !== id) {
+      errors.push(`${id}: advisory detail response is missing or has a mismatched id`)
+      continue
+    }
+    let normalized = 0
+    for (const item of packageList) {
+      const row = normalizeOsvAdvisory(record, item.ecosystem, item.name)
+      if (!row) {
+        errors.push(`${id}: advisory detail does not describe ${item.ecosystem}:${item.name}`)
+        continue
+      }
+      normalized++
+      const key = keyOf(item.ecosystem, item.name)
+      const records = store.records[key] || (store.records[key] = [])
+      const index = records.findIndex((existing) => existing.id === row.id)
+      if (index >= 0) records[index] = row
+      else records.push(row)
+    }
+    if (normalized) fetched++
+  }
+
+  const fetchedAt = new Date().toISOString()
+  const status = errors.length ? 'PARTIAL' : 'OK'
+  store.meta.fetched_at = fetchedAt
+  const stampRepos = [...new Set([repoKey, ...repoKeys].filter(Boolean))]
   if (stampRepos.length) {
-    store.meta.repos = store.meta.repos || {};
-    for (const k of stampRepos) store.meta.repos[k] = {
-      fetched_at: store.meta.fetched_at,
+    store.meta.repos ||= {}
+    for (const key of stampRepos) store.meta.repos[key] = {
+      fetched_at: fetchedAt,
       status,
-      queried: pkgs.length,
+      queried: packages.length,
       queried_ok: queriedOk,
       unsupported,
       error_count: errors.length,
-      query_fingerprint: advisoryQueryFingerprint(pkgs),
-    };
+      query_fingerprint: advisoryQueryFingerprint(packages),
+    }
   }
   try {
-    mkdirSync(dirname(storePath), { recursive: true });
-    writeFileSync(storePath, JSON.stringify(store), "utf8");
+    mkdirSync(dirname(storePath), {recursive: true})
+    writeFileSync(storePath, JSON.stringify(store), 'utf8')
   } catch (error) {
-    return { ok: false, error: `store write failed: ${error.message}`, errors };
+    return {ok: false, error: `store write failed: ${error.message}`, errors}
   }
-  return { ok: true, status, queried: pkgs.length, queriedOk, unsupported, vulnerable: wanted.size, fetched, saved: existsSync(storePath), errors };
+  return {
+    ok: true,
+    status,
+    queried: packages.length,
+    queriedOk,
+    unsupported,
+    vulnerable: wanted.size,
+    fetched,
+    saved: existsSync(storePath),
+    errors,
+  }
 }

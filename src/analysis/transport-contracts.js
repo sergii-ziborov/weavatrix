@@ -2,6 +2,7 @@ import { createRepoBoundary } from "../repo-path.js";
 import { lineNumberAt, uniqueBy } from "../util.js";
 import { listRepoFiles, readRepoText } from "./internal-audit/repo-files.js";
 import { affectedForEndpoint, reverseRuntimeImports } from "./http-contracts/graph-context.js";
+import { loadTransportRuntimeEvidence } from "./transport-runtime-evidence.js";
 
 const TEST_RE = /(^|\/)(?:test|tests|__tests__|spec|e2e|fixtures?)(\/|$)|[._-](?:test|spec)\.[a-z0-9]+$/i;
 const SOURCE_RE = /\.(?:[cm]?[jt]sx?|py|go|java|rs|cs|proto|graphql|gql)$/i;
@@ -89,6 +90,31 @@ function eventEvidence(source, role) {
   return { contracts, uncertain };
 }
 
+const contractIdentity = (item) => `${item.transport}|${item.side}|${norm(item.service)}|${item.operation || ""}|${item.name}`;
+
+function mergeRuntimeContracts(staticContracts, observations) {
+  const contracts = staticContracts.map((item) => ({ ...item, evidence: ["STATIC"] }));
+  const byIdentity = new Map(contracts.map((item) => [contractIdentity(item), item]));
+  for (const observation of observations) {
+    const key = contractIdentity(observation);
+    const existing = byIdentity.get(key);
+    if (existing) {
+      existing.runtimeObserved = true;
+      existing.observedCount = (existing.observedCount || 0) + observation.observedCount;
+      existing.evidence = ["STATIC", "RUNTIME"];
+      continue;
+    }
+    const added = { ...observation, evidence: ["RUNTIME"] };
+    contracts.push(added); byIdentity.set(key, added);
+  }
+  return contracts;
+}
+
+function sameRuntimeLocation(uncertain, observation) {
+  return observation.file && observation.line && observation.transport === uncertain.transport &&
+    observation.file === uncertain.file && observation.line === uncertain.line;
+}
+
 function detect(descriptor, role, options) {
   const loaded = sourcesFor(descriptor, options), contracts = [], uncertain = [];
   for (const source of loaded.sources) {
@@ -97,29 +123,52 @@ function detect(descriptor, role, options) {
       contracts.push(...result.contracts); uncertain.push(...result.uncertain);
     }
   }
+  const runtime = loadTransportRuntimeEvidence(descriptor, {
+    file: options.runtimeEvidenceFiles?.[descriptor.id],
+    maxAgeHours: options.runtimeEvidenceMaxAgeHours,
+    transport: options.transport,
+    now: options.now,
+  });
+  const runtimeContracts = runtime.observations.filter((item) => options.transport === "all" || item.transport === options.transport);
+  const resolvedRuntime = uncertain.filter((item) => runtimeContracts.some((observation) => sameRuntimeLocation(item, observation)));
+  const unresolved = uncertain.filter((item) => !runtimeContracts.some((observation) => sameRuntimeLocation(item, observation)));
   return {
-    contracts: uniqueBy(contracts, (item) => `${item.transport}|${item.side}|${item.service || ""}|${item.operation || ""}|${item.name}|${item.file}|${item.line}`),
-    uncertain: uniqueBy(uncertain, (item) => `${item.transport}|${item.file}|${item.line}|${item.reason}`),
-    reasons: loaded.reasons,
+    contracts: mergeRuntimeContracts(
+      uniqueBy(contracts, (item) => `${item.transport}|${item.side}|${item.service || ""}|${item.operation || ""}|${item.name}|${item.file}|${item.line}`),
+      runtimeContracts,
+    ),
+    uncertain: uniqueBy(unresolved, (item) => `${item.transport}|${item.file}|${item.line}|${item.reason}`),
+    resolvedRuntime: uniqueBy(resolvedRuntime, (item) => `${item.transport}|${item.file}|${item.line}|${item.reason}`),
+    reasons: [...loaded.reasons, ...runtime.reasons],
+    runtime,
     filesScanned: loaded.sources.length,
   };
 }
 
 function contractMatch(server, caller, backendServers) {
   if (server.transport !== caller.transport) return null;
-  if (server.transport === "graphql" && caller.side === "client" && server.operation === caller.operation && server.name === caller.name) return { confidence: "high", kind: "operation-field" };
+  const runtime = server.runtimeObserved || caller.runtimeObserved;
+  const match = (kind) => ({ confidence: "high", kind, evidence: runtime ? "RUNTIME_OBSERVED" : "STATIC" });
+  if (server.transport === "graphql" && caller.side === "client" && server.operation === caller.operation && server.name === caller.name) return match("operation-field");
   if (server.transport === "grpc" && caller.side === "client" && norm(server.name) === norm(caller.name)) {
-    if (caller.service && norm(server.service) === norm(caller.service)) return { confidence: "high", kind: "service-method" };
+    if (caller.service && norm(server.service) === norm(caller.service)) return match("service-method");
     const sameMethod = backendServers.filter((item) => item.transport === "grpc" && norm(item.name) === norm(caller.name));
-    if (!caller.service && sameMethod.length === 1) return { confidence: "medium", kind: "unique-method" };
+    if (!caller.service && sameMethod.length === 1) return { confidence: "medium", kind: "unique-method", evidence: runtime ? "RUNTIME_OBSERVED" : "STATIC" };
   }
-  if (server.transport === "event" && server.name === caller.name && server.side !== caller.side) return { confidence: "high", kind: "topic-direction" };
+  if (server.transport === "event" && server.name === caller.name && server.side !== caller.side) return match("topic-direction");
   return null;
 }
 
 export function analyzeTransportContracts(input = {}) {
   const transport = ["all", "graphql", "grpc", "event"].includes(input.transport) ? input.transport : "all";
-  const options = { includeTests: input.includeTests === true, maxFiles: Math.max(1, Math.min(10_000, Number(input.maxFiles) || 3_000)) };
+  const options = {
+    includeTests: input.includeTests === true,
+    maxFiles: Math.max(1, Math.min(10_000, Number(input.maxFiles) || 3_000)),
+    transport,
+    runtimeEvidenceFiles: input.runtimeEvidenceFiles || {},
+    runtimeEvidenceMaxAgeHours: input.runtimeEvidenceMaxAgeHours,
+    now: input.now,
+  };
   const backend = detect(input.backend, "backend", options);
   const clients = (input.clients || []).map((descriptor) => ({ descriptor, evidence: detect(descriptor, "client", options), reverse: reverseRuntimeImports(descriptor.graph) }));
   const selected = (item) => transport === "all" || item.transport === transport;
@@ -131,7 +180,7 @@ export function analyzeTransportContracts(input = {}) {
     for (const client of clients) for (const caller of client.evidence.contracts.filter(selected)) {
       const match = contractMatch(server, caller, servers);
       if (!match) continue;
-      callsites.push({ clientRepo: client.descriptor.id, file: caller.file, line: caller.line, detector: caller.detector, match });
+      callsites.push({ clientRepo: client.descriptor.id, file: caller.file, line: caller.line, detector: caller.detector, match, runtimeObserved: caller.runtimeObserved === true, observedCount: caller.observedCount });
     }
     const affected = affectedForEndpoint(callsites, clients.map((item) => ({ id: item.descriptor.id, reverse: item.reverse })), {
       maxImpactDepth: Math.max(0, Math.min(5, Number(input.maxImpactDepth) || 2)),
@@ -145,13 +194,31 @@ export function analyzeTransportContracts(input = {}) {
   ].filter(selected);
   const reasons = [...backend.reasons, ...clients.flatMap((item) => item.evidence.reasons)];
   if (uncertain.length) reasons.push(`${uncertain.length} dynamic/reflection contract expression(s) remain UNKNOWN`);
+  const runtimeReports = [
+    { repository: input.backend.id, ...backend.runtime },
+    ...clients.map((item) => ({ repository: item.descriptor.id, ...item.evidence.runtime })),
+  ];
+  const resolvedRuntime = backend.resolvedRuntime.length + clients.reduce((sum, item) => sum + item.evidence.resolvedRuntime.length, 0);
   return {
-    transportContractsV: 1,
+    transportContractsV: 2,
     transport,
     status: reasons.length ? "PARTIAL" : "COMPLETE",
     completeness: { complete: reasons.length === 0, reasons: [...new Set(reasons)] },
-    totals: { contracts: results.length, matches: results.reduce((sum, item) => sum + item.callsites.length, 0), uncertain: uncertain.length, filesScanned: backend.filesScanned + clients.reduce((sum, item) => sum + item.evidence.filesScanned, 0) },
+    totals: {
+      contracts: results.length,
+      matches: results.reduce((sum, item) => sum + item.callsites.length, 0),
+      uncertain: uncertain.length,
+      filesScanned: backend.filesScanned + clients.reduce((sum, item) => sum + item.evidence.filesScanned, 0),
+      runtimeObservations: runtimeReports.reduce((sum, item) => sum + item.observations.length, 0),
+      runtimeResolved: resolvedRuntime,
+      runtimeReportsComplete: runtimeReports.filter((item) => item.status === "COMPLETE").length,
+    },
     contracts: results,
     uncertain: uncertain.slice(0, 200),
+    runtimeEvidence: {
+      status: runtimeReports.every((item) => item.status === "COMPLETE") ? "COMPLETE" : "PARTIAL",
+      reports: runtimeReports.map(({ observations, reasons: reportReasons, ...report }) => ({ ...report, observationCount: observations.length, reasons: reportReasons })),
+      resolvedUnknowns: resolvedRuntime,
+    },
   };
 }

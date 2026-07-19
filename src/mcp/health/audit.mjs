@@ -1,5 +1,6 @@
 import {rawGraph, effectiveRawGraph} from '../graph-context.mjs'
 import {runInternalAudit} from '../../analysis/internal-audit.js'
+import {applyAuditExtensions} from '../../analysis/audit-extensions.js'
 import {classifyChangeImpact} from '../../analysis/change-classification.js'
 import {
   compareAuditDebt,
@@ -19,6 +20,11 @@ const {
   pathsFromClassification,
 } = await import(new URL(`./audit-format.mjs${auditFormatVersion}`, import.meta.url).href)
 
+const runAudit = async (repoRoot, graph, args, ctx, options = {}) => applyAuditExtensions(
+    await runInternalAudit(repoRoot, {graph, ...options}),
+    {providers: ctx.extensions?.auditProviders || [], repoRoot, graph, args},
+)
+
 async function runAuditWithBaseline(args, ctx, currentGraph) {
     const resolved = resolveGitCommit(ctx.repoRoot, args.base_ref)
     if (!resolved.ok) return toolResult(`Audit baseline unavailable: ${resolved.error}.`, {
@@ -27,10 +33,7 @@ async function runAuditWithBaseline(args, ctx, currentGraph) {
 
     let currentAudit
     try {
-        currentAudit = await runInternalAudit(ctx.repoRoot, {
-            graph: currentGraph,
-            skipMalwareScan: !args.include_malware_scan,
-        })
+        currentAudit = await runAudit(ctx.repoRoot, currentGraph, args, ctx, {skipMalwareScan: !args.include_malware_scan})
     } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         return toolResult(`Audit failed while building the current graph: ${reason}`, {
@@ -86,7 +89,7 @@ async function runAuditWithBaseline(args, ctx, currentGraph) {
         if (currentMode !== 'full') graph = filterGraphForMode(graph, currentMode, {repoRoot: checkout})
         graph.graphBuildMode = currentMode
         graph.graphBuildScope = ''
-        return runInternalAudit(checkout, {graph, skipMalwareScan: true})
+        return runAudit(checkout, graph, args, ctx, {skipMalwareScan: true})
     })
     if (!baseline.ok || !baseline.value?.ok) {
         const reason = baseline.error || baseline.value?.error || 'baseline audit failed'
@@ -146,8 +149,8 @@ async function runAuditWithBaseline(args, ctx, currentGraph) {
 export async function tRunAudit(g, args, ctx) {
     if (!ctx.repoRoot) return 'Audit needs the repo root (not provided to this server).'
     if (args.base_ref) return runAuditWithBaseline(args, ctx, rawGraph(ctx))
-    const audit = await runInternalAudit(ctx.repoRoot, {
-        graph: effectiveRawGraph(ctx),
+    const graph = effectiveRawGraph(ctx)
+    const audit = await runAudit(ctx.repoRoot, graph, args, ctx, {
         skipMalwareScan: !args.include_malware_scan, // greps installed packages — slow, so opt-in
     })
     if (!audit.ok) return `Audit failed: ${audit.error}`

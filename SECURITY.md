@@ -65,39 +65,21 @@ the selected package-manager script with the credential-stripped child environme
 scripts are repository-controlled code and may have arbitrary side effects, so enable this flag only
 for repositories and scripts you trust.
 
-Network capabilities are split by purpose. `osv` adds only `refresh_advisories`, which sends pinned
-package names and versions to OSV.dev when called. `hosted` / `full` also expose the local-only
-`preview_sync` plus networked `sync_graph` and `pull_architecture_contract`; the network tools require
-a user-configured endpoint, and contract pull requires bearer authentication. The legacy `online`
-capability remains an alias for advisory plus hosted networking so existing registrations do not break.
+The 0.3 MIT artifact contains no HTTP tool, sync endpoint/token setting, remote advisory refresher or
+compatibility alias that can enable one. `offline` and `pinned` are both network-free. Advisory
+matching reads only a local validated cache; a missing or stale cache remains `NOT_CHECKED` or
+`PARTIAL`, never a clean zero.
 
-`preview_sync` is the first half of a two-step consent boundary. It constructs the strict allowlisted
-payload locally but has no network path. It displays the configured hostname/path, normalized
-repository name, opaque repository UUID, payload version, included sections, node/link/byte counts
-and canonical SHA-256 hash. Sending requires `sync_graph` with both `dry_run:false` and the exact
-confirmation token for that cached payload and destination; the token
-expires after five minutes and is stored only in process memory. A token with the default dry-run,
-or an incorrect/expired token, does not send. Sync rejects
-embedded URL credentials and fragments and requires HTTPS except for explicit loopback development
-endpoints. Query parameters may be used by a configured endpoint but are not echoed in previews or
-errors.
+The public extension API allows a dependent package to add MCP tools, packaged skills and local
+audit providers. Extension tools cannot replace a core tool, extension profiles cannot replace a
+core profile, and audit providers must declare `network:"none"`; failures remain explicit
+`ERROR/PARTIAL`. The separate `weavatrix-online` superset owns endpoint policy, consent,
+authentication, capability negotiation and every outbound request.
 
 Every MCP response includes transient local `_meta["weavatrix/metrics"]` timing, output-size/token
 estimate, graph freshness/revision/update and graph-cache status. Weavatrix does not persist, aggregate
 or transmit these measurements; they are response evidence for the caller, not product telemetry.
 
-Payload v3 runs bounded local analyzers over the active repository, then sends only a strict
-graph/evidence allowlist plus a normalized repository display name. That evidence can include a
-bounded direct/transitive lockfile dependency graph and stable clone/divergence candidates. The
-contract has no source-body,
-snippet, absolute-host-path, environment, credential, Git-remote or analyzer-error fields; unknown
-fields are discarded and unsafe optional path metadata is omitted. V3 rejects stale graphs,
-duplicate node IDs, dangling edges and oversized payloads before any request. Graph-only payload v2
-remains an explicit compatibility option and is never selected as a silent fallback.
-
-`pull_architecture_contract` sends only the active repository's opaque stable UUID, receives an
-owner-approved target contract, validates it, and caches it locally. It never sends source, symbols,
-file paths, or Git metadata. It applies the same HTTPS-outside-loopback and embedded-credential URL
-rules before sending bearer authentication. Authentication, forbidden, not-found and repository-not-ready responses
-are reported as distinct states so a missing registration or contract is not presented as an opaque
-HTTP failure.
+Core exposes local-only services that build and validate the bounded source-free payload, validate
+connector-provided advisory records, create opaque repository identity and cache a validated
+architecture contract. These services read no connector credential and perform no network I/O.

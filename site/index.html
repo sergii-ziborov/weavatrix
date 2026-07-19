@@ -33,7 +33,7 @@
   "description": "Local repository intelligence MCP for AI coding agents: one reusable graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "url": "https://weavatrix.com",
   "downloadUrl": "https://www.npmjs.com/package/weavatrix",
-  "softwareVersion": "0.2.19",
+  "softwareVersion": "0.3.0",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Sergii Ziborov", "url": "https://github.com/sergii-ziborov" },
@@ -50,7 +50,7 @@
   <header>
     <div class="mark">
       <svg width="26" height="26" viewBox="0 0 100 100"><circle cx="30" cy="30" r="12" fill="#7c6cff"/><circle cx="72" cy="44" r="9" fill="#40e0c8"/><circle cx="44" cy="74" r="9" fill="#f0f2f8"/><line x1="30" y1="30" x2="72" y2="44" stroke="#7c6cff" stroke-width="4"/><line x1="30" y1="30" x2="44" y2="74" stroke="#40e0c8" stroke-width="4"/></svg>
-      WEAVATRIX <span class="badge">0.2.19</span>
+      WEAVATRIX <span class="badge">0.3.0</span>
     </div>
     <nav>
       <a href="#features">Tools</a>
@@ -68,8 +68,8 @@
       <h1>Give your AI agent a <em>reusable map of the application</em>.</h1>
       <p class="sub">Weavatrix builds one local code graph for fast application understanding with
         less repeated context, then reuses it for Health, dead code, duplicate review, graph history,
-        blast radius and intended-architecture safeguards. 38 tools are available, with 34 offline by
-        default. Text search is a convenience; graph intelligence is the core.</p>
+        blast radius and intended-architecture safeguards. All 34 tools are offline; outbound
+        operations live only in the separate Weavatrix Online product.</p>
       <a class="cta" href="#install">Get started</a>
       <a class="cta2" href="#features">Explore the tools ↓</a>
     </div>
@@ -89,7 +89,7 @@
 
   <section id="features">
     <h2>The graph your agent is missing</h2>
-    <p class="lead">This is not one report or three fixed workflows: 38 methods project the same
+    <p class="lead">This is not one report or three fixed workflows: 34 methods project the same
       reusable graph into the smallest view needed for each task. Grep sees text; Weavatrix sees structure: files, symbols, runtime edges and
       compile-time coupling — including Rust module paths, Java OOP relationships and project-internal
       Java receiver call flow. Parser-backed
@@ -100,9 +100,9 @@
       <div class="card"><h3><span class="dot t"></span>Proof-carrying change safeguard</h3><p><code>verified_change</code> plans and verifies one change through exact context, blast radius, graph drift, architecture, duplicate, API and optional test ratchets, returning one PASS, BLOCKED or honest UNKNOWN verdict.</p></div>
       <div class="card"><h3><span class="dot"></span>Change impact</h3><p><code>change_impact</code> diffs your branch (staged, unstaged, untracked included) and lists everything that depends on what you touched — with test coverage attached and untested hotspots called out.</p></div>
       <div class="card"><h3><span class="dot t"></span>Blast radius per symbol</h3><p><code>get_dependents</code> walks reverse edges transitively: every caller, importer and subclass that can feel your refactor, ranked by proximity and connectivity.</p></div>
-      <div class="card"><h3><span class="dot"></span>Signal-aware health audit</h3><p><code>run_audit</code> finds dead code, dependency mistakes and orphans, separates runtime cycles from compile-only coupling, and reports a capability matrix so unsupported Maven, runtime, concurrency or OSV evidence can never look clean.</p></div>
+      <div class="card"><h3><span class="dot"></span>Signal-aware health audit</h3><p><code>run_audit</code> finds dead code, dependency mistakes and orphans, separates runtime cycles from compile-only coupling, and reports a capability matrix so missing local JARs, dynamic build logic, runtime, concurrency or advisory evidence can never look clean.</p></div>
       <div class="card"><h3><span class="dot t"></span>Exact REST and symbol context</h3><p><code>list_endpoints</code> proves declared versus reachable routes, mount chains and conditional Spring controllers. <code>trace_endpoint</code> follows one route; <code>context_bundle</code> ranks production callers and preserves call-site provenance.</p></div>
-      <div class="card"><h3><span class="dot"></span>Cross-repo API contracts</h3><p><code>trace_api_contract</code> joins backend routes and handlers to client callsites across registered local repositories, reporting external handler use, per-callsite confidence and unresolved dynamic URLs instead of guessing.</p></div>
+      <div class="card"><h3><span class="dot"></span>Cross-repo API contracts</h3><p><code>trace_api_contract</code> joins HTTP, GraphQL, gRPC and Kafka/event contracts across registered local repositories. Fresh revision-bound runtime or OTLP evidence confirms dynamic identities; uncaptured paths remain UNKNOWN instead of being guessed.</p></div>
       <div class="card"><h3><span class="dot"></span>Clone detection, three lenses</h3><p><code>find_duplicates</code> uses MOSS winnowing over method bodies and embedded strings. It ranks near-clones and same-name divergence as review evidence while suppressing homogeneous router boilerplate by default.</p></div>
       <div class="card"><h3><span class="dot t"></span>Structural diff</h3><p><code>rebuild_graph</code> + <code>graph_diff</code> report the architecture delta of your edits: runtime versus compile-time dependencies, changed cycle membership, and symbols that lost their last caller.</p></div>
       <div class="card"><h3><span class="dot"></span>History-backed architecture</h3><p><code>git_history</code> combines bounded local churn with graph connectivity, hidden co-change coupling and expected test/source movement. It reads numstat evidence, not commit messages, authors or source bodies.</p></div>
@@ -248,30 +248,19 @@ never overwrites active policy.</span></pre>
   <section id="privacy">
     <h2>Local-first, offline by design</h2>
     <p class="lead">Graph queries, audits, clone scans, repository switching and the built-in JS/TS
-       precision overlay run locally. The default <code style="font-family:var(--mono);color:var(--accent2)">offline</code>
-       profile exposes no network tools. Three tools can initiate HTTP only when explicitly enabled and
-       called: <code style="font-family:var(--mono);color:var(--accent2)">refresh_advisories</code> sends
-       package names and versions to OSV.dev;
-       <code style="font-family:var(--mono);color:var(--accent2)">pull_architecture_contract</code> sends
-       only an opaque repository UUID and receives a validated owner contract; and only a
-       <code style="font-family:var(--mono);color:var(--accent2)">sync_graph</code> call with
-       <code style="font-family:var(--mono);color:var(--accent2)">dry_run:false</code> and
-       its exact short-lived confirmation token sends the bounded V3 evidence allowlist to your
-       configured endpoint. Before that, local-only <code style="font-family:var(--mono);color:var(--accent2)">preview_sync</code>
-       shows the destination, repository UUID, sections, size and hash without network access. A token
-       alone remains a dry-run. V3 includes topology plus bounded architecture,
-       health, stack, package and duplicate-review evidence, but excludes source bodies, snippets,
-       absolute paths, environment values, credentials and Git remotes. The <code style="font-family:var(--mono);color:var(--accent2)">osv</code>
-       profile exposes only advisory refresh; <code style="font-family:var(--mono);color:var(--accent2)">hosted</code>
-       and <code style="font-family:var(--mono);color:var(--accent2)">full</code> expose all three HTTP tools plus the local preview.
-       Legacy <code style="font-family:var(--mono);color:var(--accent2)">online</code> is only a compatibility alias.</p>
+       precision overlay run locally. Weavatrix 0.3 is a network-free MIT core: no capability name can
+       re-enable HTTP. Optional OSV, Cloud and licensed self-hosted workflows belong to the separately
+       installed <code style="font-family:var(--mono);color:var(--accent2)">weavatrix-online</code>
+       product. It extends this core with capability negotiation, authentication and explicit
+       preview-confirm sync while keeping source bodies, snippets, absolute paths, environment values,
+       credentials and Git remotes out of the bounded payload.</p>
   </section>
 
   <section id="roadmap">
     <h2>Roadmap</h2>
     <p class="lead">The MCP server is free and MIT — forever. The hosted layer is now an access-controlled preview.</p>
     <div class="road">
-      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP server 0.2.19</h3><p>38 available tools over your local code graph; 34 offline tools enabled by default. This trust patch fixes nested repository discovery and removes supply-chain false positives from ordinary package URLs and Unicode presentation selectors while retaining executable exfiltration and download signals. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
+      <div class="step now"><span class="tag">NOW · FREE · MIT</span><h3>MCP core 0.3.0</h3><p>34 network-free tools over the local graph, exact on-demand JS/TS LSP references, Cargo.lock + RustSec report evidence, and exact installed-JAR ownership for Maven/Gradle imports. <a href="https://github.com/sergii-ziborov/weavatrix">Source on GitHub</a> · <a href="https://www.npmjs.com/package/weavatrix">weavatrix on npm</a>.</p></div>
       <div class="step next"><span class="tag">ACCESS-CONTROLLED PREVIEW</span><h3>Architecture workbench</h3><p><a href="https://app.weavatrix.com">app.weavatrix.com</a> is the optional owner-authenticated workbench for source-free evidence, revision history and target-architecture review. Availability and surfaces evolve independently from the public MCP. Sync remains explicit, preview-confirmed and opt-in.</p></div>
       <div class="step next"><span class="tag">NEXT</span><h3>Graph-anchored memory</h3><p>Agent notes pinned to nodes and modules, with staleness tracking when the code under them changes.</p></div>
       <div class="step later"><span class="tag">PLANNED</span><h3>CI blast radius</h3><p>change_impact as a PR comment: what this PR can break, and which of it is untested.</p></div>

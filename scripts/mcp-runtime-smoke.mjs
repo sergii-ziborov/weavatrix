@@ -7,23 +7,16 @@ import {dirname, join, resolve} from 'node:path'
 import process from 'node:process'
 import {fileURLToPath} from 'node:url'
 
-const FULL_TOOLS = Object.freeze([
+const OFFLINE_TOOLS = Object.freeze([
     'change_impact', 'context_bundle', 'coverage_map', 'explain_architecture_violation',
     'find_dead_code', 'find_duplicates', 'get_architecture_contract', 'get_community',
     'get_dependents', 'get_neighbors', 'get_node', 'git_history', 'god_nodes', 'graph_diff',
     'graph_stats', 'hot_path_review', 'inspect_symbol', 'list_communities', 'list_endpoints',
-    'list_known_repos', 'module_map', 'open_repo', 'prepare_change', 'preview_sync',
-    'propose_architecture_exception', 'pull_architecture_contract', 'query_graph', 'read_source',
-    'rebuild_graph', 'refresh_advisories', 'run_audit', 'search_code', 'shortest_path',
-    'sync_graph', 'trace_api_contract', 'trace_endpoint', 'verified_change', 'verify_architecture',
+    'list_known_repos', 'module_map', 'open_repo', 'prepare_change',
+    'propose_architecture_exception', 'query_graph', 'read_source',
+    'rebuild_graph', 'run_audit', 'search_code', 'shortest_path',
+    'trace_api_contract', 'trace_endpoint', 'verified_change', 'verify_architecture',
 ].sort())
-
-// These are intentionally absent from the default offline profile. preview_sync itself is local-only,
-// but it is meaningful only as the first step of the explicitly selected hosted sync workflow.
-const HOSTED_PROFILE_TOOLS = Object.freeze([
-    'preview_sync', 'pull_architecture_contract', 'refresh_advisories', 'sync_graph',
-])
-const OFFLINE_TOOLS = Object.freeze(FULL_TOOLS.filter((name) => !HOSTED_PROFILE_TOOLS.includes(name)))
 
 export function runtime(entryPoint, repoRoot, profile, graphHome, envOverrides = {}) {
     const child = spawn(process.execPath, [entryPoint, repoRoot, profile], {
@@ -125,9 +118,7 @@ async function inspectProfile({entryPoint, repoRoot, graphHome, profile, expecte
         assert.deepEqual(names, expectedTools, `${profile}: exact packaged tools/list`)
         assert.deepEqual(listed._meta?.['weavatrix/runtime'], {
             version, diskVersion: version, staleRuntime: false, staleRuntimeAllowed: false,
-            profile, capabilities: profile === 'offline'
-                ? ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo']
-                : ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo', 'advisories', 'hosted'],
+            profile, capabilities: ['graph', 'search', 'source', 'health', 'build', 'retarget', 'crossrepo'],
             toolCount: expectedTools.length,
         }, `${profile}: tools/list runtime diagnostics`)
         return server
@@ -143,7 +134,7 @@ async function exerciseBehavior(server) {
         name: 'graph_stats', arguments: {output_format: 'json'},
     })
     assert.equal(stats.isError, undefined, contentText(stats))
-    assert.match(contentText(stats), /Weavatrix runtime: v[^;]+; disk v[^;]+; stale no; profile full; 38 registered tools/)
+    assert.match(contentText(stats), /Weavatrix runtime: v[^;]+; disk v[^;]+; stale no; profile offline; 34 registered tools/)
 
     const search = await server.request('tools/call', {
         name: 'search_code',
@@ -179,15 +170,11 @@ async function exerciseBehavior(server) {
 
 export async function verifyMcpRuntime({entryPoint, repoRoot, graphHome, version, behavior = true}) {
     assert.ok(existsSync(entryPoint), `missing MCP entry point: ${entryPoint}`)
-    const profiles = [
-        ['offline', OFFLINE_TOOLS],
-        ['hosted', FULL_TOOLS],
-        ['full', FULL_TOOLS],
-    ]
+    const profiles = [['offline', OFFLINE_TOOLS]]
     for (const [profile, expectedTools] of profiles) {
         const server = await inspectProfile({entryPoint, repoRoot, graphHome, profile, expectedTools, version})
         try {
-            if (profile === 'full' && behavior) await exerciseBehavior(server)
+            if (behavior) await exerciseBehavior(server)
         } finally { await server.stop() }
     }
 }

@@ -44,6 +44,11 @@ export function isFrameworkBoilerplateCloneGroup(group) {
     && /^(?:router|routes)\(?\)?$/i.test(String(member.label || '').trim()))
 }
 
+export function isDeclarativeCatalogCloneGroup(group) {
+  const members = Array.isArray(group?.members) ? group.members : []
+  return members.length >= 2 && members.every((member) => member.declarative === true)
+}
+
 export function analyzeDuplicateGroups(repoRoot, graphPath, args = {}) {
   const settings = {
     simMin: Math.min(100, Math.max(50, Number(args.min_similarity) || 80)),
@@ -52,12 +57,18 @@ export function analyzeDuplicateGroups(repoRoot, graphPath, args = {}) {
     skipTests: args.include_tests !== true,
     includeClassified: args.include_classified === true || args.include_non_product === true,
     includeBoilerplate: args.include_boilerplate === true,
+    includeDeclarative: args.include_declarative === true,
   }
   const data = computeDuplicates(repoRoot, graphPath, {includeStrings: args.include_strings === true, minTokens: settings.tokMin})
   const allGroups = groupPairs(data, settings)
-  const groups = settings.includeBoilerplate ? allGroups : allGroups.filter((group) => !isFrameworkBoilerplateCloneGroup(group))
+  const afterBoilerplate = settings.includeBoilerplate ? allGroups : allGroups.filter((group) => !isFrameworkBoilerplateCloneGroup(group))
+  const groups = settings.includeDeclarative ? afterBoilerplate : afterBoilerplate.filter((group) => !isDeclarativeCatalogCloneGroup(group))
   const suppressed = (data.frags || []).filter((fragment) => !eligible(fragment, settings)).length
-  return {settings, groups, suppressed, boilerplateSuppressed: allGroups.length - groups.length}
+  return {
+    settings, groups, suppressed,
+    boilerplateSuppressed: allGroups.length - afterBoilerplate.length,
+    declarativeSuppressed: afterBoilerplate.length - groups.length,
+  }
 }
 
 const digest = (value) => createHash('sha256').update(value).digest('hex').slice(0, 20)

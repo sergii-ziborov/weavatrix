@@ -57,7 +57,59 @@ test("transport filter isolates one contract family", () => {
       backend: { id: "backend", repoRoot: backendRoot, graph: {} },
       clients: [{ id: "client", repoRoot: clientRoot, graph: {} }],
     });
-    assert.equal(result.status, "COMPLETE");
+    assert.equal(result.status, "PARTIAL");
+    assert.equal(result.runtimeEvidence.status, "PARTIAL");
     assert.deepEqual(result.contracts.map((item) => [item.operation, item.name]), [["MUTATION", "saveUser"]]);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
+
+test("fresh revision-bound runtime evidence resolves dynamic GraphQL, gRPC and event identities", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "weavatrix-transport-runtime-"));
+  const backendRoot = join(workspace, "backend"), clientRoot = join(workspace, "client");
+  const generatedAt = "2026-07-19T12:00:00.000Z";
+  const report = (revision, observations) => JSON.stringify({
+    schema: "weavatrix.transport-runtime.v1",
+    repositoryRevision: revision,
+    generatedAt,
+    coverage: { graphql: "COMPLETE", grpc: "COMPLETE", event: "COMPLETE" },
+    observations,
+  });
+  try {
+    repo(backendRoot, {
+      "src/runtime.ts": "gql`${schema}`;\nServerReflection.enable(server);\neventBus.subscribe(topicName, handler);\n",
+      ".weavatrix/transport-runtime.json": report("backend-revision", [
+        { transport: "graphql", side: "server", operation: "QUERY", name: "user", file: "src/runtime.ts", line: 1, observedCount: 8 },
+        { transport: "grpc", side: "server", service: "User", name: "GetUser", file: "src/runtime.ts", line: 2, observedCount: 5 },
+        { transport: "event", side: "subscriber", name: "user.created", file: "src/runtime.ts", line: 3, observedCount: 13 },
+      ]),
+    });
+    repo(clientRoot, {
+      "src/api.ts": "query(document);\ndynamicStub.invoke(methodName);\nproducer.publish(topicName, payload);\n",
+      "src/page.ts": "import './api';\n",
+      ".weavatrix/transport-runtime.json": report("client-revision", [
+        { transport: "graphql", side: "client", operation: "QUERY", name: "user", file: "src/api.ts", line: 1, observedCount: 8 },
+        { transport: "grpc", side: "client", service: "User", name: "GetUser", file: "src/api.ts", line: 2, observedCount: 5 },
+        { transport: "event", side: "publisher", name: "user.created", file: "src/api.ts", line: 3, observedCount: 13 },
+      ]),
+    });
+    const result = analyzeTransportContracts({
+      now: Date.parse("2026-07-19T13:00:00.000Z"),
+      backend: { id: "backend", repoRoot: backendRoot, graph: { graphRevision: "backend-revision", nodes: [], links: [] } },
+      clients: [{ id: "client", repoRoot: clientRoot, graph: {
+        graphRevision: "client-revision",
+        nodes: [{ id: "api", source_file: "src/api.ts" }, { id: "page", source_file: "src/page.ts" }],
+        links: [{ source: "page", target: "api", relation: "imports" }],
+      } }],
+    });
+    assert.equal(result.status, "COMPLETE");
+    assert.equal(result.totals.contracts, 3);
+    assert.equal(result.totals.matches, 3);
+    assert.equal(result.totals.uncertain, 0);
+    assert.equal(result.totals.runtimeObservations, 6);
+    assert.equal(result.totals.runtimeResolved, 6);
+    assert.equal(result.runtimeEvidence.status, "COMPLETE");
+    assert.ok(result.contracts.every((item) => item.runtimeObserved));
+    assert.ok(result.contracts.every((item) => item.callsites[0].match.evidence === "RUNTIME_OBSERVED"));
+    assert.ok(result.contracts.every((item) => item.affected.files.some((file) => file.file === "src/page.ts")));
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 });

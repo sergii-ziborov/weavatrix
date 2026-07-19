@@ -1,6 +1,7 @@
 import { createRepoBoundary } from "../repo-path.js";
 import { dependencyVerification, makeFinding } from "./findings.js";
 import { parseGradleDependencies, parseGradleVersionCatalog, parseMavenPom } from "./jvm-manifests.js";
+import { collectJvmArtifactIndex } from "./jvm-artifact-index.js";
 import { listRepoFiles, readRepoText } from "./internal-audit.collect.js";
 
 const normalize = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -24,12 +25,18 @@ function bestDependency(spec, dependencies) {
   return ranked[0].dependency;
 }
 
-function analyze(ecosystem, manifests, dependencies, imports, unresolvedDeclarations, mappingDependencies = dependencies, includeMissing = true) {
+function analyze(ecosystem, manifests, dependencies, imports, unresolvedDeclarations, mappingDependencies = dependencies, includeMissing = true, artifactEvidence) {
   const findings = [], used = new Map(), missing = new Map();
   const owned = new Set(dependencies.map((dependency) => dependency.name));
+  let exactMappedImports = 0, heuristicMappedImports = 0, ambiguousImports = 0;
   for (const item of imports) {
-    const dependency = bestDependency(item.spec || item.pkg, mappingDependencies);
+    const exactOwners = artifactEvidence.resolve(item.spec || item.pkg);
+    if (exactOwners.length > 1) ambiguousImports++;
+    const dependency = exactOwners.length === 1
+      ? mappingDependencies.find((candidate) => candidate.name === exactOwners[0])
+      : bestDependency(item.spec || item.pkg, mappingDependencies);
     if (dependency) {
+      if (exactOwners.length === 1) exactMappedImports++; else heuristicMappedImports++;
       if (owned.has(dependency.name)) {
         const list = used.get(dependency.name) || [];
         list.push(item); used.set(dependency.name, list);
@@ -69,21 +76,36 @@ function analyze(ecosystem, manifests, dependencies, imports, unresolvedDeclarat
     }));
   }
   const present = manifests.length > 0;
+  const exactComplete = present && unresolvedDeclarations === 0 && !artifactEvidence.truncated
+    && artifactEvidence.errors.length === 0 && artifactEvidence.artifactsMissing === 0
+    && artifactEvidence.artifactsIndexed === artifactEvidence.artifactsRequired
+    && exactMappedImports === imports.length && ambiguousImports === 0;
   return {
     present,
     status: present ? "CHECKED" : "NOT_PRESENT",
-    completeness: present ? (unresolvedDeclarations ? "PARTIAL" : "COMPLETE") : "NOT_APPLICABLE",
+    completeness: present ? (exactComplete ? "COMPLETE" : "PARTIAL") : "NOT_APPLICABLE",
     manifests,
     declared: dependencies.length,
     mappedImports: [...used.values()].reduce((sum, list) => sum + list.length, 0),
     unmappedImports: [...missing.values()].reduce((sum, list) => sum + list.length, 0),
     unresolvedDeclarations,
+    exactArtifactEvidence: {
+      artifactsRequired: artifactEvidence.artifactsRequired,
+      artifactsIndexed: artifactEvidence.artifactsIndexed,
+      artifactsMissing: artifactEvidence.artifactsMissing,
+      classesIndexed: artifactEvidence.classCount,
+      exactMappedImports,
+      heuristicMappedImports,
+      ambiguousImports,
+      truncated: artifactEvidence.truncated,
+      errors: artifactEvidence.errors.slice(0, 10),
+    },
     sample: dependencies.slice(0, 20).map(({ file, name, version }) => ({ file, identity: name, version })),
     reason: !present
       ? `No ${ecosystem === "maven" ? "pom.xml" : "Gradle build file"} was discovered.`
-      : unresolvedDeclarations
-        ? `${dependencies.length} declarations and all indexed Java imports were checked, but ${unresolvedDeclarations} dynamic/property/catalog declaration(s) could not be resolved statically.`
-        : `${dependencies.length} declarations were compared with every indexed non-JDK Java import using bounded group-prefix and artifact-token evidence. Missing and unused results remain review evidence, not compiler proof.`,
+      : exactComplete
+        ? `${dependencies.length} declarations were compared with every indexed non-JDK Java import using exact class ownership from ${artifactEvidence.artifactsIndexed} installed JAR(s).`
+        : `${dependencies.length} declarations and every indexed non-JDK Java import were checked, but exact artifact evidence is partial: ${unresolvedDeclarations} unresolved declaration(s), ${artifactEvidence.artifactsMissing} installed JAR(s) missing, ${heuristicMappedImports} heuristic mapping(s), ${ambiguousImports} ambiguous mapping(s). Heuristic missing/unused findings remain review evidence, never compiler proof.`,
     findings,
   };
 }
@@ -108,8 +130,9 @@ export function collectJvmDependencyEvidence(repoRoot, { files = listRepoFiles(r
   });
   const javaImports = externalImports.filter((entry) => entry.ecosystem === "Maven" && entry.pkg && !entry.builtin && !entry.unresolved);
   const allDependencies = [...mavenDependencies, ...gradleDependencies];
+  const artifactEvidence = collectJvmArtifactIndex(allDependencies);
   return {
-    maven: analyze("maven", mavenFiles, mavenDependencies, javaImports, mavenUnresolved, allDependencies, true),
-    gradle: analyze("gradle", [...gradleFiles, ...catalogFiles], gradleDependencies, javaImports, gradleUnresolved, allDependencies, mavenFiles.length === 0),
+    maven: analyze("maven", mavenFiles, mavenDependencies, javaImports, mavenUnresolved, allDependencies, true, artifactEvidence),
+    gradle: analyze("gradle", [...gradleFiles, ...catalogFiles], gradleDependencies, javaImports, gradleUnresolved, allDependencies, mavenFiles.length === 0, artifactEvidence),
   };
 }

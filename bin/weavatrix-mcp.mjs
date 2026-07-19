@@ -3,4 +3,5 @@
 // while the server itself stays a plain module. Positional args pass through:
 //   weavatrix-mcp <repoRoot> [caps]               — graph path derived automatically
 //   weavatrix-mcp <graph.json> <repoRoot> [caps]  — explicit graph file
-import('../src/mcp-server.mjs')
+const {startMcpServer} = await import('../src/mcp-server.mjs')
+await startMcpServer()

@@ -21,12 +21,12 @@ export function loadArchitectureContract(repoRoot, graphPath) {
     }
     const cached = graphPath ? join(dirname(graphPath), 'architecture.contract.json') : null
     return cached && existsSync(cached)
-        ? readContract(cached, 'hosted-cache')
+        ? readContract(cached, 'extension-cache')
         : {contract: null, source: null, error: null}
 }
 
 export function writeCachedArchitectureContract(graphPath, input) {
-    if (!graphPath) throw new Error('graph path is required for hosted contract cache')
+    if (!graphPath) throw new Error('graph path is required for extension contract cache')
     const contract = normalizeArchitectureContract(input)
     const path = join(dirname(graphPath), 'architecture.contract.json')
     mkdirSync(dirname(path), {recursive: true})

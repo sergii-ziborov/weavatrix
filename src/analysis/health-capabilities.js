@@ -39,6 +39,7 @@ export function buildHealthCapabilityMatrix({
   const noDependencyEvidence = ecosystemRows.length === 0;
   const onlyUnsupportedDependencies = unsupportedDependencyRows.length > 0 && supportedDependencyRows.length === 0;
   const advisorySupported = supportedDependencyRows.some((item) => ["npm", "go", "python", "rust", "maven", "gradle"].includes(item.ecosystem));
+  const onlyRustAdvisories = supportedDependencyRows.length > 0 && supportedDependencyRows.every((item) => item.ecosystem === "rust");
   const malwareSupported = supportedDependencyRows.some((item) => ["npm", "go", "python"].includes(item.ecosystem));
   const coverageSupported = [...languages].some((language) => ["javascript/typescript", "python", "go"].includes(language));
   const runtimeFiles = Number(correctnessCoverage.runtimeCorrectnessFiles || 0);
@@ -71,7 +72,7 @@ export function buildHealthCapabilityMatrix({
     concurrency: concurrencyFiles
       ? capability("CHECKED", "PARTIAL", `Checked ${concurrencyFiles} Java source file(s) for direct InterruptedException restore/rethrow evidence. No race detector ran; race freedom is not claimed.`)
       : capability("NOT_SUPPORTED", "PARTIAL", "No supported Java interruption check applied. No race detector ran; race freedom is not claimed."),
-    advisories: checkCapability(checks.osv, advisorySupported, "OSV advisory matching"),
+    advisories: checkCapability(onlyRustAdvisories && checks.rustsec?.status === "OK" ? checks.rustsec : checks.osv, advisorySupported, onlyRustAdvisories ? "RustSec advisory matching" : "OSV advisory matching"),
     malware: checkCapability(checks.malware, malwareSupported, "Installed-package malware scanning"),
     coverage: measuredCoverageFiles > 0
       ? capability("CHECKED", "COMPLETE", `Mapped an existing supported coverage report to ${measuredCoverageFiles} file(s).`)

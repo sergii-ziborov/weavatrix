@@ -193,7 +193,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
             totals: {...analysis.totals, endpoints: 0, clientCalls: 0, matches: 0, methodMismatches: 0, uncertainCalls: 0, notDeadExternalUse: 0, notDeadExternalHandlers: 0, possibleExternalUse: 0, unknownLiveness: 0},
         }
         const transportAnalysis = selectedTransport === 'http'
-            ? {transportContractsV: 1, transport: 'http', status: 'COMPLETE', completeness: {complete: true, reasons: []}, totals: {contracts: 0, matches: 0, uncertain: 0, filesScanned: 0}, contracts: [], uncertain: []}
+            ? {transportContractsV: 2, transport: 'http', status: 'COMPLETE', completeness: {complete: true, reasons: []}, totals: {contracts: 0, matches: 0, uncertain: 0, filesScanned: 0, runtimeObservations: 0, runtimeResolved: 0, runtimeReportsComplete: 0}, contracts: [], uncertain: [], runtimeEvidence: {status: 'NOT_APPLICABLE', reports: [], resolvedUnknowns: 0}}
             : analyzeTransportContracts({
                 backend: {id: backendAlias, repoRoot: backend.repoPath, graph: backendGraph.graph},
                 clients: clientGraphs.map((item) => ({id: item.alias, repoRoot: item.record.repoPath, graph: item.graph})),
@@ -201,6 +201,8 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                 includeTests: args.include_tests === true,
                 maxImpactDepth: args.max_impact_depth,
                 maxAffectedFiles: args.max_affected_files,
+                runtimeEvidenceFiles: args.runtime_evidence_files,
+                runtimeEvidenceMaxAgeHours: args.runtime_evidence_max_age_hours,
             })
         const verdict = contractVerdict(analysis, transportAnalysis)
         const reasons = [...new Set([...reconciliationReasons, ...(analysis.completeness?.reasons || []), ...(transportAnalysis.completeness?.reasons || [])])]
@@ -232,7 +234,7 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
             ...transportAnalysis.contracts.filter((contract) => contract.callsites.length).slice(0, topN).map((contract) =>
                 `  ${contract.transport.toUpperCase()} ${contract.service ? `${contract.service}.` : contract.operation ? `${contract.operation} ` : ''}${contract.name} (${contract.file}:${contract.line}) [${contract.liveness}] → ${contract.callsites.length} callsite(s), ${contract.affected.files.length} affected file(s)`),
             completeness.complete
-                ? 'Completeness: complete within the declared repository graphs and supported static HTTP/GraphQL/gRPC/event models.'
+                ? 'Completeness: complete within the declared repository graphs, supported static models and fresh revision-bound runtime capture.'
                 : `Completeness: partial — ${completeness.reasons.join('; ')}.`,
         ]
         const result = {

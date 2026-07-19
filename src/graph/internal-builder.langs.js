@@ -50,6 +50,7 @@ const isDataFile = (p) => DATA_EXT.has(extname(p)) || INFRA_NAME.test(String(p))
 // Claude Code / Codex node. AGENT_DOTFILE lets a few AI-agent instruction dotfiles past the dotfile skip below.
 const DOC_EXT = new Set([".md", ".mdx", ".markdown", ".mdown", ".mkd", ".mkdn", ".rst", ".adoc", ".asciidoc"]);
 const AGENT_DOTFILE = /^\.(cursorrules|windsurfrules|clinerules)$/i;
+const RUNTIME_EVIDENCE = /^\.weavatrix\/(?:reports\/)?transport-runtime\.json$/i;
 const isDocFile = (p) => DOC_EXT.has(extname(p)) || AGENT_DOTFILE.test(String(p).split(/[\\/]/).pop() || "");
 const SKIP = new Set(["node_modules", ".git", "dist", "build", "coverage", "vendor", "weavatrix-graphs", "weavatrix-graphs", ".next", "out", "__pycache__", ".venv", "venv", "env", ".tox", "site-packages", ".mypy_cache", ".pytest_cache"]);
 const MAX_PARSE_BYTES = 1_500_000;   // skip parsing files above this (minified bundles / generated blobs wedge tree-sitter)
@@ -139,6 +140,7 @@ function gitFileUniverse(dir) {
   const files = [];
   for (const rel of raw.split("\0")) {
     if (!rel) continue;
+    if (RUNTIME_EVIDENCE.test(rel.replace(/\\/g, "/"))) continue; // runtime output must not change the source revision it attests
     const full = join(dir, rel);
     let real; try { real = realpathSync.native(full); } catch { continue; } // deleted index entry
     if (!isPathInside(rootReal, real)) continue; // tracked symlink/junction escaping the repo

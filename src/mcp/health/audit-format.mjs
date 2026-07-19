@@ -52,7 +52,7 @@ export const auditFilter = (audit, args, findings = audit.findings, repoRoot = n
 
 const auditChecksLine = (audit) => {
     const check = (name, state) => `${name} ${state?.status || 'ERROR'}${state?.detail ? ` — ${state.detail}` : ''}`
-    return `Checks: ${check('OSV', audit.checks?.osv)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`
+    return `Checks: ${check('OSV', audit.checks?.osv)}; ${check('RustSec report', audit.checks?.rustsec)}; ${check('malware', audit.checks?.malware)}. A NOT_CHECKED/PARTIAL/ERROR check is incomplete or unknown, never a clean zero.`
 }
 
 const auditCapabilityLines = (audit) => {
@@ -72,6 +72,15 @@ const auditCapabilityLines = (audit) => {
         lines.push(`  ${label}: ${item?.status || 'NOT_CHECKED'}/${item?.completeness || 'PARTIAL'} — ${item?.detail || 'Capability evidence was not reported.'}`)
     }
     return lines
+}
+
+const auditExtensionLines = (audit) => {
+    const items = audit.extensionCapabilities || []
+    if (!items.length) return []
+    return [
+        'Extension analyzer matrix (status/completeness):',
+        ...items.map((item) => `  ${item.extension ? `${item.extension}/` : ''}${item.id}: ${item.status}/${item.completeness} — ${item.detail} (${item.findingCount} finding(s)).`),
+    ]
 }
 
 const auditDependencyCoverageLines = (deps) => {
@@ -138,6 +147,7 @@ export const formatOrdinaryAudit = (audit, args, findings = audit.findings, head
         auditDependencySummaryLine(audit, deps),
         ...auditDependencyCoverageLines(deps),
         ...auditCapabilityLines(audit),
+        ...auditExtensionLines(audit),
         `Scoped severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Scoped categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
         pathScope.suppressed ? `Path policy: production-first; suppressed ${pathScope.suppressed} finding(s) whose evidence is entirely test/e2e/generated/mock/story/docs/benchmark/temp or explicitly excluded. Pass include_classified:true to include them.` : 'Path policy: production-first; no classified-only findings were suppressed.',
         `Repository-level ${auditChecksLine(audit)}`,

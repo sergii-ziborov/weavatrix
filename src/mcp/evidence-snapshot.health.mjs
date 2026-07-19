@@ -54,9 +54,9 @@ export function buildHealthSection(graph, audit, repoRoot = null) {
             complexity: {thresholds: COMPLEXITY_THRESHOLDS, analyzed: 0, hotspots: []},
         }
     }
-    // Public/private hosted evidence follows the same production-first path policy as
+    // Source-free extension evidence follows the same production-first path policy as
     // run_audit. Classified-only findings remain available locally through
-    // include_classified:true, but must not turn a hosted production snapshot red.
+    // include_classified:true, but must not turn a production snapshot red.
     const scopedFindings = auditFindingPathScope(audit.findings, {repoRoot}).findings
     const scopedSummary = summarizeFindings(scopedFindings)
     const findings = bounded(scopedFindings.map(sanitizeFinding).filter(Boolean)

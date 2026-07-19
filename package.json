@@ -1,6 +1,6 @@
 {
   "name": "weavatrix",
-  "version": "0.2.19",
+  "version": "0.3.0",
   "type": "module",
   "description": "Local repository intelligence MCP for AI coding agents: reusable architecture graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards.",
   "author": "Sergii Ziborov <sergii.ziborov@gmail.com>",
@@ -20,6 +20,12 @@
   "bin": {
     "weavatrix-mcp": "bin/weavatrix-mcp.mjs"
   },
+  "exports": {
+    "./mcp-runtime": "./src/mcp-runtime.mjs",
+    "./extension-api": "./src/mcp/extension-api.mjs",
+    "./extension/local-services": "./src/extension/local-services.mjs",
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin",
     "src",
@@ -27,6 +33,7 @@
     "scripts/run-agent-task-benchmark.mjs",
     "docs/agent-task-benchmark.md",
     "docs/adr/0001-v0.3-offline-online-split.md",
+    "docs/releases/v0.3.0.md",
     "docs/releases/v0.2.19.md",
     "README.md",
     "SECURITY.md",
@@ -40,7 +47,6 @@
     "benchmark:real:release": "node scripts/run-real-benchmark.mjs --require-all",
     "benchmark:agent": "node scripts/run-agent-task-benchmark.mjs",
     "benchmark:agent:release": "node scripts/run-agent-task-benchmark.mjs --require-independent",
-    "sync:private": "node scripts/sync-private.mjs",
     "build:mcpb": "node scripts/build-mcpb.mjs",
     "verify:release": "node scripts/verify-release.mjs"
   },

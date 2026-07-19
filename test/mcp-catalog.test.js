@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CAPS, loadHotApi } from "../src/mcp/catalog.mjs";
+import { defineWeavatrixExtension } from "../src/mcp/extension-api.mjs";
 
 const names = (api) => new Set(api.tools.map((tool) => tool.name));
 
@@ -45,50 +46,41 @@ test("MCP profiles: offline is the named default and pinned removes retargeting"
   assert.ok(!got.has("sync_graph"));
 });
 
-test("MCP profiles: osv enables only advisory networking", async () => {
-  const api = await loadHotApi(0, "osv");
-  const got = names(api);
-  assert.equal(api.tools.length, 35);
-  assert.ok(got.has("open_repo"));
-  assert.ok(got.has("refresh_advisories"));
-  assert.ok(!got.has("pull_architecture_contract"));
-  assert.ok(!got.has("sync_graph"));
-});
-
-test("MCP profiles: hosted and full expose the complete catalog", async () => {
-  for (const profile of ["hosted", "full"]) {
-    const api = await loadHotApi(0, profile);
-    assert.equal(api.profile, profile);
-    const got = names(api);
-    assert.equal(api.tools.length, 38, profile);
-    assert.ok(got.has("refresh_advisories"), profile);
-    assert.ok(got.has("pull_architecture_contract"), profile);
-    assert.ok(got.has("preview_sync"), profile);
-    assert.ok(got.has("sync_graph"), profile);
+test("MCP profiles: former network profiles fail loudly in the MIT core", async () => {
+  for (const profile of ["online", "osv", "hosted", "full"]) {
+    await assert.rejects(loadHotApi(0, profile), /moved to weavatrix-online/);
   }
 });
 
-test("MCP capabilities: explicit groups select only their tools", async () => {
-  const api = await loadHotApi(0, "retarget,online");
-  assert.equal(api.profile, "custom");
-  assert.deepEqual(
-    [...names(api)].sort(),
-    ["list_known_repos", "open_repo", "preview_sync", "pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()
-  );
+test("MCP extensions add tools, local analyzers, skills and their own profile without replacing core", async () => {
+  const extension = defineWeavatrixExtension({
+    name: "example-online",
+    version: "1.0.0",
+    profiles: {online: [...DEFAULT_CAPS, "example-network"]},
+    tools: [{
+      cap: "example-network", name: "example_sync", description: "example",
+      inputSchema: {type: "object", properties: {}}, run: () => "ok",
+    }],
+    auditProviders: [{id: "example-analysis", network: "none", run: async () => ({status: "CHECKED", completeness: "COMPLETE", findings: []})}],
+    skills: [{name: "example-skill", path: "skill/SKILL.md"}],
+  });
+  const api = await loadHotApi(0, "online", {extensions: [extension]});
+  assert.equal(api.profile, "online");
+  assert.equal(api.tools.length, 35);
+  assert.ok(names(api).has("example_sync"));
+  assert.equal(api.extensions.auditProviders[0].id, "example-analysis");
+  assert.equal(api.extensions.skills[0].name, "example-skill");
+  assert.deepEqual(api.extensions.items[0], {
+    name: "example-online", version: "1.0.0", tools: 1, auditProviders: 1, skills: ["example-skill"],
+  });
 });
 
-test("MCP capabilities: legacy online remains an alias for advisories plus hosted", async () => {
-  const api = await loadHotApi(0, "online");
-  assert.deepEqual(
-    [...names(api)].sort(),
-    ["preview_sync", "pull_architecture_contract", "refresh_advisories", "sync_graph"].sort()
-  );
-  assert.deepEqual([...api.caps], ["advisories", "hosted"]);
-});
-
-test("MCP capabilities: an explicit full capability selection exposes all tools", async () => {
-  const api = await loadHotApi(0, `${DEFAULT_CAPS.join(",")},advisories,hosted`);
-  assert.equal(api.tools.length, 38);
+test("MCP extensions cannot replace a core tool", async () => {
+  const extension = defineWeavatrixExtension({
+    name: "collision", version: "1", profiles: {online: ["graph"]},
+    tools: [{cap: "graph", name: "graph_stats", run: () => "bad"}],
+  });
+  await assert.rejects(loadHotApi(0, "online", {extensions: [extension]}), /collides with an existing tool/);
 });
 
 test("MCP capabilities: an explicit empty selection exposes no tools", async () => {
@@ -239,5 +231,8 @@ test("trace_api_contract schema is registry-scoped and exposes bounded backend-c
   assert.equal(tool.inputSchema.properties.client_wrappers.maxItems, 100);
   assert.equal(tool.inputSchema.properties.client_wrappers.items.properties.url_argument.maximum, 5);
   assert.equal(tool.inputSchema.properties.auto_discover_wrappers.default, true);
+  assert.equal(tool.inputSchema.properties.runtime_evidence_files.maxProperties, 21);
+  assert.equal(tool.inputSchema.properties.runtime_evidence_max_age_hours.maximum, 8760);
+  assert.match(tool.description, /runtime\/OTLP/i);
   assert.equal(tool.inputSchema.properties.output_format.enum[1], "json");
 });

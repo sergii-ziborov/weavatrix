@@ -66,7 +66,10 @@ export function tFindDuplicates(g, args, ctx) {
     const boilerplateNote = analysis.boilerplateSuppressed
         ? ` ${analysis.boilerplateSuppressed} all-router framework boilerplate group(s) were suppressed; pass include_boilerplate:true to inspect them.`
         : ''
-    if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.${smallPolicy}${suppressionNote}${boilerplateNote}`
+    const declarativeNote = analysis.declarativeSuppressed
+        ? ` ${analysis.declarativeSuppressed} immutable declarative catalog group(s) were suppressed; pass include_declarative:true to inspect repeated data shapes.`
+        : ''
+    if (!groups.length) return `No clones at ≥${simMin}% similarity / ≥${tokMin} tokens (${mode} mode). Try lowering the thresholds.${smallPolicy}${suppressionNote}${boilerplateNote}${declarativeNote}`
     const top = groups.slice(0, Math.min(30, Math.max(1, Number(args.top_n) || 15)))
     const lines = top.map((grp, k) => {
         const isStr = grp.members.some((f) => f.kind === 'string')
@@ -74,10 +77,9 @@ export function tFindDuplicates(g, args, ctx) {
         const sites = grp.members.slice(0, 8).map((f) => `     ${f.file}:${f.start}-${f.end}`)
         return [head, ...sites].join('\n')
     })
-    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.${smallPolicy}${suppressionNote}${boilerplateNote}`
+    return `Found ${groups.length} clone group(s) (${mode} mode, ≥${simMin}%, ≥${tokMin} tok${includeStrings ? ', incl. large string literals' : ''}). Top ${top.length}:\n\n${lines.join('\n\n')}\n\nUse read_source on any two sites to compare, then extract shared logic.${smallPolicy}${suppressionNote}${boilerplateNote}${declarativeNote}`
 }
 
 // Focused dead-code review queue. Unlike the broad run_audit surface, this includes functions and
 // methods with bounded source-free evidence, and explicitly demotes framework/dynamic/public API
 // candidates. It never returns an automatic-delete verdict.
-

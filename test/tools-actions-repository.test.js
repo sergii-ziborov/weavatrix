@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tOpenRepo, tPreviewSyncGraph, tPullArchitectureContract, tSyncGraph } from "../src/mcp/tools-actions.mjs";
+import { tOpenRepo } from "../src/mcp/tools-actions.mjs";
 import { loadGraph } from "../src/mcp/graph-context.mjs";
 import { graphOutDirForRepo } from "../src/graph/layout.js";
 
@@ -15,12 +15,6 @@ after(() => {
   else process.env.WEAVATRIX_GRAPH_HOME = previousGraphHome;
   rmSync(testGraphHome, { recursive: true, force: true });
 });
-
-const confirmationFrom = (preview) => {
-  const match = /confirm_token: "([a-f0-9]{24})"/.exec(preview);
-  assert.ok(match, `missing confirmation token in preview:\n${preview}`);
-  return match[1];
-};
 
 test("open_repo: rejects relative paths before retargeting", async () => {
   const out = await tOpenRepo(null, { path: "../another-repo" }, {});

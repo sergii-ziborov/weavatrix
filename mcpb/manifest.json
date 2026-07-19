@@ -2,13 +2,10 @@
   "manifest_version": "0.3",
   "name": "weavatrix",
   "display_name": "Weavatrix",
-  "version": "0.2.19",
-  "description": "Local repository intelligence MCP: reusable code graph for fast application understanding, Health, dead code, clones, history, blast radius and architecture safeguards. Local-first.",
-  "long_description": "Weavatrix builds dependency graphs of local repositories (tree-sitter WASM, no native toolchain) and serves 38 MCP tools, including proof-carrying verified_change, health/dependency audit, clone families, graph history/diff, exact endpoint tracing, architecture contracts and cross-repository API tracing. The default offline profile enables 34 local tools and no HTTP tools; pinned, osv, and hosted/full profiles tighten or explicitly expand that boundary. Hosted profiles add a separate local-only preview_sync approval step before any graph upload.",
-  "author": {
-    "name": "Sergii Ziborov",
-    "url": "https://weavatrix.com"
-  },
+  "version": "0.3.0",
+  "description": "Fully local repository intelligence MCP: reusable graph, LSP-backed impact, Health, dependencies, duplicates, history and architecture safeguards.",
+  "long_description": "Weavatrix builds dependency graphs of local repositories with bundled tree-sitter WASM and a bounded TypeScript/JavaScript language-server provider. It serves 34 network-free MCP tools for graph queries, source context, proof-carrying changes, Health, dependency analysis, clone review, history, architecture rules and cross-repository static contracts. The offline profile enables all local tools; pinned removes repository retargeting and cross-repository access.",
+  "author": {"name": "Sergii Ziborov", "url": "https://weavatrix.com"},
   "homepage": "https://weavatrix.com",
   "documentation": "https://github.com/sergii-ziborov/weavatrix#readme",
   "privacy_policies": ["https://weavatrix.com/privacy"],
@@ -21,15 +18,9 @@
     "entry_point": "bin/weavatrix-mcp.mjs",
     "mcp_config": {
       "command": "node",
-      "args": [
-        "${__dirname}/bin/weavatrix-mcp.mjs",
-        "${user_config.repo_root}",
-        "${user_config.capabilities}"
-      ],
+      "args": ["${__dirname}/bin/weavatrix-mcp.mjs", "${user_config.repo_root}", "${user_config.capabilities}"],
       "env": {
         "WEAVATRIX_PRECISION": "${user_config.precision}",
-        "WEAVATRIX_SYNC_URL": "${user_config.sync_url}",
-        "WEAVATRIX_SYNC_TOKEN": "${user_config.sync_token}",
         "WEAVATRIX_ALLOW_TEST_RUNS": "${user_config.allow_test_runs}"
       }
     }
@@ -43,30 +34,17 @@
     },
     "capabilities": {
       "type": "string",
-      "title": "Security profile or capability groups",
-      "description": "Use one profile: offline (default, no HTTP), pinned (no HTTP, repo switching, or cross-repo graph access), osv (explicit advisory refresh), hosted/full (owner-authenticated sync and contract pull). Advanced: exact comma-separated graph,search,source,health,build,retarget,crossrepo,advisories,hosted. Legacy online remains an alias for advisories,hosted.",
+      "title": "Local security profile or capability groups",
+      "description": "Use offline (default) or pinned. Advanced: exact comma-separated graph,search,source,health,build,retarget,crossrepo. Online/Cloud/Enterprise tools belong to the separate weavatrix-online package.",
       "default": "offline",
       "required": true
     },
     "precision": {
       "type": "string",
       "title": "TypeScript/JavaScript semantic precision",
-      "description": "Use lsp (default) for Weavatrix's bundled bounded language-server overlay, or off for parser-only graphs. This is applied before the first graph build.",
+      "description": "Use lsp (default) for the bundled bounded language-server overlay, or off for parser-only graphs.",
       "default": "lsp",
       "required": true
-    },
-    "sync_url": {
-      "type": "string",
-      "title": "Optional graph sync endpoint",
-      "description": "Endpoint you configure and control. preview_sync validates it and constructs the exact payload locally without networking; sync_graph sends only with dry_run:false plus that exact short-lived confirmation token; pull_architecture_contract sends only the repository UUID.",
-      "required": false
-    },
-    "sync_token": {
-      "type": "string",
-      "title": "Optional graph sync token",
-      "description": "Bearer token sent only to the configured hosted endpoint by a confirmed sync_graph request or pull_architecture_contract.",
-      "sensitive": true,
-      "required": false
     },
     "allow_test_runs": {
       "type": "string",
@@ -76,10 +54,5 @@
       "required": true
     }
   },
-  "compatibility": {
-    "platforms": ["win32", "darwin", "linux"],
-    "runtimes": {
-      "node": ">=18"
-    }
-  }
+  "compatibility": {"platforms": ["win32", "darwin", "linux"], "runtimes": {"node": ">=18"}}
 }
