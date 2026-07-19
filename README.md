@@ -28,7 +28,7 @@ Enterprise deployment through one source-free wire contract. It is a thin
 extension of this package, not a fork of the parser/graph/Health engine, so core
 updates arrive as normal dependency updates.
 
-Version 0.2.18 still contains the explicit opt-in compatibility profiles
+Version 0.2.19 still contains the explicit opt-in compatibility profiles
 documented below. The paired 0.3/0.1 release removes their network
 implementations from this package; until then the new connector is not
 publishable. The decision and release gates are in
@@ -429,6 +429,18 @@ time, output bytes/token estimate, graph freshness/revision/update and graph-cac
 metrics are not persisted or transmitted by Weavatrix. If a source checkout's package version moves
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
+
+### 0.2.19 supply-chain signal precision
+
+- Installed-package URL literals and ordinary standalone network calls no longer become malware
+  findings without a separate security signal. They remain bounded co-evidence beside behavior such
+  as environment harvesting, while exfil endpoints, public raw IPs and fetch-plus-exec stay active.
+- Unicode variation selectors used for emoji/presentation are no longer confused with hidden text
+  controls. Bidirectional override/isolate controls remain covered.
+- Real Hosted dogfood now completes OSV over 651 package versions and the local malware sweep over
+  535 installed packages with zero critical/high/medium/low findings.
+
+Full patch notes: [docs/releases/v0.2.19.md](docs/releases/v0.2.19.md).
 
 ### 0.2.18 repository-root and self-audit trust patch
 
