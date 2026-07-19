@@ -14,7 +14,7 @@ export const MALWARE_ALLOWLIST = new Set([
 // webhook.site / oast.* / canarytokens / dnslog.cn: Shai-Hulud-era exfil + OOB-callback services.
 const EXFIL_HOSTS = "discord(app)?\\.com/api/webhooks|hooks\\.slack\\.com/services|api\\.telegram\\.org/bot|pastebin\\.com/raw|burpcollaborator|oastify\\.com|oast\\.(pro|live|fun|me|site|online)|interact\\.sh|pipedream\\.net|requestbin|webhook\\.site|canarytokens\\.(com|org)|dnslog\\.cn";
 // external URL that is NOT an exfil endpoint (owned by exfil-url) and NOT a raw IP (owned by exfil-ip)
-const PLAIN_EXTERNAL_URL = `https?://(?!(${EXFIL_HOSTS})|[0-9]{1,3}\\.|localhost\\b|127\\.|0\\.0\\.0\\.0|10\\.|192\\.168\\.|169\\.254\\.|172\\.(1[6-9]|2\\d|3[01])\\.)[^'"\`\\s)\\\\]+`;
+const PLAIN_EXTERNAL_URL = `https?://(?!(${EXFIL_HOSTS})|[0-9]{1,3}\\.|localhost\\b|127\\.|0\\.0\\.0\\.0|10\\.|192\\.168\\.|169\\.254\\.|172\\.(1[6-9]|2\\d|3[01])\\.)[a-z0-9][^'"\`\\s)\\\\]+`;
 
 // ---- content rules (scanned over node_modules file text; `pattern` is ripgrep-safe ERE, `re` is the
 // JS validator used both to classify rg hits and by the no-rg fallback) ----
@@ -181,8 +181,8 @@ export const CONTENT_RULES = [
     severity: "low", // minified/legit code look-alikes — only escalates with a second signal
     nearZeroFp: false,
     noisy: true,
-    pattern: "eval\\(atob\\(|eval\\(Buffer\\.from\\(|_0x[a-f0-9]{4}",
-    re: /eval\(atob\(|eval\(Buffer\.from\([^)]*base64|_0x[a-f0-9]{4,}/,
+    pattern: "eval\\(atob\\(|eval\\(Buffer\\.from\\(|\\b_0x[a-f0-9]{4,}\\b",
+    re: /eval\(atob\(|eval\(Buffer\.from\([^)]*base64|\b_0x[a-f0-9]{4,}\b/,
     what: "obfuscation marker (eval-of-decoded payload / string-array obfuscator)",
   },
 ];

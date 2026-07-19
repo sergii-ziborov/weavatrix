@@ -98,6 +98,26 @@ export function entryFiles(graph, pkgOrScopes, dynamicTargets = new Set(), { dec
     const f = n.source_file;
     if (ENTRY_FILE.test(f) || isFrameworkEntryFile(f) || /\.d\.[cm]?ts$/i.test(f) || TEST_FILE_RE.test(f) || /\.html?$/i.test(f) || pe.has(f) || /(^|\/)[^/]*\.config\.[a-z]+$/i.test(f)) entries.add(f);
   }
+  // Classic/static HTML pages load scripts, styles and other assets without a
+  // JavaScript import edge. Treat an exact local src/href target as an entry
+  // surface so a deployed asset is not mislabeled orphan/dead.
+  for (const [rawFile, rawText] of sources || []) {
+    const htmlFile = String(rawFile || "").replace(/\\/g, "/");
+    if (!/\.html?$/i.test(htmlFile)) continue;
+    const htmlDir = posix.dirname(htmlFile);
+    const attr = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+    let match;
+    while ((match = attr.exec(String(rawText || "")))) {
+      const rawTarget = String(match[1] || "").trim().split(/[?#]/, 1)[0];
+      if (!rawTarget || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(rawTarget)) continue;
+      const relative = rawTarget.replace(/^\/+/, "");
+      const candidates = rawTarget.startsWith("/")
+        ? [posix.normalize(posix.join(htmlDir, relative)), posix.normalize(relative)]
+        : [posix.normalize(posix.join(htmlDir, relative))];
+      const target = candidates.find((candidate) => fileSet.has(candidate));
+      if (target) entries.add(target);
+    }
+  }
   for (const evidence of springConventionEntries(sources, fileSet)) {
     entries.add(evidence.file);
     conventionEvidence.push(evidence);

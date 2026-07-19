@@ -88,6 +88,7 @@ const BENIGN_URL_HOSTS = [
   "apache.org", "opensource.org", "gnu.org", "creativecommons.org", "choosealicense.com",
   "mozilla.org", "nodejs.org", "npmjs.com", "npmjs.org", "yarnpkg.com", "python.org", "pypi.org",
   "golang.org", "go.dev", "godoc.org", "readthedocs.io", "readthedocs.org", "editorconfig.org",
+  "aka.ms", "example.com", "example.org", "example.net",
 ];
 const DOC_URL_PATH_RE = /\/(docs?|documentation|wiki|issues?|pull|blob|tree|releases|licenses?|rfc\d*|help|manual|guide|spec|schemas?)([/#?.]|$)/i;
 const URL_TOKEN_RE = /https?:\/\/[^\s'"`)\\<>]+/gi;
@@ -109,7 +110,7 @@ export function isBenignUrlContext(text) {
   const s = String(text || "");
   const urls = [...s.matchAll(URL_TOKEN_RE)];
   if (!urls.length) return false;
-  if (COMMENT_MARKER_RE.test(s.slice(Math.max(0, urls[0].index - 80), urls[0].index))) return true;
+  if (COMMENT_MARKER_RE.test(s.slice(0, urls[0].index))) return true;
   return urls.every((m) => {
     const pre = s.slice(Math.max(0, m.index - 80), m.index);
     const post = s.slice(m.index + m[0].length, m.index + m[0].length + 48);

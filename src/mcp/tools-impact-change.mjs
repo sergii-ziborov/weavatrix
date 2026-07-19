@@ -5,15 +5,10 @@ import {childProcessEnv} from '../child-env.js'
 import {classifyChangeImpact} from '../analysis/change-classification.js'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
 import {computeStaticTestReachability} from '../analysis/static-test-reachability.js'
-import {isStructuralRelation} from '../graph/relations.js'
 import {degreeOf, labelOf, rawGraph} from './graph-context.mjs'
+import {reverseReach} from './graph/reverse-reach.mjs'
+import {gitLines} from './git-output.mjs'
 import {toolResult} from './tool-result.mjs'
-
-function gitLines(repoRoot, args) {
-    const result = spawnSync('git', ['-C', repoRoot, ...args], {encoding: 'utf8', timeout: 8000, env: childProcessEnv()})
-    if (result.status !== 0) return null
-    return String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-}
 
 function gitValue(repoRoot, args) {
     const result = spawnSync('git', ['-C', repoRoot, ...args], {encoding: 'utf8', timeout: 8000, env: childProcessEnv()})
@@ -28,37 +23,6 @@ function resolveImpactBase(repoRoot, requested) {
         if (value) return ref
     }
     return null
-}
-
-function reverseReach(g, seeds, maxDepth) {
-    const states = new Map([...seeds].map((id) => [String(id), {
-        runtimeDepth: 0, runtimeRelation: null, compileDepth: null, compileRelation: null,
-    }]))
-    const frontier = [...seeds].map((id) => ({id: String(id), depth: 0, compileOnly: false}))
-    for (let cursor = 0; cursor < frontier.length; cursor++) {
-        const current = frontier[cursor]
-        if (current.depth >= maxDepth) continue
-        for (const edge of g.inn.get(current.id) || []) {
-            if (isStructuralRelation(edge.relation) || edge.barrelProxy === true) continue
-            const id = String(edge.id)
-            const compileOnly = current.compileOnly || edge.typeOnly === true || edge.compileOnly === true
-            const depth = current.depth + 1
-            const entry = states.get(id) || {runtimeDepth: null, runtimeRelation: null, compileDepth: null, compileRelation: null}
-            const depthKey = compileOnly ? 'compileDepth' : 'runtimeDepth'
-            const relationKey = compileOnly ? 'compileRelation' : 'runtimeRelation'
-            if (entry[depthKey] != null && entry[depthKey] <= depth) continue
-            entry[depthKey] = depth
-            entry[relationKey] = edge.relation || 'rel'
-            states.set(id, entry)
-            frontier.push({id, depth, compileOnly})
-        }
-    }
-    return new Map([...states].map(([id, entry]) => [id, {
-        ...entry,
-        depth: entry.runtimeDepth ?? entry.compileDepth ?? 0,
-        compileOnly: entry.runtimeDepth == null,
-        relation: entry.runtimeDepth != null ? entry.runtimeRelation : entry.compileRelation,
-    }]))
 }
 
 const impactKind = (entry) => entry?.runtimeDepth != null

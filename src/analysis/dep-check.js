@@ -7,7 +7,9 @@
 // script/config-text mention scanning + a config-ecosystem prefix rule, and we NEVER say "safe to
 // auto-remove", only "review".
 import { makeFinding } from "./findings.js";
+import {FRAMEWORK_RUNTIME_PEERS, IMPLICIT_STYLE_COMPILERS} from './dependency/conventions.js'
 import {createScopedDepFindings} from './dependency/scoped-dependencies.js'
+import {createPackageSourceMatcher} from './dependency/source-references.js'
 
 // Packages referenced by config CONVENTION, not imports (eslint extends "airbnb" → eslint-config-airbnb).
 // Flagged only at low confidence when nothing mentions them anywhere.
@@ -21,22 +23,6 @@ const BIN_PKG = {
   "electron-rebuild": "@electron/rebuild", playwright: "@playwright/test",
 };
 
-// Required peers consumed inside a framework/build tool rather than imported by application source.
-// These contracts are package-scope local and deliberately narrow; declaring the provider is required
-// for suppression, so an unrelated app still gets the normal unused-dependency finding.
-const FRAMEWORK_RUNTIME_PEERS = new Map([
-  ["next", ["react-dom"]], ["vinext", ["@vitejs/plugin-react", "@vitejs/plugin-rsc", "react-server-dom-webpack", "vite"]],
-  ["electron-vite", ["vite"]], ["@cloudflare/vite-plugin", ["vite", "wrangler"]],
-]);
-
-// Style preprocessors are compiler inputs rather than JavaScript imports. Their presence is proven by
-// source extensions in the same package scope, so do not report them as unused merely because Vite,
-// webpack, etc. load them internally. Keep this list to exact compiler/package contracts.
-const IMPLICIT_STYLE_COMPILERS = new Map([
-  ["sass", /\.(?:scss|sass)$/i], ["sass-embedded", /\.(?:scss|sass)$/i],
-  ["less", /\.less$/i], ["stylus", /\.styl(?:us)?$/i],
-]);
-
 const isStylesheetSpecifier = (spec) => /\.(?:css|scss|sass|less|styl(?:us)?)(?:[?#].*)?$/i.test(String(spec || ""));
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // word-ish mention: the name not embedded inside a longer identifier/path segment
@@ -47,9 +33,10 @@ const mentioned = (blob, name) => new RegExp(`(^|[^\\w@.-])${escRe(name)}($|[^\\
 //   pkg             — parsed package.json ({} for non-JS repos → no dep findings)
 //   workspacePkgNames — Set of monorepo-local package names (never "missing")
 //   configTexts     — Map<fileName, text> of root config files + CI workflows (mention scanning)
+//   sourceTexts     — Map<fileName, text> for narrow dynamic/package-path literal evidence
 export function computeDepFindings({
   externalImports = [], pkg = {}, workspacePkgNames = new Set(), configTexts = new Map(),
-  aliases = [], scope = "", manifest = "package.json", nonRuntimeRoots = [], sourceFiles = [],
+  sourceTexts = new Map(), aliases = [], scope = "", manifest = "package.json", nonRuntimeRoots = [], sourceFiles = [],
 } = {}) {
   const findings = [];
   const meta = { scope: scope || ".", manifest };
@@ -137,12 +124,13 @@ export function computeDepFindings({
     return false;
   };
   const typesBase = (name) => (name.startsWith("@types/") ? name.slice(7).replace(/^(.+?)__(.+)$/, "@$1/$2") : null); // @types/babel__core → @babel/core
+  const sourceReferenced = createPackageSourceMatcher(sourceTexts);
 
   // ---- unused dependencies (per section; prod vs dev differ in severity/confidence) ----
   for (const [section, deps] of Object.entries(sections)) {
     if (section === "peerDependencies") continue; // peers are consumer-facing contracts, not usage
     for (const name of Object.keys(deps)) {
-      if (name === selfName || usedPackages.has(name) || frameworkRuntime.has(name) || implicitCompilerUsage.has(name)) continue;
+      if (name === selfName || usedPackages.has(name) || frameworkRuntime.has(name) || implicitCompilerUsage.has(name) || sourceReferenced(name)) continue;
       const tb = typesBase(name);
       if (tb) { // @types/x is used iff x is used (or it types the Node builtins)
         if (tb === "node" ? builtinUsed : usedPackages.has(tb) || frameworkRuntime.has(tb) || mentioned(configBlob, tb)) continue;
@@ -159,7 +147,9 @@ export function computeDepFindings({
         title: `Unused ${section === "dependencies" ? "dependency" : section.replace(/ies$/, "y")}: ${name}`,
         reason: "No indexed package import, package-script command, recognized config mention, framework peer contract, or implicit style-compiler input uses this declaration.",
         detail: `"${name}" is declared in ${section}, but no usage was found in the indexed source scope, package scripts, or ${configTexts.size} known config file(s). Dynamic/plugin/config-convention usage is not proven absent — review before removing.`,
+        file: manifest,
         package: name,
+        evidence: [{ file: manifest, line: 0, snippet: `declared in ${section}` }],
         source: "internal",
         actionability: "MANIFEST_REVIEW_REQUIRED",
         autoRemove: false,

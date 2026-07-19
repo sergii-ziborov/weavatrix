@@ -110,6 +110,32 @@ test("duplicates: two DIFFERENT constant tables (same shape, no shared content) 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("duplicates: same-key policy tables with different numeric limits are not clones", () => {
+  const table = (name, prefix, offset) => `const ${name} = Object.freeze({\n` +
+    Array.from({ length: 40 }, (_, i) => `  ${prefix}_${i}: ${offset + i * 7},`).join("\n") + "\n});\n";
+  const dir = mkdtempSync(join(tmpdir(), "weavatrix-dup-numeric-"));
+  const files = {
+    "src/http-limits.js": table("HTTP_LIMITS", "ROUTE_LIMIT", 100),
+    "src/default-limits.js": table("DEFAULT_LIMITS", "ROUTE_LIMIT", 10_000),
+  };
+  const nodes = [];
+  for (const [rel, content] of Object.entries(files)) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+    nodes.push({ id: rel, label: rel.split("/").pop(), file_type: "code", source_file: rel, source_location: "L1" });
+    nodes.push({ id: `${rel}#table@1`, label: "table", file_type: "code", source_file: rel, source_location: "L1" });
+  }
+  const graphJson = join(dir, "graph.json");
+  writeFileSync(graphJson, JSON.stringify({ nodes, links: [] }));
+  try {
+    const result = computeDuplicates(dir, graphJson);
+    const name = (i) => result.frags[i].file;
+    const pair = result.modes.renamed.find(([i, j]) => [name(i), name(j)].sort().join("+") === "src/default-limits.js+src/http-limits.js");
+    assert.ok(!pair, "different numeric constants remain semantic differences");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("duplicates: symbol-less CSS/HTML/MD files are window-fragmented and their duplicated blocks clone", () => {
   const dir = mkdtempSync(join(tmpdir(), "weavatrix-dup-win-"));
   // a chunky, duplicated stylesheet block (well over the 30-token floor within a 24-line window)

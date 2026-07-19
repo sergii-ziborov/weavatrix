@@ -39,3 +39,18 @@ test("entry discovery: nested package scripts and Next conventions root reachabi
   ]) assert.ok(entries.has(expected), expected);
   assert.ok(!entries.has("web/lib/orphan.ts"));
 });
+
+test("entry discovery: local HTML assets are externally loaded entry surfaces", () => {
+  const graph = {
+    nodes: ["site/index.html", "site/graph-animation.js", "site/theme.css", "src/orphan.js"].map(file),
+    links: [],
+  };
+  const entries = entryFiles(graph, {}, new Set(), {
+    sources: new Map([
+      ["site/index.html", `<script src="/graph-animation.js?v=2"></script><link href="theme.css#dark" rel="stylesheet">`],
+    ]),
+  });
+  assert.ok(entries.has("site/graph-animation.js"));
+  assert.ok(entries.has("site/theme.css"));
+  assert.ok(!entries.has("src/orphan.js"));
+});

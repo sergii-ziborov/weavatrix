@@ -86,6 +86,7 @@ export async function runInternalAudit(repoPath, {
     packageScopes,
     workspacePkgNames: workspacePkgNames(repoPath, pkg),
     configTexts,
+    sourceTexts: sources,
     nonRuntimeRoots,
     sourceFiles: [...sources.keys()],
   });

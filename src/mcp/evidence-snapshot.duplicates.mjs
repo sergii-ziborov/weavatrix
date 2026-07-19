@@ -3,6 +3,7 @@ import {computeDuplicates} from '../analysis/duplicates.js'
 import {
     CAPS, STATE, VERDICT, bounded, compareText, graphId, repoRelativePath,
 } from './evidence-snapshot.common.mjs'
+import {compareDuplicateMember} from './evidence/duplicate-member-order.mjs'
 
 const CLONE_MIN_SIMILARITY = 80
 const DIVERGENCE_MAX_SIMILARITY = 45
@@ -49,11 +50,6 @@ function member(fragment) {
 
 function memberIdentity(value) {
     return `${value.file}\0${value.startLine}\0${value.endLine}\0${value.graphNodeId || ''}`
-}
-
-function compareMember(a, b) {
-    return compareText(a.file, b.file) || a.startLine - b.startLine || a.endLine - b.endLine ||
-        compareText(a.graphNodeId || '', b.graphNodeId || '')
 }
 
 function eligibleMembers(fragments) {
@@ -107,7 +103,7 @@ function cloneGroups(data, membersByIndex) {
             const value = membersByIndex.get(index)
             unique.set(memberIdentity(value), value)
         }
-        const members = [...unique.values()].sort(compareMember)
+        const members = [...unique.values()].sort(compareDuplicateMember)
         if (members.length < 2) continue
         const indexSet = new Set(indices)
         const similarities = links
@@ -141,7 +137,7 @@ function divergenceCandidates(data, membersByIndex) {
             if (!Number.isInteger(left) || !Number.isInteger(right) || left === right || !leftMember || !rightMember ||
                 leftMember.file === rightMember.file || !Number.isFinite(similarity) ||
                 similarity < 0 || similarity > DIVERGENCE_MAX_SIMILARITY) continue
-            const members = [leftMember, rightMember].sort(compareMember)
+            const members = [leftMember, rightMember].sort(compareDuplicateMember)
             pairs.push({
                 similarity: Math.trunc(similarity),
                 totalTokens: members[0].tokens + members[1].tokens,

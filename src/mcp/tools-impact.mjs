@@ -9,45 +9,10 @@ import {
     rawGraph, prevGraphPathFor, edgeEndpoint, diffGraphs, formatGraphDiff,
 } from './graph-context.mjs'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
-import {isStructuralRelation} from '../graph/relations.js'
+import {reverseReach} from './graph/reverse-reach.mjs'
+import {gitLines} from './git-output.mjs'
 import {tChangeImpactV2} from './tools-impact-change.mjs'
 import {buildGraphAtGitRef} from '../analysis/git-ref-graph.js'
-
-function reverseReach(g, seeds, maxDepth) {
-    const states = new Map([...seeds].map((id) => [String(id), {
-        runtimeDepth: 0, runtimeRelation: null, compileDepth: null, compileRelation: null,
-    }]))
-    const frontier = [...seeds].map((id) => ({id: String(id), depth: 0, compileOnly: false}))
-    for (let cursor = 0; cursor < frontier.length; cursor++) {
-        const current = frontier[cursor]
-        if (current.depth >= maxDepth) continue
-        for (const e of g.inn.get(current.id) || []) {
-            if (isStructuralRelation(e.relation) || e.barrelProxy === true) continue
-            const id = String(e.id)
-            const compileOnly = current.compileOnly || e.typeOnly === true || e.compileOnly === true
-            const depth = current.depth + 1
-            const entry = states.get(id) || {
-                runtimeDepth: null, runtimeRelation: null, compileDepth: null, compileRelation: null,
-            }
-            const depthKey = compileOnly ? 'compileDepth' : 'runtimeDepth'
-            const relationKey = compileOnly ? 'compileRelation' : 'runtimeRelation'
-            const provenanceKey = compileOnly ? 'compileProvenance' : 'runtimeProvenance'
-            if (entry[depthKey] != null && entry[depthKey] <= depth) continue
-            entry[depthKey] = depth
-            entry[relationKey] = e.relation || 'rel'
-            entry[provenanceKey] = e.provenance || 'UNKNOWN'
-            states.set(id, entry)
-            frontier.push({id, depth, compileOnly})
-        }
-    }
-    return new Map([...states].map(([id, entry]) => [id, {
-        ...entry,
-        depth: entry.runtimeDepth ?? entry.compileDepth ?? 0,
-        compileOnly: entry.runtimeDepth == null,
-        relation: entry.runtimeDepth != null ? entry.runtimeRelation : entry.compileRelation,
-        provenance: entry.runtimeDepth != null ? entry.runtimeProvenance : entry.compileProvenance,
-    }]))
-}
 
 const impactKind = (entry) => {
     if (entry?.runtimeDepth != null) {
@@ -141,12 +106,6 @@ export async function tGraphDiff(g, args, ctx) {
 }
 
 // ---- change impact -------------------------------------------------------------------------------
-function gitLines(repoRoot, args) {
-    const res = spawnSync('git', ['-C', repoRoot, ...args], {encoding: 'utf8', timeout: 8000, env: childProcessEnv()})
-    if (res.status !== 0) return null
-    return String(res.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-}
-
 function resolveImpactBase(repoRoot, requested) {
     const candidates = requested ? [requested] : ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']
     for (const ref of candidates) {

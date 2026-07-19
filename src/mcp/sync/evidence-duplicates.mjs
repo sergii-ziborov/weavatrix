@@ -2,6 +2,7 @@ import {
     CAPS, DUPLICATE_THRESHOLDS, bool, compare, count, graphId, int, list,
     path, reasons, state, text, verdict,
 } from './evidence-common.mjs'
+import {compareDuplicateMember} from '../evidence/duplicate-member-order.mjs'
 
 function duplicateEvidenceId(value) {
     const id = text(value, 64)
@@ -17,10 +18,6 @@ function duplicateMember(value) {
     const nodeId = graphId(value.graphNodeId)
     if (nodeId?.startsWith(`${file}#`)) out.graphNodeId = nodeId
     return out
-}
-
-function compareDuplicateMember(a, b) {
-    return compare(a.file, b.file) || a.startLine - b.startLine || a.endLine - b.endLine || compare(a.graphNodeId || '', b.graphNodeId || '')
 }
 
 function duplicateMembers(values, cap = CAPS.duplicateMembers) {

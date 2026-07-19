@@ -149,11 +149,17 @@ export function extractLargeStrings(text, { py = false, cs = false, minLines = 6
 
 // one raw token stream; the two modes differ only in identifier canonicalization
 export function tokenize(text) {
-  const raw = text.match(/[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|[^\s\w]/g) || [];
+  const raw = text.match(/[A-Za-z_$][\w$]*|(?:0[xX][\dA-Fa-f_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d[\d_]*)?)n?|[^\s\w]/g) || [];
   const strict = [];
   const renamed = [];
   for (const t of raw) {
-    if (/^\d/.test(t)) { strict.push("N"); renamed.push("N"); continue; }
+    if (/^\d/.test(t)) {
+      // Numeric constants are behavior, not renameable identifiers. Preserve
+      // their value so same-shape limit/config tables with different numbers do
+      // not become perfect clones; a small constant edit still leaves the rest
+      // of a genuine copied body highly similar.
+      strict.push(`N:${t}`); renamed.push(`N:${t}`); continue;
+    }
     if (/^[A-Za-z_$]/.test(t) && !KEYWORDS.has(t)) { strict.push(t); renamed.push("I"); continue; }
     strict.push(t); renamed.push(t);
   }
@@ -178,5 +184,9 @@ export function fingerprints(toks) {
     for (let j = i; j < Math.min(i + W, hashes.length); j++) if (hashes[j] < min) min = hashes[j];
     fp.add(min);
   }
+  // Winnowing can skip every changed literal in a repetitive policy table.
+  // Exact numeric anchors keep behavior-defining limits in the similarity
+  // denominator while leaving ordinary copied bodies tolerant of a small edit.
+  for (const token of toks) if (token.startsWith("N:")) fp.add(`numeric:${token}`);
   return fp;
 }
