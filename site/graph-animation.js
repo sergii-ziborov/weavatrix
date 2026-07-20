@@ -85,23 +85,6 @@
   svg.append(defs)
   svg.append(element('ellipse', {class: 'hg-atmosphere', cx: 300, cy: 222, rx: 270, ry: 205}))
 
-  // Ambient "building-graph" field behind the hero graph: deterministic drifting motes on a
-  // golden-ratio lattice that periodically link up, echoing the graph the tool assembles.
-  const motes = Array.from({length: 24}, (_, i) => ({
-    bx: 40 + ((i * 0.61803398) % 1) * 472,
-    by: 20 + ((i * 0.75487766) % 1) * 400,
-    sp: 0.00016 + (i % 5) * 0.000045,
-    ph: i * 1.37,
-  }))
-  const moteLinks = []
-  for (let a = 0; a < motes.length; a++) for (let b = a + 1; b < motes.length; b++) {
-    if (Math.hypot(motes[a].bx - motes[b].bx, motes[a].by - motes[b].by) < 150) moteLinks.push({a, b, ph: (a * 3 + b) * 0.6})
-  }
-  const moteLayer = element('g', {class: 'hg-motes'})
-  const moteLinkViews = moteLinks.map(() => { const line = element('line', {class: 'hg-mote-link'}); moteLayer.append(line); return line })
-  const moteDots = motes.map(() => { const dot = element('circle', {class: 'hg-mote', r: 2}); moteLayer.append(dot); return dot })
-  svg.append(moteLayer)
-
   const edgeLayer = element('g')
   const impactLayer = element('g')
   const edgeViews = edges.map((edge) => {
@@ -193,24 +176,6 @@
       packet.setAttribute('cx', point.x)
       packet.setAttribute('cy', point.y)
       packet.style.opacity = String(Math.min(.95, edge.active))
-    })
-
-    const moteTime = staticFrame ? 1400 : now
-    motes.forEach((mote, index) => {
-      mote.x = mote.bx + Math.sin(moteTime * mote.sp + mote.ph) * 13
-      mote.y = mote.by + Math.cos(moteTime * mote.sp * .82 + mote.ph * 1.3) * 11
-      const dot = moteDots[index]
-      dot.setAttribute('cx', mote.x)
-      dot.setAttribute('cy', mote.y)
-      dot.style.opacity = String((.36 + (Math.sin(moteTime * .0006 + mote.ph) * .5 + .5) * .5) * intro)
-    })
-    moteLinks.forEach((link, index) => {
-      const a = motes[link.a], b = motes[link.b]
-      const line = moteLinkViews[index]
-      line.setAttribute('x1', a.x); line.setAttribute('y1', a.y)
-      line.setAttribute('x2', b.x); line.setAttribute('y2', b.y)
-      const pulse = Math.max(0, Math.sin(moteTime * .00035 + link.ph))
-      line.style.opacity = String(pulse * pulse * .46 * intro)
     })
   }
 
