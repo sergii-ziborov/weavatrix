@@ -1,6 +1,5 @@
 import {readFileSync} from 'node:fs'
 import {pathToFileURL} from 'node:url'
-import {performance} from 'node:perf_hooks'
 import {retrieveTaskContext} from '../src/analysis/task-retrieval.js'
 
 function graphFixture() {

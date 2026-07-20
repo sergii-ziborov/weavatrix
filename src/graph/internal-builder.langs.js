@@ -5,10 +5,9 @@
 // build works — and Electron main runs Node, so this needs no external runtime.
 import { readdirSync, statSync, realpathSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
-import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { isPathInside } from "../repo-path.js";
-import { childProcessEnv } from "../child-env.js";
+import { runGit } from "../git-exec.js";
 import { filterWeavatrixIgnored } from "../path-ignore.js";
 import {trustedGrammarWasm, trustedRuntimeWasm} from './parser-artifact-boundary.js'
 import LANG_JS from "./builder/lang-js.js";
@@ -112,17 +111,11 @@ function walkFallback(dir, acc = [], seen = new Set(), depth = 0, rootReal = nul
 // A repository may be opened without Git (or Git may be unavailable), so failure is deliberately a signal to
 // use the boundary-safe walker above rather than a build failure.
 function gitFileUniverse(dir) {
-  let raw;
-  try {
-    raw = execFileSync("git", ["-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 15_000,
-      maxBuffer: 64 * 1024 * 1024,
-      env: childProcessEnv(),
-    });
-  } catch { return null; }
+  const lsFiles = runGit(dir, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+    stdio: ["ignore", "pipe", "ignore"], timeout: 15_000, maxBuffer: 64 * 1024 * 1024,
+  });
+  if (lsFiles.status !== 0 || lsFiles.error) return null;
+  const raw = lsFiles.stdout;
 
   // `git -C <dir>` also succeeds when <dir> is merely nested under some parent repository. If that
   // nested directory is ignored by the parent, `ls-files` is empty even though <dir> can be a valid
@@ -130,17 +123,11 @@ function gitFileUniverse(dir) {
   // that one ambiguous case, fall back to the boundary-safe walker. Preserve an empty universe for
   // an actual Git root so ignored files do not leak back into its graph.
   if (!raw) {
-    try {
-      const top = execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
-        encoding: "utf8",
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-        env: childProcessEnv(),
-      }).trim();
-      if (realpathSync.native(top) !== realpathSync.native(dir)) return null;
-    } catch { return null; }
+    const top = runGit(dir, ["rev-parse", "--show-toplevel"], {
+      stdio: ["ignore", "pipe", "ignore"], timeout: 15_000, maxBuffer: 1024 * 1024,
+    });
+    if (top.status !== 0 || top.error) return null;
+    if (realpathSync.native(String(top.stdout).trim()) !== realpathSync.native(dir)) return null;
   }
 
   let rootReal;

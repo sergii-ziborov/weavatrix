@@ -1,6 +1,5 @@
 // Symbol-aware git-diff classification for change_impact.
-import {spawnSync} from 'node:child_process'
-import {childProcessEnv} from '../child-env.js'
+import {runGit} from '../git-exec.js'
 import {createPathClassifier} from '../path-classification.js'
 import {parseZeroContextDiff} from './change-classification/diff-parser.js'
 import {
@@ -33,13 +32,10 @@ function recoverBoundedDiff(repoRoot, base, files, limits) {
             fallbackFiles.push(...files.slice(index))
             break
         }
-        const result = spawnSync('git', [
-            '-C', repoRoot, 'diff', '--no-ext-diff', '--find-renames', '--no-color',
+        const result = runGit(repoRoot, [
+            'diff', '--no-ext-diff', '--find-renames', '--no-color',
             '--unified=0', String(base), '--', files[index],
-        ], {
-            encoding: 'utf8', windowsHide: true, timeout: Math.min(2_000, remainingMs),
-            maxBuffer: remainingBytes + 1, env: childProcessEnv(),
-        })
+        ], {timeout: Math.min(2_000, remainingMs), maxBuffer: remainingBytes + 1})
         const chunk = String(result.stdout || '')
         if (result.status !== 0 || !chunk || Buffer.byteLength(chunk) > remainingBytes) {
             fallbackFiles.push(files[index])
@@ -51,11 +47,8 @@ function recoverBoundedDiff(repoRoot, base, files, limits) {
 }
 
 function runGitDiff(repoRoot, base, limits) {
-    const args = ['-C', repoRoot, 'diff', '--no-ext-diff', '--find-renames', '--no-color', '--unified=0', String(base), '--']
-    const result = spawnSync('git', args, {
-        encoding: 'utf8', windowsHide: true, timeout: 12_000,
-        maxBuffer: limits.maxDiffBytes + 1, env: childProcessEnv(),
-    })
+    const args = ['diff', '--no-ext-diff', '--find-renames', '--no-color', '--unified=0', String(base), '--']
+    const result = runGit(repoRoot, args, {timeout: 12_000, maxBuffer: limits.maxDiffBytes + 1})
     const output = String(result.stdout || '')
     const oversized = result.error?.code === 'ENOBUFS' || Buffer.byteLength(output) > limits.maxDiffBytes
     if (result.status === 0 && !oversized) return {available: true, text: output, error: null}
@@ -63,12 +56,9 @@ function runGitDiff(repoRoot, base, limits) {
     let fallbackTruncated = false
     let recoveredText = ''
     if (oversized) {
-        const names = spawnSync('git', [
-            '-C', repoRoot, 'diff', '--name-only', '-z', '--no-ext-diff', '--find-renames', String(base), '--',
-        ], {
-            encoding: 'utf8', windowsHide: true, timeout: 12_000,
-            maxBuffer: Math.max(64 * 1024, limits.maxFiles * 4_096), env: childProcessEnv(),
-        })
+        const names = runGit(repoRoot, [
+            'diff', '--name-only', '-z', '--no-ext-diff', '--find-renames', String(base), '--',
+        ], {timeout: 12_000, maxBuffer: Math.max(64 * 1024, limits.maxFiles * 4_096)})
         if (names.status === 0) {
             const all = String(names.stdout || '').split('\0').map(normalizeChangePath).filter(Boolean)
             const boundedFiles = [...new Set(all)].sort((a, b) => a.localeCompare(b)).slice(0, limits.maxFiles)

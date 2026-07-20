@@ -1,4 +1,3 @@
-import {spawn} from 'node:child_process'
 import {isWeavatrixIgnored} from '../../path-ignore.js'
 import {
     boundedHistoryInteger,
@@ -10,48 +9,7 @@ import {
 const HEADER_SEPARATOR = '\x1e'
 const FIELD_SEPARATOR = '\x1f'
 
-export function boundedGitCommand(command, args, options) {
-    return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            cwd: options.cwd, env: options.env, shell: false, windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
-        })
-        const stdout = [], stderr = []
-        let stdoutBytes = 0, stderrBytes = 0, truncated = false, timedOut = false, settled = false
-        const finish = (callback) => {
-            if (settled) return
-            settled = true
-            clearTimeout(timer)
-            callback()
-        }
-        const stop = () => { try { child.kill('SIGKILL') } catch { /* process already exited */ } }
-        const timer = setTimeout(() => { timedOut = true; stop() }, options.timeoutMs)
-        child.stdout?.on('data', (chunk) => {
-            if (truncated) return
-            const remaining = options.maxOutputBytes - stdoutBytes
-            if (remaining <= 0) { truncated = true; stop(); return }
-            const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining)
-            stdout.push(kept); stdoutBytes += kept.length
-            if (kept.length !== chunk.length) { truncated = true; stop() }
-        })
-        child.stderr?.on('data', (chunk) => {
-            const remaining = 64 * 1024 - stderrBytes
-            if (remaining <= 0) return
-            const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining)
-            stderr.push(kept); stderrBytes += kept.length
-        })
-        child.on('error', (error) => finish(() => reject(error)))
-        child.on('close', (exitCode) => finish(() => {
-            if (timedOut) return reject(new Error('git history collection timed out'))
-            resolve({
-                stdout: Buffer.concat(stdout),
-                stderr: Buffer.concat(stderr).toString('utf8'),
-                exitCode: Number(exitCode ?? 1),
-                truncated,
-            })
-        }))
-    })
-}
+// git subprocess execution (sync runGit + streaming boundedGitCommand) lives in ../../git-exec.js.
 
 const statNumber = (value) => value === '-'
     ? {value: 0, binary: true}

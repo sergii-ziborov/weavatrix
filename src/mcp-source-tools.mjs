@@ -1,8 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { resolveRepoPath } from './repo-path.js'
-import { childProcessEnv } from './child-env.js'
+import { runCommandSync } from './process.js'
 import { toolResult } from './mcp/tool-result.mjs'
 
 const SEARCH_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', 'out', '.next', 'coverage', 'vendor', '.venv', 'venv', 'env', 'target', '__pycache__', '.idea', '.vscode', '.cache', 'bin', 'obj', 'weavatrix-graphs'])
@@ -11,7 +10,7 @@ const MAX_SEARCH_FILE_BYTES = 1024 * 1024
 const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SOURCE_CONTEXT_LINES = 1000
 
-function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }, spawnRg = spawnSync) {
+function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }, spawnRg = runCommandSync) {
     const rg = resolveRg()
     if (!rg) return null
     // Exclude node_modules explicitly: --hidden + the default gitignore stack is the only thing that
@@ -24,7 +23,7 @@ function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }, spa
     // against repository-relative paths on Windows too. Passing an absolute search root makes rg
     // compare the glob with a drive-prefixed path and silently return no matches.
     args.push('--', query, '.')
-    const res = spawnRg(rg, args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15000, env: childProcessEnv() })
+    const res = spawnRg(rg, args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15000 })
     if (res.status !== 0 && res.status !== 1) return null
     const out = []
     for (const line of (res.stdout || '').split(/\r?\n/)) {
@@ -93,7 +92,7 @@ function nodeGrep(repoRoot, query, { isRegex, glob, maxResults }) {
     return out
 }
 
-export function searchCode({ repoRoot, resolveRg, spawnRg = spawnSync }, { query, is_regex = false, max_results = 40, glob } = {}) {
+export function searchCode({ repoRoot, resolveRg, spawnRg = runCommandSync }, { query, is_regex = false, max_results = 40, glob } = {}) {
     if (!query) return 'Provide a "query" string.'
     if (!repoRoot || !existsSync(repoRoot)) return 'Source search unavailable: repo root not provided to this MCP server.'
     const max = Math.max(1, Math.min(200, Number(max_results) || 40))

@@ -1,5 +1,5 @@
 // Subprocess runner shared by the search engines and security sweeps.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { childProcessEnv } from "./child-env.js";
 
 // Windows: .cmd/.ps1 shims (npx, etc.) can't be spawned directly by Node — they need a
@@ -75,4 +75,21 @@ export function runCommand(command, args = [], options = {}) {
     child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (code) => finish(() => (timedOut ? reject(new Error("Command timed out")) : resolve({ stdout, stderr, exitCode: code }))));
   });
+}
+
+// Synchronous run-and-collect variant for callers that resolve a real binary and read its output in
+// one shot (ripgrep resolution/search, tar extraction). These launch a resolved .exe or bare binary
+// directly, so no shell quoting is needed; the child env is stripped of connector secrets and a
+// bounded timeout/buffer applies. Returns the raw spawnSync result ({status, stdout, stderr, error}).
+export function runCommandSync(command, args = [], options = {}) {
+  const spawnOptions = {
+    cwd: options.cwd || undefined,
+    encoding: options.encoding ?? "utf8",
+    env: childProcessEnv(options.env),
+    windowsHide: true,
+  };
+  if (options.timeout != null) spawnOptions.timeout = options.timeout;
+  if (options.maxBuffer != null) spawnOptions.maxBuffer = options.maxBuffer;
+  if (options.stdio != null) spawnOptions.stdio = options.stdio;
+  return spawnSync(command, args, spawnOptions);
 }

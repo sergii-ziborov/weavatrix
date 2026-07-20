@@ -1,9 +1,7 @@
 import { readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
-import { childProcessEnv } from './child-env.js'
 import { createRequire } from 'node:module'
-import process from 'node:process'
+import { runCommandSync } from './process.js'
 
 const rgInInstall = (base) => [
     join(base, 'resources', 'app', 'node_modules', '@vscode', 'ripgrep', 'bin', 'rg.exe'),
@@ -43,7 +41,7 @@ export function createRgResolver(selfDir) {
         } catch { /* optional packaged ripgrep path */ }
         for (const c of editorRgCandidates()) if (existsSync(c)) return (rgPath = c)
         try {
-            const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['rg'], {encoding: 'utf8', env: childProcessEnv(), timeout: 3000, windowsHide: true})
+            const probe = runCommandSync(process.platform === 'win32' ? 'where' : 'which', ['rg'], {timeout: 3000})
             const p = probe.status === 0 ? probe.stdout.split(/\r?\n/)[0].trim() : ''
             if (p && existsSync(p)) return (rgPath = p)
         } catch { /* optional PATH probe */ }

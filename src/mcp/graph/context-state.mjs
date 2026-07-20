@@ -1,7 +1,6 @@
 import {readFileSync, statSync} from 'node:fs'
 import {join} from 'node:path'
-import {spawnSync} from 'node:child_process'
-import {childProcessEnv} from '../../child-env.js'
+import {runGit} from '../../git-exec.js'
 import {resolveRepoPath} from '../../repo-path.js'
 import {mergePrecisionOverlay, precisionSemanticInputsMatch, readPrecisionOverlay} from '../../precision/lsp-overlay.js'
 
@@ -14,19 +13,19 @@ export function graphStaleness(ctx) {
     try { info.builtAt = statSync(ctx.graphPath).mtime } catch { /* no graph file */ }
     if (ctx.repoRoot && info.builtAt) {
         try {
-            const head = spawnSync('git', ['-C', ctx.repoRoot, 'log', '-1', '--format=%cI'], {encoding: 'utf8', timeout: 4000, env: childProcessEnv()})
+            const head = runGit(ctx.repoRoot, ['log', '-1', '--format=%cI'], {timeout: 4000})
             const iso = (head.stdout || '').trim()
             if (head.status === 0 && iso) {
                 info.headAt = new Date(iso)
                 if (info.headAt > info.builtAt) {
                     info.stale = true
-                    const count = spawnSync('git', ['-C', ctx.repoRoot, 'rev-list', '--count', `--since=${info.builtAt.toISOString()}`, 'HEAD'], {encoding: 'utf8', timeout: 4000, env: childProcessEnv()})
+                    const count = runGit(ctx.repoRoot, ['rev-list', '--count', `--since=${info.builtAt.toISOString()}`, 'HEAD'], {timeout: 4000})
                     if (count.status === 0) info.behind = Number(count.stdout.trim()) || null
                 }
             }
         } catch { /* git unavailable */ }
         try {
-            const status = spawnSync('git', ['-C', ctx.repoRoot, 'status', '--porcelain'], {encoding: 'utf8', timeout: 4000, env: childProcessEnv()})
+            const status = runGit(ctx.repoRoot, ['status', '--porcelain'], {timeout: 4000})
             if (status.status === 0) {
                 let newer = 0
                 for (const line of String(status.stdout || '').split(/\r?\n/).filter(Boolean).slice(0, 200)) {

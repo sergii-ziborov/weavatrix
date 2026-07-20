@@ -29,6 +29,7 @@
         "src/bounds.js",
         "src/child-env.js",
         "src/config.js",
+        "src/git-exec.js",
         "src/mcp-rg.mjs",
         "src/path-classification.js",
         "src/path-ignore.js",

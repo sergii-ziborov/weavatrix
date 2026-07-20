@@ -4,18 +4,15 @@
 import {mkdtempSync, mkdirSync, rmSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
-import {spawnSync} from 'node:child_process'
-import {childProcessEnv} from '../child-env.js'
+import {runGit} from '../git-exec.js'
+import {runCommandSync} from '../process.js'
 import {buildInternalGraph} from '../graph/internal-builder.js'
 import {filterGraphForMode} from '../graph/graph-filter.js'
 
 const SAFE_REF = /^(?!-)[A-Za-z0-9][A-Za-z0-9._\/@{}+~^-]{0,199}$/
 
 function git(repoRoot, args, timeout = 15_000) {
-    return spawnSync('git', ['-C', repoRoot, ...args], {
-        encoding: 'utf8', timeout, env: childProcessEnv(), windowsHide: true,
-        maxBuffer: 4 * 1024 * 1024,
-    })
+    return runGit(repoRoot, args, {timeout, maxBuffer: 4 * 1024 * 1024})
 }
 
 export function resolveGitCommit(repoRoot, requestedRef) {
@@ -41,10 +38,7 @@ export async function withGitRefCheckout(repoRoot, requestedRef, operation) {
         if (archived.status !== 0) {
             return {ok: false, error: `git archive failed for ${resolved.ref}: ${String(archived.stderr || '').trim() || 'unknown error'}`}
         }
-        const extracted = spawnSync('tar', ['-xf', archive, '-C', checkout], {
-            encoding: 'utf8', timeout: 60_000, env: childProcessEnv(), windowsHide: true,
-            maxBuffer: 4 * 1024 * 1024,
-        })
+        const extracted = runCommandSync('tar', ['-xf', archive, '-C', checkout], {timeout: 60_000, maxBuffer: 4 * 1024 * 1024})
         if (extracted.status !== 0) {
             return {ok: false, error: `temporary Git archive extraction failed: ${String(extracted.stderr || '').trim() || 'tar unavailable'}`}
         }

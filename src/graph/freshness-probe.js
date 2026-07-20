@@ -2,10 +2,9 @@
 // authority when something changed; this exact Git/worktree token is safe to cache in-process and in
 // versioned graph metadata when HEAD + dirty/untracked/control-file content remain unchanged.
 import {createHash} from 'node:crypto'
-import {spawnSync} from 'node:child_process'
 import {readFileSync, statSync} from 'node:fs'
 import {createRequire} from 'node:module'
-import {childProcessEnv} from '../child-env.js'
+import {runGit} from '../git-exec.js'
 import {createRepoBoundary} from '../repo-path.js'
 
 const REPOSITORY_FRESHNESS_PROBE_V = 1
@@ -34,9 +33,7 @@ const CONTROL_FILES = ['.gitignore', '.weavatrixignore', '.weavatrix.json']
 const MAX_CONTROL_BYTES = 1_000_000
 
 function git(repoRoot, args) {
-    const result = spawnSync('git', ['-C', repoRoot, ...args], {
-        encoding: 'buffer', timeout: 8000, windowsHide: true, env: childProcessEnv(), maxBuffer: 16 * 1024 * 1024,
-    })
+    const result = runGit(repoRoot, args, {encoding: 'buffer', maxBuffer: 16 * 1024 * 1024})
     return result.status === 0 ? Buffer.from(result.stdout || '') : null
 }
 

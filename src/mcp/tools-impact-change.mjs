@@ -1,7 +1,6 @@
 // Symbol-aware change_impact implementation, isolated from the other hot impact tools so its
 // classifier/evidence contract can be tested without perturbing get_dependents or graph_diff.
-import {spawnSync} from 'node:child_process'
-import {childProcessEnv} from '../child-env.js'
+import {runGit} from '../git-exec.js'
 import {fileOfId} from '../graph/node-id.js'
 import {classifyChangeImpact} from '../analysis/change-classification.js'
 import {readCoverageForRepo} from '../analysis/coverage-reports.js'
@@ -12,7 +11,7 @@ import {gitLines} from './git-output.mjs'
 import {toolResult} from './tool-result.mjs'
 
 function gitValue(repoRoot, args) {
-    const result = spawnSync('git', ['-C', repoRoot, ...args], {encoding: 'utf8', timeout: 8000, env: childProcessEnv()})
+    const result = runGit(repoRoot, args)
     if (result.status !== 0) return null
     return String(result.stdout || '').trim() || null
 }

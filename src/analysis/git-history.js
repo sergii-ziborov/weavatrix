@@ -3,7 +3,8 @@ import {childProcessEnv} from '../child-env.js'
 import {createRepoBoundary} from '../repo-path.js'
 import {loadWeavatrixIgnore} from '../path-ignore.js'
 import {buildGitHistoryAnalytics} from './git-history/analytics.js'
-import {boundedGitCommand, parseGitNumstatLog} from './git-history/collector.js'
+import {parseGitNumstatLog} from './git-history/collector.js'
+import {boundedGitCommand} from '../git-exec.js'
 import {
     boundedHistoryInteger,
     GIT_FORMAT,

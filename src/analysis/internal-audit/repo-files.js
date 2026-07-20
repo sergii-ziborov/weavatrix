@@ -1,7 +1,6 @@
 import {readFileSync, readdirSync} from 'node:fs'
 import {join} from 'node:path'
-import {spawnSync} from 'node:child_process'
-import {childProcessEnv} from '../../child-env.js'
+import {runGit} from '../../git-exec.js'
 import {filterWeavatrixIgnored} from '../../path-ignore.js'
 
 export const readText = (path) => {
@@ -29,10 +28,7 @@ const SKIP_DIRS = new Set([
 
 export function listRepoFiles(repoRoot) {
     try {
-        const result = spawnSync('git', ['-C', repoRoot, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
-            encoding: 'utf8', windowsHide: true, timeout: 15_000, maxBuffer: 32 * 1024 * 1024,
-            env: childProcessEnv(),
-        })
+        const result = runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {timeout: 15_000, maxBuffer: 32 * 1024 * 1024})
         if (result.status === 0) {
             const files = String(result.stdout || '').split('\0').filter(Boolean).map((file) => file.replace(/\\/g, '/'))
             return filterWeavatrixIgnored(repoRoot, files)

@@ -1,6 +1,5 @@
-import {spawnSync} from 'node:child_process'
 import {summarizeFindings} from '../../analysis/findings.js'
-import {childProcessEnv} from '../../child-env.js'
+import {runGit} from '../../git-exec.js'
 import {createPathClassifier, hasPathClass} from '../../path-classification.js'
 
 const SEVERITY_RANK = {critical: 0, high: 1, medium: 2, low: 3, info: 4}
@@ -179,9 +178,7 @@ export const formatOrdinaryAudit = (audit, args, findings = audit.findings, head
 }
 
 export const gitUntracked = (repoRoot) => {
-    const result = spawnSync('git', ['-C', repoRoot, 'ls-files', '--others', '--exclude-standard'], {
-        encoding: 'utf8', timeout: 8000, maxBuffer: 2 * 1024 * 1024, env: childProcessEnv(), windowsHide: true,
-    })
+    const result = runGit(repoRoot, ['ls-files', '--others', '--exclude-standard'], {maxBuffer: 2 * 1024 * 1024})
     if (result.status !== 0) return {
         ok: false,
         files: [],
