@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto'
 import {readFileSync} from 'node:fs'
-import {buildFileImportGraph, checkBoundaries, findSccs, representativeCycle} from '../analysis/dep-rules.js'
+import {buildFileImportGraph, checkBoundaries, findSccs, isRustModuleTreeComponent, representativeCycle} from '../analysis/dep-rules.js'
 import {createRepoBoundary} from '../repo-path.js'
 import {CAPS, bounded, compareText, repoRelativePath, safeToken} from './evidence-snapshot.common.mjs'
 
@@ -59,7 +59,10 @@ export function buildStructureEvidence(graph, repoRoot) {
         const imports = buildFileImportGraph(graph)
         const runtimeSccs = sortedSccs(imports.runtimeAdj)
         const runtimeKeys = new Set(runtimeSccs.map((members) => members.join('\0')))
-        const compileSccs = sortedSccs(imports.allAdj).filter((members) => !runtimeKeys.has(members.join('\0')))
+        // Same suppression as computeStructureFindings: a synced snapshot must not contradict the
+        // local structure findings on idiomatic Rust module trees.
+        const compileSccs = sortedSccs(imports.allAdj)
+            .filter((members) => !runtimeKeys.has(members.join('\0')) && !isRustModuleTreeComponent(members))
         const allCycles = [
             ...runtimeSccs.map((members) => cycleFact('runtime', imports.runtimeAdj, members)),
             ...compileSccs.map((members) => cycleFact('compile-time', imports.allAdj, members)),

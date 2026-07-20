@@ -29,14 +29,24 @@ function endpointCandidates(inventory, args) {
     return exact.length ? exact : eligible.filter((endpoint) => endpoint.path.endsWith(path))
 }
 
-function handlerCandidates(graph, endpoint) {
+// A handler_file hint narrows the FULL same-named pool before any scoring, so it can rescue a
+// candidate the ranking would otherwise collapse away. An exact repo-relative match beats suffix
+// matches; comparison is case-insensitive (Windows paths and human-typed hints disagree on casing).
+function matchesHandlerHint(file, hint) {
+    if (!hint) return true
+    const lower = file.toLowerCase()
+    return lower === hint || lower.endsWith(`/${hint}`)
+}
+
+function handlerCandidates(graph, endpoint, hint = '') {
     if (!endpoint.handler) return []
     const wanted = endpoint.handler.toLowerCase()
     const qualifier = String(endpoint.handlerRef || '').split('.').slice(-2, -1)[0]?.toLowerCase() || ''
     const routeDir = posix.dirname(endpoint.file)
-    // File-level import/re-export bindings at the route file break same-name ties: the handler file
-    // the route file actually imports outranks an unrelated same-named symbol elsewhere. Same-file
-    // declarations (+100) must keep outranking import-bound ones (+80).
+    // File-level import/re-export bindings at the route file break same-name ties between otherwise
+    // unranked candidates. The bonus deliberately sits BELOW same-directory proximity (+40): a
+    // file-level edge proves coupling, not symbol identity, and must never outrank the conventional
+    // same-package/same-dir handler (Go same-package files have no import edge at all).
     const importBound = new Set()
     for (const edge of graph.out.get(endpoint.file) || []) {
         if (edge.relation !== 'imports' && edge.relation !== 're_exports') continue
@@ -46,14 +56,20 @@ function handlerCandidates(graph, endpoint) {
         const target = graph.byId.get(targetId)
         importBound.add(String(target?.source_file || targetId).replace(/\\/g, '/'))
     }
-    const scored = (graph.nodes || [])
+    let pool = (graph.nodes || [])
         .filter((node) => String(node.id).includes('#') && node.source_file && symbolName(node).toLowerCase() === wanted)
+    if (hint) {
+        pool = pool.filter((node) => matchesHandlerHint(String(node.source_file).replace(/\\/g, '/').toLowerCase(), hint))
+        const exact = pool.filter((node) => String(node.source_file).replace(/\\/g, '/').toLowerCase() === hint)
+        if (exact.length) pool = exact
+    }
+    const scored = pool
         .map((node) => {
             const file = String(node.source_file).replace(/\\/g, '/')
             let score = 0
             const importBoundAtRoute = importBound.has(file)
             if (file === endpoint.file) score += 100
-            if (importBoundAtRoute) score += 80
+            if (importBoundAtRoute) score += 35
             if (posix.dirname(file) === routeDir) score += 40
             if (file.startsWith(`${routeDir}/`)) score += 15
             if (qualifier) {
@@ -143,13 +159,9 @@ export function tTraceEndpoint(graph, args, ctx) {
         const info = classifier.explain(file, {content: ''})
         return {classified: info.excluded || NON_PRODUCT.some((name) => hasPathClass(info, name)), pathClasses: info.classes}
     }
-    const hint = String(args.handler_file || '').trim().replace(/\\/g, '/')
-    let handlers = handlerCandidates(graph, endpoint)
+    const hint = String(args.handler_file || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+    let handlers = handlerCandidates(graph, endpoint, hint)
         .map((item) => ({...item, ...classify(String(item.node.source_file).replace(/\\/g, '/'))}))
-    if (hint) handlers = handlers.filter(({node}) => {
-        const file = String(node.source_file).replace(/\\/g, '/')
-        return file === hint || file.endsWith(`/${hint}`)
-    })
     // Production-first: a classified twin (tests/mocks/…) never ties with a production candidate,
     // but an all-classified candidate set is kept rather than emptied.
     if (args.include_classified !== true && handlers.some((item) => !item.classified)) {

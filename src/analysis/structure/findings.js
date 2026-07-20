@@ -67,7 +67,7 @@ function compileTimeFinding(adjacency, component, runtimeComponents, edges) {
 // main.rs, or a 2018-edition foo.rs) declares `mod child` while children reach back via super::/crate::.
 // Suppress only when every member is a .rs file sitting under one anchor's directory; genuine
 // cross-directory .rs cycles keep their findings.
-function isRustModuleTreeComponent(component) {
+export function isRustModuleTreeComponent(component) {
     if (!component.every((file) => String(file).endsWith('.rs'))) return false
     return component.some((anchor) => {
         const path = String(anchor)

@@ -64,6 +64,8 @@ export function retrieveTaskContext(g, {
   const pathAllowed = (node) => {
     const file = fileOf(node)
     if (!file || changedFiles.has(file) || includeClassified === true) return true
+    // Node-level test surfaces (Rust #[cfg(test)]) follow the same production-first policy.
+    if (node?.test_surface === true && !requestedClasses.has('test')) return false
     if (!classificationCache.has(file)) classificationCache.set(file, classifier.explain(file, {content: ''}))
     const info = classificationCache.get(file)
     const classes = PATH_CLASS_NAMES.filter((name) => hasPathClass(info, name))

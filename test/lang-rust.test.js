@@ -233,3 +233,35 @@ pub fn run() {}
     assert.equal(sym("run").test_surface, undefined);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("lang-rust: comments between attributes and inner #![cfg(test)] attributes still classify", async () => {
+  const dir = repoWith({
+    "src/lib.rs": `pub mod helpers;
+pub fn prod() {}
+
+#[cfg(test)]
+// unit tests for this module
+mod tests {
+    fn gap_helper() -> u32 { 1 }
+
+    #[test]
+    /// doc comment after the attribute
+    fn doc_gap_test() {}
+}
+`,
+    "src/helpers.rs": `#![cfg(test)]
+pub fn inner_attr_helper() -> u32 { 2 }
+pub struct InnerFixture;
+`,
+  });
+  try {
+    const g = await buildInternalGraph(dir);
+    const sym = (name) => g.nodes.find((n) => String(n.id).includes("#" + name + "@"));
+    assert.equal(sym("prod").test_surface, undefined);
+    assert.equal(sym("tests").test_surface, true, "line comment between #[cfg(test)] and mod does not hide it");
+    assert.equal(sym("gap_helper").test_surface, true, "helper inside the comment-gapped cfg(test) mod");
+    assert.equal(sym("doc_gap_test").test_surface, true, "doc comment between #[test] and fn does not hide it");
+    assert.equal(sym("inner_attr_helper").test_surface, true, "file-level #![cfg(test)] gates every symbol");
+    assert.equal(sym("InnerFixture").test_surface, true, "file-level #![cfg(test)] gates types too");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

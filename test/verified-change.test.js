@@ -61,6 +61,19 @@ test('hybrid task retrieval suppresses test symbols unless requested or exactly 
   assert.equal(changed.selected[0].id, testSymbol.id)
 })
 
+test('hybrid task retrieval suppresses node-level test surfaces in production files', () => {
+  const production = {id: 'src/config.rs#parse_config@4', label: 'parse_config()', source_file: 'src/config.rs', symbol_kind: 'function'}
+  const inlineTest = {id: 'src/config.rs#config_parsing_works@40', label: 'config_parsing_works()', source_file: 'src/config.rs', symbol_kind: 'function', test_surface: true}
+  const localGraph = {byId: new Map([[production.id, production], [inlineTest.id, inlineTest]]), out: new Map(), inn: new Map()}
+
+  const focused = retrieveTaskContext(localGraph, {task: 'improve config parsing validation', semanticSeeds: [production, inlineTest], maxSymbols: 3})
+  assert.deepEqual(focused.selected.map((item) => item.id), [production.id], 'a Rust #[cfg(test)] symbol in a production .rs file never anchors a production change task')
+  assert.equal(focused.suppressedClassified, 1)
+
+  const requested = retrieveTaskContext(localGraph, {task: 'improve the config parsing unit test', semanticSeeds: [production, inlineTest], maxSymbols: 3})
+  assert.ok(requested.selected.some((item) => item.id === inlineTest.id), 'a test-term task opts inline test symbols back in')
+})
+
 test('bounded interprocedural evidence maps call arguments to callee parameters', () => {
   const result = extractCallArgumentEvidence({graph, repoRoot: root, seedIds: ['src/caller.js#caller@2'], depth: 2, maxEdges: 10})
   assert.equal(result.status, 'COMPLETE')

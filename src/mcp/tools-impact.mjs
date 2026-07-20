@@ -87,13 +87,18 @@ export function tGetDependents(g, args = {}, ctx = {}) {
                     `Semantic precision: EXACT_LSP point query${result.cached ? ' (cache hit)' : ''}; ${count} classified direct reference edge(s).`,
                 )
             }
-            // Never echo overlay.state raw here: 'COMPLETE; exact absence was not proven' is a contradiction.
+            // Never echo COMPLETE here ('COMPLETE; exact absence was not proven' is a contradiction),
+            // but keep NONE/UNAVAILABLE truthful — PARTIAL implies probing actually began.
+            const fallbackState = result.overlay?.state === 'NONE' ? 'NONE'
+                : result.overlay?.state === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'PARTIAL'
             return getDependentsFromGraph(
                 g,
                 args,
-                result.overlay?.state === 'NONE'
+                fallbackState === 'NONE'
                     ? `Semantic precision: NONE; exact references are not available for this language/target, so graph edges are retained (${result.overlay?.reason || 'no eligible JavaScript/TypeScript semantic targets'}).`
-                    : `Semantic precision: PARTIAL; exact absence was not proven, so graph edges are retained (${result.overlay?.reason || 'incomplete project coverage'}).`,
+                    : fallbackState === 'UNAVAILABLE'
+                        ? `Semantic precision: UNAVAILABLE; graph evidence retained (${result.overlay?.reason || 'semantic point query unavailable'}).`
+                        : `Semantic precision: PARTIAL; exact absence was not proven, so graph edges are retained (${result.overlay?.reason || 'incomplete project coverage'}).`,
             )
         } catch (error) {
             return getDependentsFromGraph(

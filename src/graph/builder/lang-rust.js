@@ -63,17 +63,29 @@ function pathAttribute(modNode) {
 // #[cfg(all(test, ...))] guarantee that; #[cfg(any(test, ...))] also compiles into production builds
 // and deliberately stays unclassified. #[test]/#[bench] (incl. #[tokio::test]-style harness paths)
 // mark the annotated function itself.
-const CFG_TEST_RE = /#\s*\[\s*cfg\s*\(\s*(?:test\s*\)|all\s*\(\s*test\b)/;
+const CFG_TEST_RE = /#\s*!?\s*\[\s*cfg\s*\(\s*(?:test\s*\)|all\s*\(\s*test\b)/;
 const TEST_FN_ATTR_RE = /#\s*\[\s*(?:[\w]+(?:\s*::\s*[\w]+)*\s*::\s*)?(?:test|bench)\s*(?:\]|\()/;
 const CFG_TEST_CARRIERS = new Set(["mod_item", "impl_item", "trait_item", "function_item"]);
+const COMMENT_TYPES = new Set(["line_comment", "block_comment"]);
 const itemAttributeText = (item) => {
+  // Comments are NAMED siblings in tree-sitter-rust — `#[test]` + `// note` + `fn` must still classify.
   let text = "";
-  for (let prev = item?.previousNamedSibling; prev?.type === "attribute_item"; prev = prev.previousNamedSibling) text += prev.text + "\n";
+  for (let prev = item?.previousNamedSibling; prev; prev = prev.previousNamedSibling) {
+    if (COMMENT_TYPES.has(prev.type)) continue;
+    if (prev.type !== "attribute_item") break;
+    text += prev.text + "\n";
+  }
   return text;
 };
+// `#![cfg(test)]` at the top of a file or module body gates everything below it. tree-sitter-rust
+// tokenizes a file-leading `#!...` as `shebang`; a real shebang line never matches CFG_TEST_RE.
+const innerCfgTest = (body) => (body?.namedChildren || [])
+  .some((child) => (child.type === "inner_attribute_item" || child.type === "shebang") && CFG_TEST_RE.test(child.text));
 const underCfgTest = (node) => {
   for (let parent = node?.parent; parent; parent = parent.parent) {
+    if (parent.type === "declaration_list" && innerCfgTest(parent)) return true;
     if (CFG_TEST_CARRIERS.has(parent.type) && CFG_TEST_RE.test(itemAttributeText(parent))) return true;
+    if (!parent.parent && innerCfgTest(parent)) return true; // source_file root
   }
   return false;
 };

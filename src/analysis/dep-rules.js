@@ -7,4 +7,4 @@ export {
     globToRe,
     representativeCycle,
 } from './structure/dependency-graph.js'
-export {computeStructureFindings} from './structure/findings.js'
+export {computeStructureFindings, isRustModuleTreeComponent} from './structure/findings.js'
