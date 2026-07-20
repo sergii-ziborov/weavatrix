@@ -14,7 +14,10 @@ const MAX_SOURCE_CONTEXT_LINES = 1000
 function rgSearch(repoRoot, resolveRg, query, { isRegex, glob, maxResults }, spawnRg = spawnSync) {
     const rg = resolveRg()
     if (!rg) return null
-    const args = ['--line-number', '--no-heading', '--color', 'never', '--hidden', '-g', '!.git/**', '-m', '100', '-i']
+    // Exclude node_modules explicitly: --hidden + the default gitignore stack is the only thing that
+    // keeps a dependency tree out, which fails for repos that commit node_modules or lack a gitignore.
+    // A caller-supplied glob is appended after this and still wins (rg: last matching glob decides).
+    const args = ['--line-number', '--no-heading', '--color', 'never', '--hidden', '-g', '!.git/**', '-g', '!node_modules', '-m', '100', '-i']
     if (!isRegex) args.push('--fixed-strings')
     if (glob) args.push('-g', glob)
     // Run from the repository root and search `.` so path globs such as `src/**` are evaluated

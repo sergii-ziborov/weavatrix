@@ -43,7 +43,7 @@ export function createRgResolver(selfDir) {
         } catch { /* optional packaged ripgrep path */ }
         for (const c of editorRgCandidates()) if (existsSync(c)) return (rgPath = c)
         try {
-            const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['rg'], {encoding: 'utf8', env: childProcessEnv()})
+            const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['rg'], {encoding: 'utf8', env: childProcessEnv(), timeout: 3000, windowsHide: true})
             const p = probe.status === 0 ? probe.stdout.split(/\r?\n/)[0].trim() : ''
             if (p && existsSync(p)) return (rgPath = p)
         } catch { /* optional PATH probe */ }

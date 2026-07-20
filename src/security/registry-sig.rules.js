@@ -35,7 +35,10 @@ export const CONTENT_RULES = [
     nearZeroFp: true,
     // canonical reverse/bind shells — a shell wired to a socket. Essentially never legitimate inside a
     // published package: /dev/tcp redirection, netcat -e, interactive-shell redirect, mkfifo pipe shell.
-    pattern: "/dev/tcp/[0-9]|\\bnc(at)?\\s+-e\\b|\\b(ba)?sh\\s+-i\\b\\s*(2)?>&|mkfifo\\b.{0,60}(ba)?sh\\b|0<&196|socket\\.socket\\(.{0,40}(SOCK_STREAM).{0,80}(/bin/sh|exec)",
+    // The rg pre-filter must stay a superset of `re` below: rg surfaces lines matching this string and
+    // only then is `re` applied to confirm, so a narrower pre-filter silently drops real reverse shells
+    // (e.g. socket + pty.spawn / os.dup2 / subprocess, or a default socket.socket() without SOCK_STREAM).
+    pattern: "/dev/tcp/[0-9]|\\bnc(at)?\\s+-e\\b|\\b(ba)?sh\\s+-i\\b\\s*(2)?>&|mkfifo\\b.{0,60}(ba)?sh\\b|0<&196|socket\\.socket\\(.{0,120}(connect|SOCK_STREAM).{0,180}(/bin/sh|subprocess|pty\\.spawn|os\\.dup2)",
     re: /\/dev\/tcp\/[0-9]|\bnc(at)?\s+-e\b|\b(ba)?sh\s+-i\b\s*(2)?>&|mkfifo\b[\s\S]{0,60}?\b(ba)?sh\b|0<&196|socket\.socket\([\s\S]{0,120}?(connect|SOCK_STREAM)[\s\S]{0,180}?(\/bin\/sh|subprocess|pty\.spawn|os\.dup2)/i,
     what: "reverse/bind-shell pattern (interactive shell wired to a socket)",
   },

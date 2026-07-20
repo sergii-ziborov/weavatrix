@@ -35,6 +35,21 @@ test("search_code: ripgrep path globs are evaluated relative to the repository r
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("search_code: excludes node_modules explicitly, not only via the gitignore stack", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wx-search-nm-"));
+  try {
+    let captured = null;
+    searchCode({
+      repoRoot: dir,
+      resolveRg: () => "rg",
+      spawnRg: (_command, args) => { captured = args; return { status: 1, stdout: "" }; },
+    }, { query: "anything" });
+    const globValues = captured.filter((_, i) => captured[i - 1] === "-g");
+    assert.ok(globValues.includes("!node_modules"), `expected a node_modules exclusion glob, got ${JSON.stringify(globValues)}`);
+    assert.ok(globValues.includes("!.git/**"), "the .git exclusion is retained");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("read_source: path + start_line anchors the window instead of the file head", () => {
   const dir = repoWithHundredLines();
   try {
