@@ -1,0 +1,46 @@
+name: Deploy site
+
+# Publishes site/ to the weavatrix.com static-assets Worker (wrangler.jsonc) on every push to main
+# that touches the site or its deploy config. Requires a CLOUDFLARE_API_TOKEN repo secret (with the
+# Workers Scripts: Edit permission) and, when the token can see more than one account, a
+# CLOUDFLARE_ACCOUNT_ID secret. Without the token the job skips gracefully instead of failing red.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "wrangler.jsonc"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Deploy static assets to the weavatrix.com Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN is not set — add it under Settings -> Secrets and variables -> Actions to enable auto-deploy. Skipping."
+            exit 0
+          fi
+          npx --yes wrangler@4 deploy
