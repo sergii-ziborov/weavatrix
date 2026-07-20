@@ -52,6 +52,7 @@ export function requestedPathClasses(query) {
 }
 
 function isQueryEligible(node, requestedClasses, classificationCache, classifier) {
+    if (node?.test_surface === true && !requestedClasses.has('test')) return false
     const source = sourceFileOf(node)
     if (!source) return true
     if (!classificationCache.has(source)) classificationCache.set(source, classifier.explain(source, {content: ''}))

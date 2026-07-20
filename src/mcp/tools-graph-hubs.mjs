@@ -12,6 +12,7 @@ export function tGodNodes(g, {top_n = 10, include_classified = false} = {}, ctx 
     const classificationByFile = new Map()
     const isNonProduct = (node) => {
         if (include_classified === true) return false
+        if (node?.test_surface === true) return true
         const file = sourceFileOf(node)
         if (!file) return false
         if (!classificationByFile.has(file)) classificationByFile.set(file, classifier.explain(file))

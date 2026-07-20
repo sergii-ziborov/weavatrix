@@ -130,6 +130,28 @@ test("dead-code review excludes tests and generated/classified paths unless expl
   assert.ok(included.candidates.some((candidate) => candidate.symbol === "tempHelper"));
 });
 
+test("dead-code review suppresses Rust #[cfg(test)] symbols in production files by default", () => {
+  const file = "src/mcp.rs";
+  const testFn = symbolNode(file, "checks_parse", 40, { symbol_kind: "function", visibility: "private", test_surface: true });
+  const helper = symbolNode(file, "orphan_helper", 12, { symbol_kind: "function", visibility: "private" });
+  const graph = {
+    nodes: [fileNode(file), testFn, helper],
+    links: [
+      { source: file, target: testFn.id, relation: "contains" },
+      { source: file, target: helper.id, relation: "contains" },
+    ],
+  };
+  const sources = new Map([[file, "fn orphan_helper() {}\n#[cfg(test)]\nmod tests {\n  #[test]\n  fn checks_parse() {}\n}\n"]]);
+
+  const result = computeDeadCodeReview(graph, sources);
+  assert.ok(!result.candidates.some((candidate) => candidate.symbol === "checks_parse"), "inline test fn is not a production dead-code candidate");
+  assert.equal(result.suppressed.tests, 1);
+  assert.ok(result.candidates.some((candidate) => candidate.symbol === "orphan_helper"), "true production orphan in the same file is still reported");
+
+  const included = computeDeadCodeReview(graph, sources, { includeTests: true });
+  assert.ok(included.candidates.some((candidate) => candidate.symbol === "checks_parse"), "include_tests surfaces the inline test symbol");
+});
+
 test("dead-code review never classifies an owned Java field as a method", () => {
   const file = "src/main/java/HealthCheckProducer.java";
   const field = {

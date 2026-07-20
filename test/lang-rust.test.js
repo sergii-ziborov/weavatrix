@@ -68,7 +68,7 @@ test("lang-rust: symbols and same-folder cross-file calls", async () => {
     assert.ok(g.links.some((link) => link.source === sym("Console").id && link.target === consoleGreet.id && link.relation === "method"));
     const ep = (v) => String(v && typeof v === "object" ? v.id : v);
     const call = g.links.find((l) => l.relation === "calls" && ep(l.source).includes("lib.rs#greet") && ep(l.target).includes("helper.rs#format_msg"));
-    assert.ok(call, "cross-file call greet → format_msg via same-folder scope");
+    assert.ok(call, "cross-file call greet -> format_msg via same-folder scope");
     assert.ok(g.links.some((l) => l.relation === "inherits" && ep(l.target).includes("lib.rs#Writes")), "existing Rust trait inheritance extraction remains intact");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -165,5 +165,71 @@ test("lang-rust: resolves non-mod-rs children, inline #[path], and main.rs crate
     assert.ok(pairs.has("crate/src/service.rs>crate/src/service/model.rs"), "foo.rs owns default children below foo/");
     assert.ok(pairs.has("crate/src/service.rs>crate/src/sibling.rs"), "top-level #[path] in a non-mod-rs file is source-directory relative");
     assert.ok(pairs.has("crate/src/service.rs>crate/src/service/inline/other.rs"), "inline #[path] includes non-mod-rs and inline module directories");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("lang-rust: #[cfg(test)] modules and #[test]/#[bench] functions carry test_only", async () => {
+  const dir = repoWith({
+    "src/lib.rs": `pub fn prod_fn() -> u32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fixture { n: u32 }
+
+    fn helper() -> u32 { 2 }
+
+    #[test]
+    fn checks_prod_fn() {
+        assert_eq!(prod_fn(), 1);
+    }
+}
+
+#[cfg(all(test, feature = "slow"))]
+fn gated_helper() {}
+
+#[cfg(any(test, feature = "extra"))]
+pub fn dual_use() {}
+
+#[cfg(not(test))]
+pub fn prod_only() {}
+
+#[cfg(test)]
+impl Fixture2 {
+    fn make() -> u32 { 3 }
+}
+pub struct Fixture2;
+`,
+    "src/timer.rs": `#[tokio::test]
+async fn waits() {}
+
+#[bench]
+fn bench_hot(b: &mut Bencher) {}
+
+#[derive(Debug)]
+#[cfg(test)]
+struct Stacked;
+
+pub fn run() {}
+`,
+  });
+  try {
+    const g = await buildInternalGraph(dir);
+    const sym = (name) => g.nodes.find((n) => String(n.id).includes("#" + name + "@"));
+    assert.equal(sym("prod_fn").test_surface, undefined, "plain production fn stays unclassified");
+    assert.equal(sym("tests").test_surface, true, "the #[cfg(test)] mod symbol itself");
+    assert.equal(sym("Fixture").test_surface, true, "struct inside a #[cfg(test)] mod");
+    assert.equal(sym("helper").test_surface, true, "helper fn inside a #[cfg(test)] mod");
+    assert.equal(sym("checks_prod_fn").test_surface, true, "#[test] fn inside a #[cfg(test)] mod");
+    assert.equal(sym("gated_helper").test_surface, true, "cfg(all(test, ...)) compiles only under test");
+    assert.equal(sym("dual_use").test_surface, undefined, "cfg(any(test, ...)) also ships in production builds");
+    assert.equal(sym("prod_only").test_surface, undefined, "cfg(not(test)) is production-only");
+    assert.equal(sym("make").test_surface, true, "method inside a #[cfg(test)] impl block");
+    assert.equal(sym("Fixture2").test_surface, undefined, "the production type itself stays unclassified");
+    assert.equal(sym("waits").test_surface, true, "#[tokio::test] harness attribute");
+    assert.equal(sym("bench_hot").test_surface, true, "#[bench] function");
+    assert.equal(sym("Stacked").test_surface, true, "cfg(test) recognized behind another attribute");
+    assert.equal(sym("run").test_surface, undefined);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

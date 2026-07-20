@@ -89,6 +89,12 @@ export function tQueryGraph(g, {
         const node = g.byId.get(String(id))
         const file = querySourceFile(node)
         if (!file || pinnedFiles.has(file) || include_classified === true) return {ok: true}
+        // Extractor-proven test symbols (Rust #[cfg(test)]) live in production files; suppress them
+        // under the same policy as path-classified tests unless the question asks about tests.
+        if (node?.test_surface === true && !requestedClasses.has('test')) {
+            classifiedSuppressed.add(String(id))
+            return {ok: false, bucket: 'classified'}
+        }
         if (!classificationCache.has(file)) classificationCache.set(file, classifier.explain(file, {content: ''}))
         const info = classificationCache.get(file)
         const classes = QUERY_NON_PRODUCT.filter((name) => hasPathClass(info, name))

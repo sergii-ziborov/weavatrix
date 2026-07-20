@@ -128,7 +128,7 @@ export function computeHotPathReview(graph, options = {}) {
         if (!complexity || !file || !String(node?.id || '').includes('#')) continue
         if (scope.path && file !== scope.path && !file.startsWith(`${scope.path}/`)) { excluded.outOfScope++; continue }
         const classification = classifier.explain(file)
-        const test = hasPathClass(classification, 'test', 'e2e')
+        const test = node?.test_surface === true || hasPathClass(classification, 'test', 'e2e')
         const classified = classification.excluded || hasPathClass(classification, ...NON_PRODUCT)
         if (test && options.includeTests !== true) { excluded.tests++; continue }
         if (classified && options.includeClassified !== true) { excluded.classified++; continue }

@@ -19,6 +19,7 @@ export function sanitizeNode(value) {
     if (community !== undefined && Number.isInteger(community) && community >= 0) out.community = community;
     if (typeof value.exported === 'boolean') out.exported = value.exported;
     if (typeof value.decorated === 'boolean') out.decorated = value.decorated;
+    if (value.test_surface === true) out.test_surface = true;
     setIf(out, 'complexity', sanitizeComplexity(value.complexity));
     return out;
 }

@@ -59,6 +59,25 @@ function pathAttribute(modNode) {
   return "";
 }
 
+// Test-only classification must mean "compiled exclusively under `cargo test`": #[cfg(test)] and
+// #[cfg(all(test, ...))] guarantee that; #[cfg(any(test, ...))] also compiles into production builds
+// and deliberately stays unclassified. #[test]/#[bench] (incl. #[tokio::test]-style harness paths)
+// mark the annotated function itself.
+const CFG_TEST_RE = /#\s*\[\s*cfg\s*\(\s*(?:test\s*\)|all\s*\(\s*test\b)/;
+const TEST_FN_ATTR_RE = /#\s*\[\s*(?:[\w]+(?:\s*::\s*[\w]+)*\s*::\s*)?(?:test|bench)\s*(?:\]|\()/;
+const CFG_TEST_CARRIERS = new Set(["mod_item", "impl_item", "trait_item", "function_item"]);
+const itemAttributeText = (item) => {
+  let text = "";
+  for (let prev = item?.previousNamedSibling; prev?.type === "attribute_item"; prev = prev.previousNamedSibling) text += prev.text + "\n";
+  return text;
+};
+const underCfgTest = (node) => {
+  for (let parent = node?.parent; parent; parent = parent.parent) {
+    if (CFG_TEST_CARRIERS.has(parent.type) && CFG_TEST_RE.test(itemAttributeText(parent))) return true;
+  }
+  return false;
+};
+
 function inlineAncestors(node) {
   const result = [];
   for (let p = node?.parent; p; p = p.parent) {
@@ -129,10 +148,15 @@ export default {
         const memberOf = ownerName(owner, field);
         const symbolKind = cap.name === "function" ? (memberOf ? "method" : "function") : cap.name;
         const visibility = publicVisibility(declaration, owner);
+        const attrs = itemAttributeText(declaration);
+        const testSurface = CFG_TEST_RE.test(attrs)
+          || (cap.name === "function" && TEST_FN_ATTR_RE.test(attrs))
+          || underCfgTest(declaration);
         const id = addSym(cap.node.text, cap.node.startPosition.row + 1, cap.name === "function", {
           sourceNode: declaration,
           selectionNode: cap.node,
           symbolKind,
+          ...(testSurface ? { testSurface: true } : {}),
           ...(memberOf ? { memberOf, visibility } : { moduleDeclaration: true }),
           ...(!memberOf && visibility === "public" ? { exported: true } : {}),
         });

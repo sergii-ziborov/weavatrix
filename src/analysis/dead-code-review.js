@@ -51,6 +51,9 @@ export function computeDeadCodeReview(graph, sources, options = {}) {
   const suppressed = { tests: 0, classified: 0, confidence: 0, path: 0, kind: 0 };
   const candidates = [];
   for (const candidate of raw) {
+    // Node-level test surfaces (Rust #[cfg(test)] symbols in production files) follow the same
+    // include_tests policy as path-classified test files.
+    if (!includeTests && nodesById.get(String(candidate.id))?.test_surface === true) { suppressed.tests += 1; continue; }
     const info = classify(candidate.file, sources.get(candidate.file));
     const allowed = pathAllowed(info, { includeTests, includeClassified });
     if (!allowed.ok) { suppressed[allowed.bucket] += 1; continue; }

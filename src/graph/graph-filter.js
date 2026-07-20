@@ -22,12 +22,14 @@ export function filterGraphForMode(graph, mode, { repoRoot = null } = {}) {
   const links = graph.links || [];
   const endpoint = (value) => (value && typeof value === "object" ? value.id : value);
   const classifier = createPathClassifier(repoRoot);
-  const isTest = (path) => hasPathClass(classifier.explain(path), "test", "e2e");
+  // A node is a test surface when its file is test-classified OR the extractor proved the symbol
+  // itself is compiled only under test (Rust #[cfg(test)] inline modules live in production files).
+  const isTest = (node) => node.test_surface === true || hasPathClass(classifier.explain(node.source_file), "test", "e2e");
   let keep;
   if (mode === "no-tests") {
-    keep = new Set(nodes.filter((node) => !isTest(node.source_file)).map((node) => node.id));
+    keep = new Set(nodes.filter((node) => !isTest(node)).map((node) => node.id));
   } else {
-    const testIds = new Set(nodes.filter((node) => isTest(node.source_file)).map((node) => node.id));
+    const testIds = new Set(nodes.filter((node) => isTest(node)).map((node) => node.id));
     keep = new Set(testIds);
     for (const link of links) {
       if (testIds.has(endpoint(link.source))) keep.add(endpoint(link.target)); // a test's dependency
