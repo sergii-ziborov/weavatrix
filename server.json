@@ -6,14 +6,14 @@
     "url": "https://github.com/sergii-ziborov/weavatrix",
     "source": "github"
   },
-  "version": "0.3.4",
+  "version": "0.3.5",
   "websiteUrl": "https://weavatrix.com",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "weavatrix",
-      "version": "0.3.4",
+      "version": "0.3.5",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [
@@ -36,6 +36,12 @@
         {
           "name": "WEAVATRIX_PRECISION",
           "description": "Optional semantic precision mode: lsp (default) uses the bundled bounded TypeScript/JavaScript language-server overlay; off keeps parser-only graphs",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "WEAVATRIX_PRECISION_PREWARM",
+          "description": "Optional semantic prewarm budget: bounded (default) keeps fast startup; full explicitly queries every eligible JS/TS target within hard resource ceilings",
           "format": "string",
           "isRequired": false
         },

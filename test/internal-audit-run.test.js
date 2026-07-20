@@ -143,13 +143,20 @@ test("internal audit suppresses convention/generated/config-excluded dead and un
       nodes.push({ id: `${file}#${name}@2`, label: `${name}()`, source_file: file, source_location: "L2", exported: true });
       links.push({ source: file, target: `${file}#${name}@2`, relation: "contains" });
     }
+    const graph = { nodes, links, externalImports: [] };
     const audit = await runInternalAudit(repo, {
-      graph: { nodes, links, externalImports: [] },
+      graph,
       advisoryStorePath: join(repo, "missing-advisories.json"),
       skipMalwareScan: true,
     });
     assert.equal(audit.ok, true);
-    assert.ok(audit.findings.some((finding) => finding.file === "src/product.ts" && finding.rule === "unused-export"));
+    const unusedExport = audit.findings.find((finding) => finding.file === "src/product.ts" && finding.rule === "unused-export");
+    assert.ok(unusedExport);
+    assert.equal(unusedExport.severity, "info");
+    assert.equal(unusedExport.confidence, "low", "public export uncertainty matches the dead-code review policy");
+    assert.equal(unusedExport.classification, "unused-export-surface");
+    assert.equal(unusedExport.deadCodeCandidate, false);
+    assert.match(unusedExport.detail, /not proof that the implementation is dead/i);
     for (const file of Object.keys(sources).filter((file) => file !== "src/product.ts")) {
       assert.ok(!audit.findings.some((finding) => finding.file === file && ["unused-file", "unused-export", "orphan-file"].includes(finding.rule)), `${file} classification suppresses convention noise`);
     }

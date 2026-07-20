@@ -148,13 +148,16 @@ export async function runInternalAudit(repoPath, {
       category: "unused",
       rule: "unused-export",
       severity: "info",
-      confidence: "medium",
+      confidence: "low",
       title: `Unused export: ${symbol.label.replace(/\(\)$/, "")} — ${symbol.file}`,
-      detail: `${symbol.reason}. Either remove the export keyword (if used only internally) or delete the symbol.`,
+      detail: `${symbol.reason}. This is unused module-surface evidence, not proof that the implementation is dead: downstream packages and runtime registration can be invisible to the repository graph. Review external consumers first; remove only the export keyword when the symbol is still used internally, and delete the implementation only after separate dead-code verification.`,
       file: symbol.file,
       symbol: symbol.label,
       graphNodeId: symbol.id,
       source: "internal",
+      classification: "unused-export-surface",
+      deadCodeCandidate: false,
+      fixHint: "check downstream/runtime consumers, then remove only the export surface or run a separate exact dead-code review before deleting the implementation",
     }));
     unusedExportCount++;
   }

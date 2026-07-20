@@ -62,11 +62,15 @@ export async function ensureOpen(session, relPath) {
   const file = norm(relPath)
   if (!file || session.opened.has(file)) return
   ensureBudget(session)
-  if (session.opened.size >= 96) throw new PrecisionLimitError('precision open-document limit reached')
-  const maxBytes = Math.min(4 * 1024 * 1024, 32 * 1024 * 1024 - session.openedBytes)
+  const maxDocuments = Number(session.maxOpenDocuments) || 96
+  const maxOpenBytes = Number(session.maxOpenBytes) || 32 * 1024 * 1024
+  if (session.opened.size >= maxDocuments) {
+    throw new PrecisionLimitError('precision open-document limit reached')
+  }
+  const maxBytes = Math.min(4 * 1024 * 1024, maxOpenBytes - session.openedBytes)
   const {bytes, text} = verifiedSource(session, file, maxBytes)
   if (bytes > 4 * 1024 * 1024) throw new PrecisionLimitError('precision document exceeds 4 MiB limit')
-  if (session.openedBytes + bytes > 32 * 1024 * 1024) {
+  if (session.openedBytes + bytes > maxOpenBytes) {
     throw new PrecisionLimitError('precision source-transfer budget reached')
   }
   await awaitWithBudget(session, () => session.client.openDocument(file, text))
@@ -79,13 +83,15 @@ export function sourceForClassification(session, relPath) {
   const file = norm(relPath)
   if (session.openedTexts.has(file)) return session.openedTexts.get(file)
   if (session.classificationTexts.has(file)) return session.classificationTexts.get(file)
-  if (session.classificationTexts.size >= 96) return null
+  const maxDocuments = Number(session.maxClassificationDocuments) || 96
+  const maxClassificationBytes = Number(session.maxClassificationBytes) || 32 * 1024 * 1024
+  if (session.classificationTexts.size >= maxDocuments) return null
   let source
   try {
     source = verifiedSource(
       session,
       file,
-      Math.min(4 * 1024 * 1024, 32 * 1024 * 1024 - session.classificationBytes),
+      Math.min(4 * 1024 * 1024, maxClassificationBytes - session.classificationBytes),
     )
   } catch (error) {
     if (error instanceof PrecisionLimitError) return null
@@ -100,7 +106,9 @@ export async function ensureFullUniverse(session) {
   if (session.fullUniverseOpened) return true
   if (!session.universe.complete) return false
   const additional = session.universe.files.filter((file) => !session.opened.has(file))
-  if (session.opened.size + additional.length > 96) {
+  const maxDocuments = Number(session.maxOpenDocuments) || 96
+  const maxOpenBytes = Number(session.maxOpenBytes) || 32 * 1024 * 1024
+  if (session.opened.size + additional.length > maxDocuments) {
     session.truncated = true
     return false
   }
@@ -115,7 +123,7 @@ export async function ensureFullUniverse(session) {
     let bytes
     try { bytes = statSync(resolvedFile.path).size }
     catch { throw new PrecisionStaleGraphError() }
-    if (bytes > 4 * 1024 * 1024 || projectedBytes + bytes > 32 * 1024 * 1024) {
+    if (bytes > 4 * 1024 * 1024 || projectedBytes + bytes > maxOpenBytes) {
       session.truncated = true
       return false
     }

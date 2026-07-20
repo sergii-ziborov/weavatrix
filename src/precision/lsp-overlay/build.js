@@ -1,5 +1,5 @@
-import {boundedInteger} from '../../bounds.js'
 import {createTypeScriptLspClient} from '../typescript-lsp-provider.js'
+import {precisionPrewarmBudget} from './budget-policy.js'
 import {baseOverlay} from './contract.js'
 import {precisionOverlayMatches} from './contract.js'
 import {collectReferenceResults} from './reference-results.js'
@@ -106,17 +106,24 @@ function failedOverlay(session, error) {
 }
 
 function createSession(options) {
-  const boundedMax = boundedInteger(options.maxSymbols, 32, 1, 64)
-  const boundedReferences = boundedInteger(options.maxReferences, 2_048, 1, 16_384)
-  const boundedLinks = boundedInteger(options.maxLinks, 2_048, 1, 16_384)
-  const boundedTimeout = boundedInteger(options.timeoutMs, 45_000, 100, 60_000)
+  const budget = precisionPrewarmBudget(options)
   return {
     ...options,
-    boundedMax,
-    boundedReferences,
-    boundedLinks,
-    deadline: Date.now() + boundedTimeout,
-    request: {maxSymbols: boundedMax, maxReferences: boundedReferences, maxLinks: boundedLinks},
+    expandedPrewarm: budget.expanded,
+    fullPrewarm: budget.full,
+    boundedMax: budget.maxSymbols,
+    boundedReferences: budget.maxReferences,
+    boundedLinks: budget.maxLinks,
+    maxOpenDocuments: budget.maxOpenDocuments,
+    maxOpenBytes: budget.maxOpenBytes,
+    maxClassificationDocuments: budget.maxClassificationDocuments,
+    maxClassificationBytes: budget.maxClassificationBytes,
+    deadline: Date.now() + budget.timeoutMs,
+    request: {
+      maxSymbols: budget.maxSymbols,
+      maxReferences: budget.maxReferences,
+      maxLinks: budget.maxLinks,
+    },
     links: [],
     seen: new Set(),
     evidenceSeen: new Set(),
@@ -138,17 +145,18 @@ export async function buildLspPrecisionOverlay({
   graph,
   graphPath,
   mode = 'lsp',
-  maxSymbols = Number(process.env.WEAVATRIX_PRECISION_MAX_SYMBOLS) || 32,
-  maxReferences = Number(process.env.WEAVATRIX_PRECISION_MAX_REFERENCES) || 2_048,
-  maxLinks = Number(process.env.WEAVATRIX_PRECISION_MAX_LINKS) || 2_048,
-  timeoutMs = Number(process.env.WEAVATRIX_PRECISION_TIMEOUT_MS) || 45_000,
+  maxSymbols,
+  maxReferences,
+  maxLinks,
+  timeoutMs,
+  prewarmMode,
   targetIds,
   clientFactory,
 } = {}) {
   if (!graph || !repoRoot) throw new Error('precision overlay requires repoRoot and graph')
   const session = createSession({
     repoRoot, graph, graphPath, mode, maxSymbols, maxReferences, maxLinks,
-    timeoutMs, targetIds, clientFactory,
+    timeoutMs, prewarmMode, targetIds, clientFactory,
   })
   if (mode === 'off') {
     return persist(session, baseOverlay(graph, 'OFF', {

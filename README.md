@@ -311,6 +311,17 @@ before starting the MCP server for parser-only operation from the first build, o
 `precision:"off"` to `rebuild_graph` / `open_repo`. The MCPB installer exposes the same `lsp` / `off`
 choice as **TypeScript/JavaScript semantic precision**.
 
+The broad prewarm stays conservative by default: it queries 32 ranked symbols and never more than
+64. A deliberate high-budget run can set `WEAVATRIX_PRECISION_MAX_SYMBOLS` above 64 (for example,
+`1000`), or set `WEAVATRIX_PRECISION_PREWARM=full` to select every eligible target up to the hard
+10,000-symbol safety ceiling. Expanded runs receive proportionate reference/link and deadline
+budgets, still capped at 131,072 references/links, a 30-minute deadline, 1,024 open documents and
+128 MiB of verified source. `WEAVATRIX_PRECISION_MAX_REFERENCES`,
+`WEAVATRIX_PRECISION_MAX_LINKS`, and `WEAVATRIX_PRECISION_TIMEOUT_MS` can lower or explicitly tune
+those budgets. Repositories that exceed any hard ceiling remain honestly `PARTIAL`; the default
+memory/time profile is unchanged. On-demand `get_dependents`, `inspect_symbol`, and
+`change_impact` queries remain revision-bound separate caches and do not require a full prewarm.
+
 **search / source** — `search_code` (ripgrep-backed, pure-Node fallback, with repository-relative
 path globs on Windows/macOS/Linux), `read_source` (a
 symbol's actual code in one hop), `context_bundle` (definition plus grouped inbound/outbound
@@ -412,6 +423,19 @@ time, output bytes/token estimate, graph freshness/revision/update and graph-cac
 metrics are not persisted or transmitted by Weavatrix. If a source checkout's package version moves
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
+
+### 0.3.5 explicit full semantic prewarm
+
+- Normal startup remains bounded to 32 ranked semantic targets. An explicit
+  `WEAVATRIX_PRECISION_PREWARM=full` run, or a requested symbol budget above
+  64, can now cover every eligible JS/TS target within hard time, source and
+  memory ceilings instead of being silently clamped to 64.
+- Real Hosted dogfood queried all 800 eligible targets in about 49 seconds and
+  produced 4,127 `EXACT_LSP` edges with `COMPLETE` semantic precision.
+- Unreferenced public exports are now reported as low-confidence module-surface
+  evidence, not as proof that their implementations are dead.
+
+Full patch notes: [docs/releases/v0.3.5.md](docs/releases/v0.3.5.md).
 
 ### 0.3.4 self-audit precision and bounded dynamic imports
 

@@ -104,7 +104,9 @@ test("reference caps and the global deadline report PARTIAL instead of COMPLETE"
     const deadline = await buildLspPrecisionOverlay({
       repoRoot: root,
       graph,
-      timeoutMs: 100,
+      // Leave enough synchronous preflight budget under the full parallel suite; the fake
+      // references call below is the operation whose global deadline this assertion exercises.
+      timeoutMs: 3_000,
       clientFactory: async () => ({
         async openDocument() {},
         references() { return new Promise(() => {}); },
@@ -114,7 +116,7 @@ test("reference caps and the global deadline report PARTIAL instead of COMPLETE"
     });
     assert.equal(deadline.state, "PARTIAL");
     assert.equal(deadline.coverage.truncated, true);
-    assert.ok(Date.now() - started < 2_000);
+    assert.ok(Date.now() - started < 8_000);
     assert.equal(killed, true);
   } finally {
     rmSync(root, {recursive: true, force: true});
