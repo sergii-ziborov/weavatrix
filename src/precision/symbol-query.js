@@ -9,8 +9,8 @@ import {
 } from './lsp-overlay.js'
 import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
-export const SYMBOL_PRECISION_CACHE_V = 1
-export const SYMBOL_PRECISION_CACHE_FILE = 'precision-symbols.json'
+const SYMBOL_PRECISION_CACHE_V = 1
+const SYMBOL_PRECISION_CACHE_FILE = 'precision-symbols.json'
 
 const MAX_CACHE_ENTRIES = 32
 const MAX_CACHE_BYTES = 8 * 1024 * 1024

@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto'
 import {uniqueBy} from '../util.js'
 
 export const DEFAULT_STORE = join(homedir(), '.weavatrix', 'advisories.json')
-export const OSV_SUPPORTED_ECOSYSTEMS = new Set(['npm', 'PyPI', 'Go', 'Maven', 'crates.io'])
+const OSV_SUPPORTED_ECOSYSTEMS = new Set(['npm', 'PyPI', 'Go', 'Maven', 'crates.io'])
 
 const keyOf = (ecosystem, name) => `${ecosystem}|${ecosystem === 'PyPI' ? String(name).toLowerCase().replace(/[-_.]+/g, '-') : name}`
 const uniquePackages = (packages) => uniqueBy(packages, (item) => `${item.ecosystem}|${item.name}|${item.version}`)

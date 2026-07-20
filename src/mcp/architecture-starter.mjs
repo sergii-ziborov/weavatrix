@@ -13,7 +13,7 @@ export const PROVISIONAL_BUDGETS = Object.freeze({
     maxModuleBoundaryRatio: .65,
 })
 
-export const STARTER_BUDGETS = Object.freeze({
+const STARTER_BUDGETS = Object.freeze({
     runtimeCycles: PROVISIONAL_BUDGETS.runtimeCycles,
     maxFileLoc: PROVISIONAL_BUDGETS.maxFileLoc,
 })

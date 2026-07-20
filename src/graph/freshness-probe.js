@@ -8,8 +8,8 @@ import {createRequire} from 'node:module'
 import {childProcessEnv} from '../child-env.js'
 import {createRepoBoundary} from '../repo-path.js'
 
-export const REPOSITORY_FRESHNESS_PROBE_V = 1
-export const GRAPH_BUILDER_SCHEMA_V = 6
+const REPOSITORY_FRESHNESS_PROBE_V = 1
+const GRAPH_BUILDER_SCHEMA_V = 6
 export const GRAPH_BUILDER_VERSION = (() => {
     try { return String(createRequire(import.meta.url)('../../package.json').version) }
     catch { return '0.0.0' }

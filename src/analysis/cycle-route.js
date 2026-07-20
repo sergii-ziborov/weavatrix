@@ -1,4 +1,4 @@
-export const MAX_REPRESENTATIVE_CYCLE_FILES = 64;
+const MAX_REPRESENTATIVE_CYCLE_FILES = 64;
 
 // Keep the complete closed route for normal cycles. Very large SCCs still get a closed, deterministic
 // head/tail route without letting one finding consume the whole audit response.

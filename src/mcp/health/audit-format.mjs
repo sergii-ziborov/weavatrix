@@ -96,10 +96,29 @@ const auditDependencyCoverageLines = (deps) => {
     ]
 }
 
-const auditDependencySummaryLine = (audit, deps) => {
+const scopedDependencyFindingCounts = (allFindings, scopedFindings) => {
+    const dependencyFindings = (items) => (items || []).filter(isDependencyAuditFinding)
+    const all = dependencyFindings(allFindings)
+    const scoped = dependencyFindings(scopedFindings)
+    const count = (rule) => scoped.filter((finding) => finding.rule === rule).length
+    return {
+        unused: count('unused-dep'),
+        missing: count('missing-dep'),
+        duplicateDeclarations: count('duplicate-dep'),
+        suppressed: Math.max(0, all.length - scoped.length),
+    }
+}
+
+const auditDependencySummaryLine = (audit, deps, scopedCounts = null) => {
     const ecosystems = Object.values(deps.ecosystems || {}).filter((item) => item?.present)
     const checked = ecosystems.filter((item) => item.status === 'CHECKED')
     const unsupported = ecosystems.filter((item) => item.status === 'NOT_SUPPORTED')
+    const unused = scopedCounts?.unused ?? deps.unused ?? 'unknown'
+    const missing = scopedCounts?.missing ?? deps.missing ?? 'unknown'
+    const duplicateDeclarations = scopedCounts?.duplicateDeclarations ?? deps.duplicateDeclarations ?? 'unknown'
+    const scopedSuffix = scopedCounts?.suppressed
+        ? ` Production-first path policy suppressed ${scopedCounts.suppressed} classified dependency finding(s).`
+        : ''
     if (!ecosystems.length || deps.status === 'NOT_CHECKED') {
         return 'Dependency manifests: NOT_CHECKED — no dependency manifest was discovered; manifest-to-import verification did not run and no dependency verdict was produced.'
     }
@@ -116,9 +135,9 @@ const auditDependencySummaryLine = (audit, deps) => {
         const unsupportedDeclared = unsupported.reduce((total, item) => total + (item.declared || 0), 0)
         const checkedNames = checked.map((item) => item.ecosystem).join(', ')
         const unsupportedNames = unsupported.map((item) => item.ecosystem).join(', ')
-        return `Dependency manifests: ${deps.status || 'PARTIAL'} — checked ${checkedDeclared} declaration(s) across ${checkedManifests} supported manifest(s) (${checkedNames}); inventoried ${unsupportedDeclared} declaration(s) across ${unsupportedManifests} unsupported manifest(s) (${unsupportedNames}), where package-to-artifact verification is NOT_SUPPORTED. Supported-ecosystem findings: unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}.`
+        return `Dependency manifests: ${deps.status || 'PARTIAL'} — checked ${checkedDeclared} declaration(s) across ${checkedManifests} supported manifest(s) (${checkedNames}); inventoried ${unsupportedDeclared} declaration(s) across ${unsupportedManifests} unsupported manifest(s) (${unsupportedNames}), where package-to-artifact verification is NOT_SUPPORTED. Supported-ecosystem findings: unused ${unused}, missing ${missing}, duplicate declarations ${duplicateDeclarations}.${scopedSuffix}`
     }
-    return `Dependency manifests: ${deps.status || 'UNKNOWN'} — checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${deps.unused ?? 'unknown'}, missing ${deps.missing ?? 'unknown'}, duplicate declarations ${deps.duplicateDeclarations ?? 'unknown'}.`
+    return `Dependency manifests: ${deps.status || 'UNKNOWN'} — checked ${deps.declared ?? audit.scanned.manifestDeps ?? 0} declared package(s) against ${deps.importRecords ?? audit.scanned.externalImports ?? 0} external import record(s); unused ${unused}, missing ${missing}, duplicate declarations ${duplicateDeclarations}.${scopedSuffix}`
 }
 
 const auditConventionLines = (audit) => {
@@ -140,11 +159,12 @@ export const formatOrdinaryAudit = (audit, args, findings = audit.findings, head
     const sev = summary.bySeverity
     const bycat = summary.byCategory
     const deps = audit.dependencyReport || {}
+    const dependencyCounts = scopedDependencyFindingCounts(findings, pathScope.findings)
     return [
         heading,
         `Internal audit of ${audit.repo} (${audit.scanned.files} files, ${audit.scanned.symbols} symbols, ${audit.scanned.externalImports} external imports; malware scan: ${audit.scanned.malwareScanMode}).`,
         ...auditConventionLines(audit),
-        auditDependencySummaryLine(audit, deps),
+        auditDependencySummaryLine(audit, deps, dependencyCounts),
         ...auditDependencyCoverageLines(deps),
         ...auditCapabilityLines(audit),
         ...auditExtensionLines(audit),

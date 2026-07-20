@@ -6,6 +6,7 @@ import {
   CALLABLE, FUNCS, TOPVARS, TYPES, REQUIRE, parseExportSpecifiers,
   importTypeOnly, reexportTypeOnly,
 } from './js/queries.js';
+import {boundedUrlImportTarget} from './js/dynamic-import.js';
 
 export default {
   family: "js",
@@ -201,7 +202,8 @@ export default {
         else if (isBareSpec(rawSpec)) addExternalImport({ spec: rawSpec, kind: "dynamic", line });
         else if (rawSpec) recordUnresolved(rawSpec, "dynamic", line);
       } else {
-        addExternalImport({ dynamic: true, kind: "dynamic", line });
+        const bounded = boundedUrlImportTarget(arg, {field, fileRel, resolveJsImport});
+        addExternalImport({ dynamic: true, kind: "dynamic", line, ...(bounded ? {spec: bounded.rawSpec, target: bounded.target} : {}) });
       }
     }
 

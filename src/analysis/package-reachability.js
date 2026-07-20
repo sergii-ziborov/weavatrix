@@ -1,7 +1,7 @@
 // Package-level reachability: correlate a dependency finding with the graph's external imports.
 // This is intentionally not function-level exploitability analysis. It only states whether product
 // code imports the package and preserves unknown as unknown.
-export const PACKAGE_REACHABILITY_V = 1
+const PACKAGE_REACHABILITY_V = 1
 
 export function packageReachability(externalImports, packageName, {isNonProductPath = () => false} = {}) {
     const imports = (Array.isArray(externalImports) ? externalImports : [])

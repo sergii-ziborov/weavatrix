@@ -25,40 +25,19 @@ export function killClient(client, reason = new Error('LSP client was killed')) 
     }
     if (client.child.exitCode != null || client.child.signalCode != null) return
     if (process.platform === 'win32' && client.child.pid) {
-        try {
-            const killer = spawnChild('taskkill', ['/pid', String(client.child.pid), '/T', '/F'], {
-                shell: false,
-                windowsHide: true,
-                env: lspChildProcessEnv(),
-                stdio: 'ignore',
-            })
-            const fallback = () => {
-                try { client.child.kill('SIGKILL') } catch { /* already exited */ }
-            }
-            killer.once('error', fallback)
-            killer.once('exit', (code) => { if (code !== 0) fallback() })
-        } catch {
-            try { client.child.kill('SIGKILL') } catch { /* already exited */ }
-        }
+        startWindowsTreeKill(client)
     } else {
         try { client.child.kill('SIGKILL') } catch { /* already exited */ }
     }
 }
 
-export async function killWindowsTreeAndWait(client, timeoutMs = 3_000) {
-    if (process.platform !== 'win32' || !client.child.pid || client.child.exitCode != null) return
-    await new Promise((resolveKill) => {
-        let settled = false
-        const done = () => {
-            if (settled) return
-            settled = true
-            clearTimeout(timer)
-            resolveKill()
-        }
-        const timer = setTimeout(() => {
-            try { client.child.kill() } catch { /* already exited */ }
-            done()
-        }, Math.max(250, Math.min(5_000, Number(timeoutMs) || 3_000)))
+function directChildKill(client) {
+    try { client.child.kill('SIGKILL') } catch { /* already exited */ }
+}
+
+function startWindowsTreeKill(client) {
+    if (client.windowsTreeKillPromise) return client.windowsTreeKillPromise
+    client.windowsTreeKillPromise = new Promise((resolveKill) => {
         try {
             const killer = spawnChild('taskkill', ['/pid', String(client.child.pid), '/T', '/F'], {
                 shell: false,
@@ -66,19 +45,27 @@ export async function killWindowsTreeAndWait(client, timeoutMs = 3_000) {
                 env: lspChildProcessEnv(),
                 stdio: 'ignore',
             })
-            const fallback = () => {
-                try { client.child.kill('SIGKILL') } catch { /* already exited */ }
-            }
-            killer.once('error', () => { fallback(); done() })
-            killer.once('exit', (code) => {
-                if (code !== 0) fallback()
-                done()
-            })
+            killer.once('error', () => { directChildKill(client); resolveKill() })
+            killer.once('exit', (code) => { if (code !== 0) directChildKill(client); resolveKill() })
         } catch {
-            try { client.child.kill('SIGKILL') } catch { /* already exited */ }
-            done()
+            directChildKill(client)
+            resolveKill()
         }
     })
+    return client.windowsTreeKillPromise
+}
+
+export async function killWindowsTreeAndWait(client, timeoutMs = 3_000) {
+    if (process.platform !== 'win32' || !client.child.pid || client.child.exitCode != null) return
+    const boundedTimeout = Math.max(250, Math.min(5_000, Number(timeoutMs) || 3_000))
+    let timer
+    await Promise.race([
+        startWindowsTreeKill(client),
+        new Promise((resolveKill) => {
+            timer = setTimeout(() => { directChildKill(client); resolveKill() }, boundedTimeout)
+        }),
+    ])
+    if (timer) clearTimeout(timer)
 }
 
 export async function waitForClientExit(client, timeoutMs = client.requestTimeoutMs) {

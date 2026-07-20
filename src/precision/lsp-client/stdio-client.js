@@ -15,14 +15,9 @@ import {
     unregisterLspClient,
 } from './registry.js'
 import {
-    assertClientWritable,
     closeClientDocument,
-    defaultClientServerRequest,
-    handleClientServerRequest,
     handleClientMessage,
     initializeClient,
-    normalizeClientLocations,
-    notifyClient,
     openClientDocument,
     queryClientLocations,
     rejectPendingRequests,
@@ -34,7 +29,6 @@ import {
     killClient,
     killWindowsTreeAndWait,
     shutdownClient,
-    shutdownClientOnce,
     waitForClientExit,
 } from './lifecycle.js'
 
@@ -70,6 +64,7 @@ export class StdioLspClient {
         this.state = 'starting'
         this.stderrTail = ''
         this.shutdownPromise = null
+        this.windowsTreeKillPromise = null
         this.child = spawn(executablePath, args, {
             cwd: this.normalizer.rootPath,
             env: lspChildProcessEnv(env),
@@ -123,18 +118,13 @@ export class StdioLspClient {
     }
 
     async start() { await this.spawned; return this }
-    assertWritable() { return assertClientWritable(this) }
     writeMessage(message) { return writeClientMessage(this, message) }
     request(method, params, options) { return requestFromClient(this, method, params, options) }
-    notify(method, params) { return notifyClient(this, method, params) }
     initialize(options) { return initializeClient(this, options) }
     openDocument(options) { return openClientDocument(this, options) }
     closeDocument(filePath) { return closeClientDocument(this, filePath) }
-    normalizeLocations(result) { return normalizeClientLocations(this, result) }
     definition(options) { return queryClientLocations(this, 'definition', options) }
     references(options) { return queryClientLocations(this, 'references', options) }
-    defaultServerRequest(method, params) { return defaultClientServerRequest(this, method, params) }
-    handleServerRequest(message) { return handleClientServerRequest(this, message) }
     handleMessage(message) { return handleClientMessage(this, message) }
     rejectPending(error) { return rejectPendingRequests(this, error) }
     fail(error) { return failClient(this, error) }
@@ -142,7 +132,6 @@ export class StdioLspClient {
     killWindowsTreeAndWait(timeoutMs) { return killWindowsTreeAndWait(this, timeoutMs) }
     waitForExit(timeoutMs) { return waitForClientExit(this, timeoutMs) }
     shutdown(options) { return shutdownClient(this, options) }
-    shutdownOnce(options) { return shutdownClientOnce(this, options) }
 }
 
 export async function startStdioLspClient(options) {

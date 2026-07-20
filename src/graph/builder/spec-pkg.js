@@ -62,7 +62,7 @@ export const PY_STDLIB = new Set(("__future__ __main__ _thread abc aifc argparse
 
 // import name → PyPI dist where they differ. Generic python-X / X-python / X[2]-binary equivalence is
 // handled by the matcher in dep-check; this map covers the truly irregular names.
-export const PY_IMPORT_TO_DIST = {
+const PY_IMPORT_TO_DIST = {
   yaml: "PyYAML", cv2: "opencv-python", PIL: "Pillow", sklearn: "scikit-learn", skimage: "scikit-image",
   bs4: "beautifulsoup4", dateutil: "python-dateutil", dotenv: "python-dotenv", jose: "python-jose",
   magic: "python-magic", multipart: "python-multipart", docx: "python-docx", pptx: "python-pptx",
@@ -78,7 +78,7 @@ export const PY_IMPORT_TO_DIST = {
 };
 // namespace roots shared by many dists (google.protobuf/google.cloud.* …) — too ambiguous to name one
 // package; "src" is a repo-layout artifact (stale sys.path import), never a PyPI dist.
-export const PY_AMBIGUOUS_TOP = new Set(["google", "src"]);
+const PY_AMBIGUOUS_TOP = new Set(["google", "src"]);
 export function pySpecToPkg(topModule) {
   const t = String(topModule || "").trim();
   if (!t) return null;

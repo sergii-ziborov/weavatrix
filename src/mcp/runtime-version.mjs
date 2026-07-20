@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs'
 import process from 'node:process'
 
-export const STALE_RUNTIME_OVERRIDE_ENV = 'WEAVATRIX_ALLOW_STALE_RUNTIME'
+const STALE_RUNTIME_OVERRIDE_ENV = 'WEAVATRIX_ALLOW_STALE_RUNTIME'
 
 export function runtimeVersionStatus({runningVersion, packageJsonPath, allowStale} = {}) {
     let diskVersion = null, packageVersionError = null
@@ -29,4 +29,3 @@ export function staleRuntimeMessage(status) {
     const disk = status.diskVersion || 'unavailable'
     return `STALE_RUNTIME: running Weavatrix ${status.version || 'unknown'} but package.json on disk is ${disk}. Restart/reconnect the MCP server before using tools. For deliberate source-development only, set ${STALE_RUNTIME_OVERRIDE_ENV}=1.`
 }
-

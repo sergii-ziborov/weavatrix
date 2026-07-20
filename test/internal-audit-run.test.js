@@ -29,6 +29,32 @@ test("internal audit leaves dependency health NOT_CHECKED when no manifest ecosy
   }
 });
 
+test("internal audit roots a bounded dynamic-import target instead of reporting it as an orphan", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-dynamic-target-"));
+  try {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "dynamic-target-fixture" }));
+    writeFileSync(join(repo, "src", "catalog.mjs"), "export async function load() {}\n");
+    writeFileSync(join(repo, "src", "tools-health.mjs"), "export const health = true;\n");
+    const graph = {
+      nodes: ["src/catalog.mjs", "src/tools-health.mjs"].map((file) => ({ id: file, source_file: file, file_type: "code" })),
+      links: [],
+      externalImports: [{
+        file: "src/catalog.mjs", spec: "./tools-health.mjs", target: "src/tools-health.mjs",
+        kind: "dynamic", dynamic: true, line: 1,
+      }],
+    };
+    const audit = await runInternalAudit(repo, {
+      graph,
+      advisoryStorePath: join(repo, "missing-advisories.json"),
+      skipMalwareScan: true,
+    });
+    assert.ok(!audit.findings.some((finding) => finding.rule === "orphan-file" && finding.file === "src/tools-health.mjs"));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("internal audit reports NOT_CHECKED states and honors managed Python runtime config", async () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-audit-run-"));
   try {

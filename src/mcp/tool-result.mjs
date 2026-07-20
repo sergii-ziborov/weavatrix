@@ -2,7 +2,7 @@
 // JSON mode adds the stable machine-readable structuredContent envelope and mirrors that envelope
 // into TextContent for workflow runners that cannot consume structured results directly.
 
-export const TOOL_RESULT_SCHEMA = 'weavatrix.tool.v1'
+const TOOL_RESULT_SCHEMA = 'weavatrix.tool.v1'
 
 export function toolResult(text, result, extra = {}) {
     return {

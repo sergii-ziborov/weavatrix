@@ -1,7 +1,7 @@
 import {hasPathClass} from '../../path-classification.js'
 
 export const DEAD_CODE_CONFIDENCE_RANK = Object.freeze({high: 0, medium: 1, low: 2})
-export const DYNAMIC_CODE_RE = /(?:\brequire\s*\(\s*(?!["'])|\bcreateRequire\s*\(|\b__import__\s*\(|\bimportlib\.|(?:^|[^\w.$])(?:eval|exec)\s*\()/m
+const DYNAMIC_CODE_RE = /(?:\brequire\s*\(\s*(?!["'])|\bcreateRequire\s*\(|\b__import__\s*\(|\bimportlib\.|(?:^|[^\w.$])(?:eval|exec)\s*\()/m
 const JS_DYNAMIC_IMPORT_RE = /\bimport\s*\(/
 const JS_LIKE_PATH_RE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/i
 export const REFLECTION_CODE_RE = /(?:\b(?:Class\.forName|get(?:Declared)?Method|getattr|setattr|hasattr|Method\.Invoke|GetMethod|GetProcAddress|dlsym)\s*\(|\b(?:globals|locals)\s*\(\s*\)\s*\[|\breflect\.[A-Za-z_$][\w$]*\s*\()/i

@@ -24,6 +24,29 @@ test("computeDead: a symbol referenced BY NAME in another file is not dead (cros
   assert.equal(dead.has("a.go#bar@2"), true, "bar unreferenced anywhere → dead");
 });
 
+test("computeDead: comment-only self references do not prove liveness, while runtime strings remain conservative", () => {
+  const graph = {
+    nodes: [
+      { id: "src/helpers.js", source_file: "src/helpers.js" },
+      { id: "src/helpers.js#commentOnly@2", label: "commentOnly()", source_file: "src/helpers.js" },
+      { id: "src/helpers.js#runtimeNamed@4", label: "runtimeNamed()", source_file: "src/helpers.js" },
+    ],
+    links: [
+      { source: "src/helpers.js", target: "src/helpers.js#commentOnly@2", relation: "contains" },
+      { source: "src/helpers.js", target: "src/helpers.js#runtimeNamed@4", relation: "contains" },
+    ],
+  };
+  const source = [
+    "// commentOnly is intentionally mentioned in documentation only",
+    "function commentOnly() {}",
+    "register('runtimeNamed')",
+    "function runtimeNamed() {}",
+  ].join("\n");
+  const dead = new Set(computeDead(graph, new Map([["src/helpers.js", source]])).deadSymbols.map((symbol) => symbol.id));
+  assert.ok(dead.has("src/helpers.js#commentOnly@2"));
+  assert.ok(!dead.has("src/helpers.js#runtimeNamed@4"), "string-addressed dispatch stays conservatively live");
+});
+
 test("computeDead: an inbound edge keeps a symbol alive even if its name is unreferenced in text", () => {
   const graph = {
     nodes: [{ id: "x.js", source_file: "x.js" }, { id: "x.js#run@1", label: "run()", source_file: "x.js" }],

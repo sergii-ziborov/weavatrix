@@ -2,17 +2,37 @@
 // calls/imports/references/inherits it) AND its bare name appears NOWHERE in the repo outside its own file.
 // A file is DEAD when nothing imports it, it isn't an entry point, and all its symbols are dead.
 //
-// Pure core `computeDead(graph, sources)` (sources = Map<fileRel, text>) is fully testable with no filesystem.
-// `analyzeDeadCode(graph, repoRoot)` is the thin fs wrapper. Works on ANY graph-builder-schema graph (built-in OR
-// graph-builder) — it only needs {nodes, links} + the source text. See [[graph-builder-internalization]].
-import { readFileSync } from "node:fs";
+// Pure core `computeDead(graph, sources)` (sources = Map<fileRel, text>) works on any graph-builder-schema graph
+// and is fully testable with no filesystem. It only needs {nodes, links} + source text. See [[graph-builder-internalization]].
 import { posix } from "node:path";
-import { createRepoBoundary } from "../repo-path.js";
 import { isStructuralRelation } from "../graph/relations.js";
 import { createPathClassifier, hasPathClass } from "../path-classification.js";
 
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
 const bareName = (label) => String(label || "").replace(/\s*\(.*$/, "").replace(/[()]/g, "").trim();
+// Ignore comment-only lexical mentions, which are documentation rather than callers. Keep strings on
+// purpose: registries/reflection often address a live symbol by name, and static liveness must stay
+// conservative there. This only strips comments that start a logical line, avoiding a language parser
+// guess around inline comment markers, regex literals, or URLs.
+const lexicalEvidenceText = (value) => {
+  let inBlockComment = false;
+  return String(value || "").split(/\r?\n/).map((line) => {
+    let rest = line;
+    while (true) {
+      if (inBlockComment) {
+        const end = rest.indexOf("*/");
+        if (end < 0) return "";
+        inBlockComment = false;
+        rest = rest.slice(end + 2);
+      }
+      const trimmed = rest.trimStart();
+      if (trimmed.startsWith("//") || trimmed.startsWith("#")) return "";
+      if (!trimmed.startsWith("/*")) return rest;
+      inBlockComment = true;
+      rest = trimmed.slice(2);
+    }
+  }).join("\n");
+};
 // entry surfaces are never dead even with no inbound edge (framework/CLI/HTTP enter them externally).
 // Exported for internal-audit.js (reachability entry set) — keep the two in lockstep.
 export const ENTRY_FILE = /(^|[\\/])(index|main|app|server|cli|cmd|bootstrap|entry|run|__main__|manage|wsgi|asgi|setup|conftest)\.[a-z0-9]+$|(^|[\\/])(bin|cmd)[\\/]|(^|[\\/])main\.go$/i;
@@ -21,8 +41,8 @@ const isTestFile = (file) => hasPathClass(defaultPathClassifier.explain(file), "
 
 // Framework-owned entry modules are invoked by convention rather than a source import. Keep this narrow:
 // these are Next.js App/Pages Router surfaces and framework metadata files, not every file under `app/`.
-export const NEXT_ENTRY_FILE = /(^|\/)(?:src\/)?app\/(?:.*\/)?(?:page|layout|template|loading|error|global-error|not-found|default|route|robots|sitemap|manifest|opengraph-image|twitter-image|icon|apple-icon)\.[cm]?[jt]sx?$|(^|\/)(?:src\/)?pages\/(?!.*\/(?:components?|lib|utils?)\/).+\.[cm]?[jt]sx?$|(^|\/)(?:middleware|instrumentation)\.[cm]?[jt]s$/i;
-export const RUST_ENTRY_FILE = /(^|\/)(?:build\.rs|src\/(?:lib|main)\.rs)$/i;
+const NEXT_ENTRY_FILE = /(^|\/)(?:src\/)?app\/(?:.*\/)?(?:page|layout|template|loading|error|global-error|not-found|default|route|robots|sitemap|manifest|opengraph-image|twitter-image|icon|apple-icon)\.[cm]?[jt]sx?$|(^|\/)(?:src\/)?pages\/(?!.*\/(?:components?|lib|utils?)\/).+\.[cm]?[jt]sx?$|(^|\/)(?:middleware|instrumentation)\.[cm]?[jt]s$/i;
+const RUST_ENTRY_FILE = /(^|\/)(?:build\.rs|src\/(?:lib|main)\.rs)$/i;
 export const isFrameworkEntryFile = (file) => {
   const normalized = String(file || "").replace(/\\/g, "/");
   return NEXT_ENTRY_FILE.test(normalized) || RUST_ENTRY_FILE.test(normalized);
@@ -114,7 +134,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   // whole-repo identifier frequency: a symbol whose name appears MORE than once total (its definition + at least
   // one use, same-file OR cross-file) is referenced. Errs toward "alive" (common-named symbols never flagged).
   const globalFreq = new Map();
-  for (const [, text] of sources) for (const m of String(text || "").matchAll(IDENT_RE)) { const n = m[0]; globalFreq.set(n, (globalFreq.get(n) || 0) + 1); }
+  for (const [, text] of sources) for (const m of lexicalEvidenceText(text).matchAll(IDENT_RE)) { const n = m[0]; globalFreq.set(n, (globalFreq.get(n) || 0) + 1); }
 
   const symById = new Map();
   const symsByFile = new Map();
@@ -127,7 +147,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   const symbolNames = new Set([...symById.values()].map((node) => bareName(node.label)).filter(Boolean));
   const occurrenceFiles = new Map();
   const occurrenceCounts = new Map();
-  for (const [file, text] of sources) for (const match of String(text || "").matchAll(IDENT_RE)) {
+  for (const [file, text] of sources) for (const match of lexicalEvidenceText(text).matchAll(IDENT_RE)) {
     const name = match[0];
     if (!symbolNames.has(name)) continue;
     const files = occurrenceFiles.get(name) || new Set();
@@ -275,18 +295,4 @@ export function computeUnusedExports(graph, sources, { dynamicTargets = new Set(
     out.push({ id: n.id, file: n.source_file, label: n.label, test: isTestFile(n.source_file), reason: "exported but never imported or referenced outside its own file" });
   }
   return out;
-}
-
-// fs wrapper: reads each graph file's source once, then runs the pure checker.
-export function analyzeDeadCode(graph, repoRoot) {
-  const sources = new Map();
-  const files = new Set();
-  const boundary = createRepoBoundary(repoRoot);
-  for (const n of graph.nodes || []) if (n.source_file) files.add(n.source_file);
-  for (const f of files) {
-    const resolved = boundary.resolve(f);
-    if (!resolved.ok) continue;
-    try { sources.set(f, readFileSync(resolved.path, "utf8")); } catch { /* file gone */ }
-  }
-  return computeDead(graph, sources);
 }

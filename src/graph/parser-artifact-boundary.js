@@ -52,5 +52,3 @@ export function trustedGrammarWasm(wasmDir, grammar) {
     sha256, label: `tree-sitter ${grammar} grammar`,
   })
 }
-
-export const TRUSTED_GRAMMARS = Object.freeze(Object.keys(GRAMMAR_SHA256))

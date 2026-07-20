@@ -11,7 +11,7 @@ const MIN_TOKENS = 50
 const FILTERED_CLASSES = new Set(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const SAFE_SYMBOL = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
-export const DUPLICATE_EVIDENCE_THRESHOLDS = Object.freeze({
+const DUPLICATE_EVIDENCE_THRESHOLDS = Object.freeze({
     clones: Object.freeze({mode: 'renamed', minSimilarityPercent: CLONE_MIN_SIMILARITY, minTokens: MIN_TOKENS}),
     divergence: Object.freeze({
         sameName: true,

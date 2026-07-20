@@ -45,10 +45,11 @@ export async function shutdownActiveLspClients({timeoutMs = 3_000} = {}) {
         await Promise.allSettled(survivors.map(async (client) => {
             if (typeof client.killWindowsTreeAndWait === 'function') await client.killWindowsTreeAndWait(forceBudget)
             client.kill(reason)
-            if (typeof client.waitForExit === 'function') {
-                await client.waitForExit(Math.max(100, boundedTimeout - (Date.now() - startedAt)))
-            }
         }))
+        const reapBudget = Math.max(250, Math.min(1_000, Math.floor(boundedTimeout * 0.4)))
+        await Promise.allSettled(survivors.map((client) => (
+            typeof client.waitForExit === 'function' ? client.waitForExit(reapBudget) : undefined
+        )))
     }
     return {
         requested: clients.length,

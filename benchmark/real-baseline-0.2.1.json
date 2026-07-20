@@ -3,52 +3,63 @@
   "builderVersion": "0.2.1",
   "repositories": {
     "frontend": {
-      "revision": "21935f51208262d2f77aedd9a2691edc6c550b57",
-      "fingerprint": "bfb492f5ce9c1841",
+      "revision": "e7979df94f6614f86649119c69e916a1f89a6596",
+      "fingerprint": "b635e42f8482c7f5",
       "metrics": {
-        "files": 1703,
-        "languageFiles": 1569,
-        "symbols": 5649,
-        "nodes": 7352,
-        "links": 18952,
+        "files": 1706,
+        "languageFiles": 1574,
+        "symbols": 6510,
+        "nodes": 8216,
+        "links": 21868,
         "relations": {
-          "calls": 3405,
-          "contains": 5649,
-          "imports": 6924,
+          "calls": 3412,
+          "contains": 6510,
+          "imports": 6938,
           "inherits": 1,
           "re_exports": 325,
-          "references": 2648
+          "references": 4682
         },
         "symbolKinds": {
           "class": 4,
-          "function": 179,
+          "enum": 27,
+          "function": 182,
+          "interface": 407,
           "method": 10,
-          "unknown": 22,
-          "variable": 5434
+          "type": 410,
+          "unknown": 21,
+          "variable": 5449
         },
-        "endpoints": 3,
-        "endpointMethods": {
-          "ANY": 3
+        "endpoints": 0,
+        "endpointMethods": {},
+        "edgeProvenanceV": 1,
+        "edgeProvenance": {
+          "EXACT_LSP": 0,
+          "EXTRACTED": 6510,
+          "RESOLVED": 9293,
+          "INFERRED": 6065,
+          "CONFLICT": 0,
+          "UNKNOWN": 0
         },
-        "testFiles": 277,
+        "edgeProvenanceComplete": true,
+        "testFiles": 280,
         "generatedFiles": 0,
-        "nonProductFiles": 355,
-        "graphBytes": 8832248,
-        "coldMs": 8833.09
+        "nonProductFiles": 358,
+        "graphBytes": 13207904,
+        "coldMs": 36704.25
       }
     },
     "analytics": {
-      "revision": "10ff58b4b4110987ac0e99e255f749a2af7dc8d9",
-      "fingerprint": "ae6c136573d3bb7d",
+      "revision": "66677a5c59478589ccc235cde9bff0a33fe38eef",
+      "fingerprint": "3e5d7c60f3cb2829",
       "metrics": {
         "files": 360,
         "languageFiles": 328,
-        "symbols": 2535,
-        "nodes": 2895,
-        "links": 8873,
+        "symbols": 2536,
+        "nodes": 2896,
+        "links": 8878,
         "relations": {
-          "calls": 4630,
-          "contains": 2540,
+          "calls": 4634,
+          "contains": 2541,
           "imports": 1678,
           "inherits": 6,
           "re_exports": 19
@@ -57,7 +68,7 @@
           "class": 8,
           "function": 85,
           "method": 13,
-          "variable": 2429
+          "variable": 2430
         },
         "endpoints": 67,
         "endpointMethods": {
@@ -67,78 +78,114 @@
           "POST": 16,
           "PUT": 7
         },
+        "edgeProvenanceV": 1,
+        "edgeProvenance": {
+          "EXACT_LSP": 0,
+          "EXTRACTED": 2541,
+          "RESOLVED": 1866,
+          "INFERRED": 4471,
+          "CONFLICT": 0,
+          "UNKNOWN": 0
+        },
+        "edgeProvenanceComplete": true,
         "testFiles": 108,
         "generatedFiles": 0,
         "nonProductFiles": 127,
-        "graphBytes": 4992572,
-        "coldMs": 3222.95
+        "graphBytes": 4995229,
+        "coldMs": 4357.01
       }
     },
     "automation": {
       "revision": "8ab859acb1401dd708abc046604e1cea14988379",
-      "fingerprint": "18c879844bf084a3",
+      "fingerprint": "705874a74dc2da06",
       "metrics": {
         "files": 1670,
         "languageFiles": 1008,
         "symbols": 5711,
         "nodes": 7381,
-        "links": 19213,
+        "links": 23441,
         "relations": {
-          "calls": 1497,
-          "contains": 5711,
+          "calls": 1665,
+          "contains": 9771,
           "imports": 11575,
           "inherits": 430
         },
         "symbolKinds": {
-          "unknown": 5711
+          "class": 938,
+          "function": 498,
+          "method": 4060,
+          "variable": 215
         },
         "endpoints": 0,
         "endpointMethods": {},
-        "testFiles": 492,
+        "edgeProvenanceV": 1,
+        "edgeProvenance": {
+          "EXACT_LSP": 0,
+          "EXTRACTED": 9771,
+          "RESOLVED": 11747,
+          "INFERRED": 1923,
+          "CONFLICT": 0,
+          "UNKNOWN": 0
+        },
+        "edgeProvenanceComplete": true,
+        "testFiles": 493,
         "generatedFiles": 449,
-        "nonProductFiles": 1405,
-        "graphBytes": 8605605,
-        "coldMs": 3357.86
+        "nonProductFiles": 1406,
+        "graphBytes": 12413216,
+        "coldMs": 9777.46
       }
     },
     "bgp-speaker": {
       "revision": "07375f9606e4e78355db7050fe52b0d6d5ab70dc",
-      "fingerprint": "d61904ab46a14e17",
+      "fingerprint": "5d102066dff4acc9",
       "metrics": {
         "files": 30,
         "languageFiles": 20,
         "symbols": 443,
         "nodes": 473,
-        "links": 1165,
+        "links": 1175,
         "relations": {
-          "calls": 326,
+          "calls": 336,
           "contains": 443,
           "imports": 115,
           "references": 281
         },
         "symbolKinds": {
-          "unknown": 443
+          "function": 98,
+          "method": 73,
+          "type": 52,
+          "unknown": 220
         },
         "endpoints": 0,
         "endpointMethods": {},
+        "edgeProvenanceV": 1,
+        "edgeProvenance": {
+          "EXACT_LSP": 0,
+          "EXTRACTED": 443,
+          "RESOLVED": 276,
+          "INFERRED": 456,
+          "CONFLICT": 0,
+          "UNKNOWN": 0
+        },
+        "edgeProvenanceComplete": true,
         "testFiles": 5,
         "generatedFiles": 0,
         "nonProductFiles": 6,
-        "graphBytes": 365967,
-        "coldMs": 207.14
+        "graphBytes": 505927,
+        "coldMs": 738.71
       }
     },
     "warroom": {
       "revision": "48153e1aab854df33f16b973fdbf3aefc4387064",
-      "fingerprint": "3bbcc6efa85b7257",
+      "fingerprint": "2887ba4b1593678f",
       "metrics": {
         "files": 789,
         "languageFiles": 372,
         "symbols": 6354,
         "nodes": 7143,
-        "links": 17529,
+        "links": 23708,
         "relations": {
-          "calls": 1769,
+          "calls": 7948,
           "contains": 6354,
           "implements": 25,
           "imports": 1701,
@@ -159,50 +206,67 @@
           "GET": 6,
           "POST": 2
         },
+        "edgeProvenanceV": 1,
+        "edgeProvenance": {
+          "EXACT_LSP": 0,
+          "EXTRACTED": 10172,
+          "RESOLVED": 1701,
+          "INFERRED": 11835,
+          "CONFLICT": 0,
+          "UNKNOWN": 0
+        },
+        "edgeProvenanceComplete": true,
         "testFiles": 470,
         "generatedFiles": 11,
         "nonProductFiles": 471,
-        "graphBytes": 10046211,
-        "coldMs": 2571.06
+        "graphBytes": 15276828,
+        "coldMs": 5407.35
       }
     },
     "ai-dev-system": {
       "revision": "81e7e9a127cfc9362c8bc5322ec2e027b42620a8",
-      "fingerprint": "b21293fe3737fcde",
+      "fingerprint": "8b2d34e52919c3a3",
       "metrics": {
         "files": 503,
         "languageFiles": 112,
-        "symbols": 1668,
-        "nodes": 2171,
-        "links": 3645,
+        "symbols": 1873,
+        "nodes": 2376,
+        "links": 4732,
         "relations": {
           "calls": 1204,
-          "contains": 1679,
+          "contains": 1884,
           "imports": 629,
           "inherits": 3,
+          "method": 98,
           "re_exports": 29,
-          "references": 101
+          "references": 885
         },
         "symbolKinds": {
           "class": 39,
-          "function": 492,
-          "method": 85,
-          "unknown": 826,
+          "constant": 23,
+          "enum": 8,
+          "function": 1015,
+          "interface": 154,
+          "macro": 5,
+          "method": 189,
+          "module": 100,
+          "static": 9,
+          "struct": 51,
+          "type": 54,
           "variable": 226
         },
-        "endpoints": 20,
+        "endpoints": 18,
         "endpointMethods": {
-          "ANY": 1,
           "DELETE": 1,
           "GET": 11,
           "PATCH": 1,
-          "POST": 6
+          "POST": 5
         },
         "edgeProvenanceV": 1,
         "edgeProvenance": {
           "EXACT_LSP": 0,
-          "EXTRACTED": 1679,
-          "RESOLVED": 658,
+          "EXTRACTED": 1982,
+          "RESOLVED": 1442,
           "INFERRED": 1308,
           "CONFLICT": 0,
           "UNKNOWN": 0
@@ -211,8 +275,8 @@
         "testFiles": 0,
         "generatedFiles": 3,
         "nonProductFiles": 127,
-        "graphBytes": 2556473,
-        "coldMs": 9587.78
+        "graphBytes": 3269238,
+        "coldMs": 4910.53
       }
     }
   }

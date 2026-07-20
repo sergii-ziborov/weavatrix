@@ -413,6 +413,22 @@ metrics are not persisted or transmitted by Weavatrix. If a source checkout's pa
 while an old daemon remains alive, `initialize`, `tools/list`, and tool calls fail loudly with
 `STALE_RUNTIME` until the client reconnects; the opt-out is reserved for deliberate development.
 
+### 0.3.4 self-audit precision and bounded dynamic imports
+
+- JS/TS graph construction now resolves the existing local-file prefix in
+  ``import(new URL(`./tool.mjs${runtimeValue}`, import.meta.url).href)`` while
+  preserving the edge as dynamic. Variable-first paths, remote URLs, alternate
+  bases and other runtime-only targets remain explicit unknowns.
+- Health dependency headlines now follow the same production-first path scope as
+  the displayed findings. Classified fixture results are counted separately
+  instead of making a clean application headline look unhealthy.
+- Dead-code liveness no longer treats comment-only symbol mentions as callers;
+  string-addressed runtime registries remain conservatively live. Dogfood removed
+  obsolete internal exports/wrappers while preserving every supported Online
+  extension point and TypeScript host callback.
+
+Full patch notes: [docs/releases/v0.3.4.md](docs/releases/v0.3.4.md).
+
 ### 0.3.3 parser supply-chain boundary
 
 - Before compiling parser WASM, Core now requires the package-pinned `web-tree-sitter` runtime and

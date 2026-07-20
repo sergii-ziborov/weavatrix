@@ -3,8 +3,7 @@
 // so the renderer and the AI summarizer consume one contract regardless of engine.
 import { createHash } from "node:crypto";
 
-export const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
-export const FINDING_CATEGORIES = ["unused", "structure", "vulnerability", "malware"];
+const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
 
 export function dependencyVerification(manifest, imports, decision, mapping) {
   return {
