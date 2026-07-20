@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {buildLspPrecisionOverlay} from '../src/precision/lsp-overlay.js'
+import {buildLspPrecisionOverlay, precisionSummary} from '../src/precision/lsp-overlay.js'
+import {precisionStatusLine} from '../src/build-graph.js'
 import {
   fileNode,
   symbolNode,
@@ -45,6 +46,9 @@ test('explicit expanded prewarm queries more than 64 targets while defaults stay
     assert.equal(bounded.coverage.selected, 32)
     assert.equal(bounded.coverage.queried, 32)
     assert.equal(bounded.state, 'PARTIAL')
+    const line = precisionStatusLine(precisionSummary(bounded))
+    assert.match(line, /Semantic precision: PARTIAL — 32\/80 bounded target\(s\) queried \(truncated\)/)
+    assert.match(line, /semantic precision stopped at a configured safety limit/)
 
     const expanded = await buildLspPrecisionOverlay({
       repoRoot: root,

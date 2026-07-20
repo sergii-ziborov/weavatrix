@@ -39,7 +39,9 @@ function coverage(session, verifiedEdges = session.links.length) {
 }
 
 function completedOverlay(session) {
-  const state = session.errors || session.truncated || session.unclassifiedReferences
+  // Coherence guard: COMPLETE must mean every selected target was actually probed.
+  const underQueried = session.queried < session.targets.length
+  const state = session.errors || session.truncated || session.unclassifiedReferences || underQueried
     ? 'PARTIAL' : 'COMPLETE'
   return baseOverlay(session.graph, state, {
     request: session.request,
@@ -67,7 +69,9 @@ function completedOverlay(session) {
     ...(session.errors ? {reason: `${session.errors} semantic request(s) failed or were refused`}
       : session.truncated ? {reason: 'semantic precision stopped at a configured safety limit'}
         : session.unclassifiedReferences
-          ? {reason: 'some exact references could not be classified as runtime or type-only'} : {}),
+          ? {reason: 'some exact references could not be classified as runtime or type-only'}
+          : underQueried
+            ? {reason: 'semantic precision stopped before probing every selected target'} : {}),
   })
 }
 
@@ -185,14 +189,15 @@ export async function buildLspPrecisionOverlay({
   }
   if (graphPath) {
     const cached = readPrecisionOverlay(graphPath, graph)
-    if (cached?.state === 'COMPLETE'
+    // NONE (no eligible targets) is as stable as COMPLETE for an unchanged fingerprint.
+    if ((cached?.state === 'COMPLETE' || cached?.state === 'NONE')
       && precisionOverlayMatches(cached, graph, {request: session.request})
       && cached.semanticInputFingerprint === session.semanticInputs.fingerprint) return cached
   }
   session.eligible = eligibleTargets(graph, session.boundedMax, targetIds)
   session.targets = session.eligible.targets
   if (!session.targets.length) {
-    return persist(session, baseOverlay(graph, 'COMPLETE', {
+    return persist(session, baseOverlay(graph, 'NONE', {
       request: session.request,
       semanticInputFingerprint: session.semanticInputs.fingerprint,
       pluginPolicy: {

@@ -75,7 +75,8 @@ async function storeEntry(path, entry) {
 }
 
 function cacheable(overlay) {
-    if (overlay?.state === 'COMPLETE') return true
+    // NONE is stable for the fingerprint, but only COMPLETE ever proves absence (see reader below).
+    if (overlay?.state === 'COMPLETE' || overlay?.state === 'NONE') return true
     return overlay?.state === 'PARTIAL'
         && overlay?.reason === 'semantic precision stopped at a configured safety limit'
 }

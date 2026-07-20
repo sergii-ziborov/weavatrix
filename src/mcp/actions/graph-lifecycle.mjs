@@ -1,7 +1,7 @@
 import {existsSync, readFileSync, realpathSync, statSync, writeFileSync} from 'node:fs'
 import {dirname, isAbsolute, join} from 'node:path'
 import {diffGraphs, formatGraphDiff, prevGraphPathFor} from '../graph-context.mjs'
-import {buildGraphForRepo, defaultPrecisionMode} from '../../build-graph.js'
+import {buildGraphForRepo, defaultPrecisionMode, precisionStatusLine} from '../../build-graph.js'
 import {graphHomeDir, graphOutDirForModule, graphOutDirForRepo} from '../../graph/layout.js'
 import {liveRepositoryRecords, registerRepository} from '../../graph/repo-registry.js'
 import {precisionSemanticInputsMatch, readPrecisionOverlay} from '../../precision/lsp-overlay.js'
@@ -128,7 +128,7 @@ export async function tOpenRepo(g, args, ctx) {
         `Opened ${repoPath}${buildNote}: ${loaded.nodes.length} nodes / ${loaded.links.length} edges. All tools now target this repo.`,
         `Graph: ${graphPath}`,
         `Build mode: ${loaded.graphBuildMode || 'full'}`,
-        `Semantic precision: ${loaded.precision?.state || 'UNAVAILABLE'} (${loaded.precision?.verifiedEdges || 0} EXACT_LSP edge(s))`,
+        precisionStatusLine(loaded.precision),
     ].join('\n')
 }
 

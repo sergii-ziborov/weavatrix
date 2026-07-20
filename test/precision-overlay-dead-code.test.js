@@ -11,7 +11,9 @@ import {
   PRECISION_OVERLAY_V,
   precisionOverlayMatches,
   precisionSemanticInputsMatch,
+  precisionSummary,
 } from "../src/precision/lsp-overlay.js";
+import { precisionStatusLine } from "../src/build-graph.js";
 import { computeDeadCodeReview } from "../src/analysis/dead-code-review.js";
 import { buildInternalGraph } from "../src/graph/internal-builder.js";
 import { snapshotRepository } from "../src/graph/incremental-refresh.js";
@@ -35,6 +37,41 @@ test("Java/Rust-only graphs report semantic precision as unavailable", async () 
   assert.equal(factoryCalled, false);
   assert.equal(overlay.state, "UNAVAILABLE");
   assert.match(overlay.reason, /JavaScript and TypeScript/);
+});
+
+test("a stray JavaScript file among Rust-only symbols reports NONE, never COMPLETE", async () => {
+  const root = mkdtempSync(join(tmpdir(), "weavatrix-precision-none-"));
+  mkdirSync(join(root, "scripts"), { recursive: true });
+  writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+    compilerOptions: { allowJs: true, noEmit: true },
+    include: ["scripts/**/*.js"],
+  }));
+  writeFileSync(join(root, "scripts", "stray.js"), "console.log(1);\n");
+  const rustSymbol = symbolNode("src/main.rs", "run", 1, 1, { visibility: "private" });
+  const graph = withSnapshot(root, {
+    graphRevision: "revision-none",
+    graphBuildMode: "full",
+    nodes: [fileNode("scripts/stray.js"), fileNode("src/main.rs"), rustSymbol],
+    links: [{ source: "src/main.rs", target: rustSymbol.id, relation: "contains", provenance: "EXTRACTED" }],
+  });
+  let factoryCalled = false;
+  try {
+    const overlay = await buildLspPrecisionOverlay({
+      repoRoot: root,
+      graph,
+      clientFactory: async () => { factoryCalled = true; throw new Error("must not start"); },
+    });
+    assert.equal(factoryCalled, false);
+    assert.equal(overlay.state, "NONE", JSON.stringify(overlay));
+    assert.equal(overlay.reason, "no eligible JavaScript/TypeScript semantic targets");
+    assert.deepEqual(overlay.noReferenceSymbols, []);
+    assert.equal(
+      precisionStatusLine(precisionSummary(overlay)),
+      "Semantic precision: NONE — no eligible JavaScript/TypeScript semantic targets",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("post-build invalidation removes all exact and no-reference evidence", async () => {

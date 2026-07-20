@@ -31,6 +31,14 @@ export function defaultPrecisionMode(env = process.env) {
   return env?.WEAVATRIX_PRECISION === "off" ? "off" : "lsp";
 }
 
+// One-line human status for a precision summary (precisionSummary shape) — the graph_stats
+// composition, shared by the build log and open_repo so every surface reads the same fraction.
+export function precisionStatusLine(precision) {
+  const p = precision || {};
+  if (p.state === "NONE") return `Semantic precision: NONE — ${p.reason || "no eligible JavaScript/TypeScript semantic targets"}`;
+  return `Semantic precision: ${p.state || "UNAVAILABLE"} — ${p.queried || 0}/${p.candidates || 0} bounded target(s) queried${p.truncated ? " (truncated)" : ""}; ${p.verifiedEdges || 0} EXACT_LSP edge(s)${p.state !== "COMPLETE" && p.reason ? `; ${p.reason}` : ""}`;
+}
+
 function buildGraphInWorker(payload) {
   return new Promise((resolve, reject) => {
     let worker;
@@ -193,7 +201,7 @@ export async function buildGraphForRepo(repoPath, {
       hotspots: built.hotspots,
       refresh: built.refresh,
       precision: built.precision,
-      log: `built-in builder: ${built.nodes} nodes, ${built.links} static links (${built.refresh?.kind || "full"}: ${built.refresh?.reason || "build"}); semantic precision ${built.precision?.state || "UNAVAILABLE"}, ${built.precision?.verifiedEdges || 0} EXACT_LSP edge(s)`
+      log: `built-in builder: ${built.nodes} nodes, ${built.links} static links (${built.refresh?.kind || "full"}: ${built.refresh?.reason || "build"}); ${precisionStatusLine(built.precision)}`
     };
   } catch (error) {
     return { ok: false, error: `graph build failed: ${error.message}`, builder: "internal" };

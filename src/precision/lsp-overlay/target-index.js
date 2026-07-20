@@ -99,10 +99,15 @@ export function eligibleTargets(graph, limit, requestedIds = null) {
   const byId = new Map((graph.nodes || []).map((node) => [String(node.id), node]))
   if (Array.isArray(requestedIds) && requestedIds.length) {
     const ids = [...new Set(requestedIds.map(String))]
-    const targets = ids.map((id) => byId.get(id))
+    const eligible = ids.map((id) => byId.get(id))
       .filter((node) => node?.selection_start && JS_TS_FILE.test(String(node.source_file || '')))
-      .slice(0, limit)
-    return {targets, total: ids.length, orphanIds: new Set()}
+    // total counts only eligible targets so coverage fractions stay honest when ids were dropped.
+    return {
+      targets: eligible.slice(0, limit),
+      total: eligible.length,
+      droppedRequested: ids.length - eligible.length,
+      orphanIds: new Set(),
+    }
   }
   const ranked = new Map()
   const inbound = new Set()

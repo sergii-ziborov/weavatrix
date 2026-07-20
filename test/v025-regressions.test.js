@@ -183,3 +183,26 @@ test("on-demand symbol precision queries only the requested declaration and uses
     assert.equal(existsSync(join(root, "precision.json")), false, "point queries never overwrite the broad overlay");
   } finally { rmSync(root, {recursive: true, force: true, maxRetries: 20, retryDelay: 100}); }
 });
+
+test("get_dependents never pairs COMPLETE with an unproven-absence note", async () => {
+  const root = mkdtempSync(join(tmpdir(), "weavatrix-v025-precision-partial-"));
+  mkdirSync(join(root, "src"), {recursive: true});
+  writeFileSync(join(root, "tsconfig.json"), JSON.stringify({compilerOptions: {strict: true, noEmit: true}, include: ["src/**/*.ts"]}));
+  writeFileSync(join(root, "src", "target.ts"), "export function target(): number { return 1; }\n");
+  writeFileSync(join(root, "src", "caller.ts"), "import { target } from './target';\nexport function caller(): number { return target(); }\n");
+  try {
+    const graph = {...await buildInternalGraph(root), graphBuildMode: "full", graphBuildScope: "", graphPrecisionMode: "off"};
+    const graphPath = join(root, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(graph));
+    const target = graph.nodes.find((node) => node.source_file === "src/target.ts" && node.label === "target()");
+    const clientFactory = async () => ({
+      async openDocument() {},
+      async references() { throw new Error("synthetic provider failure"); },
+      async close() {},
+    });
+    const note = await tGetDependents(loadGraph(graphPath), {label: target.id, depth: 1, precision: "lsp"},
+      {repoRoot: root, graphPath, precisionClientFactory: clientFactory});
+    assert.doesNotMatch(note, /COMPLETE[^\n]*absence was not proven/);
+    assert.match(note, /Semantic precision: PARTIAL; exact absence was not proven, so graph edges are retained/);
+  } finally { rmSync(root, {recursive: true, force: true, maxRetries: 20, retryDelay: 100}); }
+});
