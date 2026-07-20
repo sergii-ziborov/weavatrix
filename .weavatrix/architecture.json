@@ -11,6 +11,7 @@
         "bin",
         "scripts",
         "src/build-graph.js",
+        "src/mcp-runtime.mjs",
         "src/mcp-server.mjs",
         "src/mcp-source-tools.mjs"
       ]
@@ -33,7 +34,8 @@
         "src/path-ignore.js",
         "src/process.js",
         "src/repo-path.js",
-        "src/util.js"
+        "src/util.js",
+        "src/version.js"
       ]
     },
     {"id": "site", "name": "Static public site", "paths": ["site"]}

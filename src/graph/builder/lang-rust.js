@@ -20,6 +20,13 @@ const SYMS_OPTIONAL = [
 ];
 
 const cleanSegment = (part) => String(part || "").trim().replace(/^r#/, "");
+// Rust primitive types are language builtins, never crate dependencies: `f64::from(..)`, `u8::MAX`,
+// `str::len` and friends must not be recorded as external crate imports.
+const RUST_PRIMITIVES = new Set(["bool", "char", "str", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize"]);
+const RUST_NON_CRATE_HEADS = ["crate", "self", "super", "std", "core", "alloc"];
+// A path head is an external crate only when it is not an anchor keyword, a std root, a primitive type,
+// or a name already bound into local scope by a `use` (a module alias or imported item).
+const isExternalCrate = (head, localBindings) => Boolean(head) && !RUST_NON_CRATE_HEADS.includes(head) && !RUST_PRIMITIVES.has(head) && !localBindings.has(head) && /^[a-z_][\w]*$/.test(head);
 const pathParts = (node) => String(node?.text || "").split("::").map(cleanSegment).filter(Boolean);
 const under = (node, type) => { for (let p = node?.parent; p; p = p.parent) if (p.type === type) return true; return false; };
 const ancestor = (node, types) => {
@@ -141,6 +148,9 @@ export default {
     // nested in another qualified path and often repeats an existing `mod`/`use`; counting occurrences would
     // inflate module coupling without adding structure.
     const emitted = new Set();
+    // Names bound into this file's scope by `use` (module aliases and imported items), tracked even when the
+    // used path did not resolve to a repo file, so later `alias::item` paths are not re-read as external crates.
+    const localBindings = new Set();
     const emit = (target, meta = {}) => {
       if (!target || target === fileRel) return;
       const relation = meta.relation || "imports";
@@ -157,8 +167,9 @@ export default {
     // outlined modules declared inside it are captured separately with their inline ancestor path.
     for (const cap of caps(grammar, `(mod_item) @mod`, tree.rootNode)) {
       const mod = cap.node;
-      if (mod.namedChildren.some((child) => child.type === "declaration_list")) continue;
       const name = mod.namedChildren.find((child) => child.type === "identifier")?.text;
+      if (name) localBindings.add(cleanSegment(name)); // a declared child module shadows any same-named crate
+      if (mod.namedChildren.some((child) => child.type === "declaration_list")) continue;
       if (!name) continue;
       const target = resolveRustMod(fileRel, cleanSegment(name), {
         inlineModules: inlineAncestors(mod),
@@ -174,10 +185,13 @@ export default {
       const relation = use.namedChildren.some((child) => child.type === "visibility_modifier") ? "re_exports" : "imports";
       const ancestors = inlineAncestors(use);
       for (const leaf of useLeaves(use)) {
+        // A `use` alias or imported item name shadows any same-named crate for the rest of this file. The
+        // crate's OWN root name (e.g. `use anyhow::{self}`) is excluded so it still counts as a dependency.
+        if (leaf.local && leaf.local !== "_" && cleanSegment(leaf.local) !== cleanSegment(leaf.segments[0])) localBindings.add(cleanSegment(leaf.local));
         const resolved = resolveRustPath(fileRel, leaf.segments, { inlineModules: ancestors, unqualified: true });
         if (!resolved) {
           const crate = cleanSegment(leaf.segments[0]);
-          if (crate && !["crate", "self", "super", "std", "core", "alloc"].includes(crate) && /^[a-z_][\w]*$/.test(crate)) {
+          if (isExternalCrate(crate, localBindings)) {
             addExternalImport({ spec: leaf.segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-use", line: use.startPosition.row + 1 });
           }
           continue;
@@ -200,7 +214,7 @@ export default {
       const segments = pathParts(node);
       if (!["crate", "self", "super"].includes(segments[0])) {
         const crate = cleanSegment(segments[0]);
-        if (crate && !["std", "core", "alloc"].includes(crate) && /^[a-z_][\w]*$/.test(crate)) {
+        if (isExternalCrate(crate, localBindings)) {
           addExternalImport({ spec: segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-path", line: node.startPosition.row + 1 });
         }
         continue;

@@ -123,6 +123,26 @@ test("lang-rust: resolves outlined modules, use trees, re-exports, and qualified
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("lang-rust: primitives, relative-path modules and use-bound aliases are not external crates", async () => {
+  const dir = repoWith({
+    "src/lib.rs": "pub mod wlan;",
+    "src/wlan/mod.rs": "pub mod sys;\npub mod bss;",
+    "src/wlan/sys.rs": "pub fn init() {}\npub struct Widget;",
+    "src/wlan/bss.rs": `
+      use super::sys::{self, Widget};
+      use anyhow::Result;
+      pub fn rate(raw: u16) -> f64 { f64::from(raw & 0x7fff) * 0.5 }
+      pub fn go() -> Result<()> { let _ = sys::init(); let _w = Widget; Ok(()) }
+    `,
+  });
+  try {
+    const g = await buildInternalGraph(dir);
+    const externals = g.externalImports.filter((item) => item.file === "src/wlan/bss.rs").map((item) => item.pkg).sort();
+    assert.deepEqual(externals, ["anyhow"], "only the real crate is external: the f64 primitive, the super::sys module and the in-scope sys/Widget aliases are not crates");
+    assert.ok(g.links.some((link) => link.relation === "imports" && link.source === "src/wlan/bss.rs" && link.target === "src/wlan/sys.rs"), "super::sys still resolves to the sibling module file");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("lang-rust: resolves non-mod-rs children, inline #[path], and main.rs crate roots", async () => {
   const dir = repoWith({
     "crate/src/main.rs": "mod service; fn main() { crate::service::start(); }",

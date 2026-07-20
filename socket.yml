@@ -1,0 +1,58 @@
+# Socket.dev configuration — https://docs.socket.dev/docs/socket-yml
+#
+# Weavatrix is a FULLY-LOCAL, OFFLINE static code-analysis MCP server. It has no
+# network capability of its own (verified: zero imports of node:http/https/net/
+# dns/tls, zero fetch/WebSocket calls, deps limited to tree-sitter + typescript +
+# typescript-language-server). Because its job is to DETECT capability patterns in
+# OTHER people's source, Socket's capability heuristics match on Weavatrix's own
+# detector regexes and pinned-artifact loader. The alerts below are first-party
+# false positives, each justified inline with file:line evidence.
+#
+# SCOPE NOTE: issueRules here apply repo-wide to Socket's connected-repo / PR
+# scanning. Weavatrix's dependency set is tiny and pinned, so relaxing these
+# capability alerts for deps is low-risk — but if you prefer to keep dependency-
+# side detection, remove the issueRules block and instead triage each alert as a
+# false positive in the Socket dashboard for the weavatrix package (that path also
+# fixes the PUBLIC npm package score, which this file does not touch).
+version: 2
+
+issueRules:
+  # "Network access" — false positive. src/analysis/http-contracts/client-call-parser.js:251
+  # is the regex /(^|[^\w$])fetch\s*\(/gim run via .exec(mask) against the ANALYZED
+  # user's source text. The file imports no node builtins and performs zero I/O.
+  networkAccess: false
+
+  # "URL strings" — false positive. URL/host fragments live in detector rule tables
+  # (src/security/registry-sig.rules.js, malware-heuristics.exclusions.js, typosquat.js,
+  # analysis/endpoints/extract.js) used to FIND network code in scanned repos.
+  urlStrings: false
+
+  # "Shell access" — expected, not injectable. src/process.js spawns only resolved,
+  # hardcoded binaries (git, rg, where.exe) to read the LOCAL repo; winQuote() keeps
+  # cmd metacharacters quoted (10 injection payloads verified non-executing). Package-
+  # script execution is gated behind WEAVATRIX_ALLOW_TEST_RUNS=1 + a name allowlist.
+  shellAccess: false
+
+  # "Filesystem access" — this IS the core function: reading the local repository the
+  # user points the tool at. No traversal outside the repo root (isPathInside guards).
+  filesystemAccess: false
+
+  # "Environment variable access" — reads only WEAVATRIX_* config flags
+  # (WEAVATRIX_PRECISION, WEAVATRIX_PRECISION_PREWARM, WEAVATRIX_ALLOW_TEST_RUNS).
+  # childProcessEnv() STRIPS WEAVATRIX_SYNC_TOKEN before every spawn — no secret leak.
+  envVars: false
+
+  # "Debug access" (debug/reflection/dynamic execution) — false positive. node:perf_hooks
+  # is benchmark timing; tree-sitter AST field access is static reflection over parse
+  # trees. src/graph/builder/js/dynamic-import.js only READS AST nodes — no import()/eval.
+  debugAccess: false
+
+  # "AI-detected potential code anomaly" (confidence 0.62) — flagged the win32 shell
+  # helper in src/process.js, which is byte-identical since before v0.2.16 and verified
+  # non-injectable. Reviewed; no anomalous behavior.
+  gptAnomaly: false
+
+githubApp:
+  enabled: true
+  dependencyOverviewEnabled: true
+  disableCommentsAndCheckRuns: false

@@ -48,6 +48,9 @@ export function collectCargoDependencyEvidence(repoRoot, { files = listRepoFiles
     const used = new Map(), missingSeen = new Set();
     for (const entry of imports) {
       const imported = cargoName(entry.pkg);
+      // A crate referencing its own package name (routine in examples/, tests/, benches/ and the
+      // [[bin]] that pairs with a [lib]) is a self-reference, never a missing dependency.
+      if (scope.packageName && imported === cargoName(scope.packageName)) { mappedImports++; continue; }
       const dependency = scope.dependencies.find((item) => cargoName(item.alias) === imported || cargoName(item.name) === imported);
       if (dependency) {
         const evidence = used.get(dependency.alias) || [];
