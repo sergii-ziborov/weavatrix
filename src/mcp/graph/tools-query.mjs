@@ -6,6 +6,7 @@ import {createPathClassifier, hasPathClass} from '../../path-classification.js'
 
 const QUERY_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const LOW_SIGNAL_SYMBOL_RE = /^(?:const(?:ant)?|variable|property|field|enum_member)$/i
+const AMBIGUOUS_FILE_BASENAME_RE = /^(mod|lib|main)\.rs$|^index\.[a-z0-9]+$|^__init__\.py$/
 const querySourceFile = (node) => String(node?.source_file || String(node?.id || '').split('#', 1)[0]).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
 const queryWords = (value) => new Set(String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean))
 const exactSymbolName = (node) => {
@@ -32,6 +33,23 @@ function resolveExactSeedSymbols(g, requested, limit = 12) {
         else missing.push(wanted)
     }
     return {seeds, missing, ambiguous}
+}
+
+// Edge/hop lines print bare labels without the [id] suffix node lines carry, so repeated or
+// conventionally-generic file basenames (mod.rs, index.ts, __init__.py) become indistinguishable —
+// widen those, scoped to the shown ids, to the last two path segments.
+const makeEdgeLabel = (g, shownIds) => {
+    const counts = new Map()
+    for (const id of shownIds) {
+        const label = labelOf(g, id)
+        counts.set(label, (counts.get(label) || 0) + 1)
+    }
+    return (id) => {
+        const label = labelOf(g, id)
+        const isFile = String(id).includes('/') && !String(id).includes('#')
+        if (isFile && ((counts.get(label) || 0) > 1 || AMBIGUOUS_FILE_BASENAME_RE.test(label))) return String(id).split('/').slice(-2).join('/')
+        return label
+    }
 }
 
 const relationSet = (relationFilter, legacyFilter) => {
@@ -186,7 +204,8 @@ export function tQueryGraph(g, {
         'Nodes:',
     ]
     const nodeLines = shown.map((node) => `  [d${node.distance}] ${labelOf(g, node.id)}  (deg ${node.degree})  [${node.id}]`)
-    const edgeLines = ['', 'Edges:', ...shownEdges.map(([source, relation, target]) => `  ${labelOf(g, source)} --${relation || 'rel'}--> ${labelOf(g, target)}`)]
+    const edgeLabel = makeEdgeLabel(g, shownIds)
+    const edgeLines = ['', 'Edges:', ...shownEdges.map(([source, relation, target]) => `  ${edgeLabel(source)} --${relation || 'rel'}--> ${edgeLabel(target)}`)]
     let text = [...head.filter(Boolean), ...nodeLines, ...edgeLines].join('\n')
     if (text.length > charBudget) text = text.slice(0, charBudget) + `\n... (truncated to ~${token_budget} tokens)`
     return text
@@ -224,6 +243,7 @@ export function tShortestPath(g, {source, target, max_hops = 8} = {}) {
     if (!previous.has(targetId)) return `No path found between "${sourceNode.label ?? sourceId}" and "${targetNode.label ?? targetId}" within ${limit} hops.`
     const path = []
     for (let current = targetId; current != null; current = previous.get(current)) path.unshift(current)
-    const lines = path.map((id, index) => index === 0 ? `  ${labelOf(g, id)}` : `  --${relationTo.get(id) || 'rel'}--> ${labelOf(g, id)}`)
+    const edgeLabel = makeEdgeLabel(g, path)
+    const lines = path.map((id, index) => index === 0 ? `  ${edgeLabel(id)}` : `  --${relationTo.get(id) || 'rel'}--> ${edgeLabel(id)}`)
     return [`Shortest path (${path.length - 1} hops): ${sourceNode.label ?? sourceId} → ${targetNode.label ?? targetId}`, ...lines].join('\n')
 }

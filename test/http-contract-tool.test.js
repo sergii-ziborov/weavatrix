@@ -102,3 +102,47 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         rmSync(workspace, {recursive: true, force: true})
     }
 })
+
+test('trace_api_contract surfaces method mismatches on endpoints ranked out of top_n', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'wx-http-tool-mismatch-'))
+    const graphHome = join(workspace, 'graphs')
+    const backendRoot = join(workspace, 'backend-api')
+    const clientRoot = join(workspace, 'frontend-web')
+    mkdirSync(backendRoot, {recursive: true})
+    mkdirSync(clientRoot, {recursive: true})
+    write(backendRoot, 'src/routes.js', "router.get('/api/users/:id', getUser); router.delete('/api/items/:id', deleteItem);")
+    write(clientRoot, 'src/api/users.ts', 'export const getUser = (id) => axios.get(`/api/users/${id}`);')
+    write(clientRoot, 'src/api/items.ts', 'export const fetchItem = (id) => axios.get(`/api/items/${id}`);')
+    const backend = registerFixture(graphHome, backendRoot, {
+        repoBoundaryV: 1, edgeTypesV: 2, graphBuildMode: 'no-tests',
+        nodes: [{id: 'routes', source_file: 'src/routes.js'}], links: [],
+    })
+    registerFixture(graphHome, clientRoot, {
+        repoBoundaryV: 1, edgeTypesV: 2, graphBuildMode: 'no-tests',
+        nodes: [
+            {id: 'api', source_file: 'src/api/users.ts'},
+            {id: 'items', source_file: 'src/api/items.ts'},
+        ],
+        links: [],
+    })
+
+    try {
+        // The DELETE endpoint has zero matching callsites, so top_n:1 drops it from the ranked rows —
+        // its wrong-method caller must still surface through the dedicated mismatch block.
+        const result = await tTraceApiContract(null, {
+            backend: backend.repositoryId,
+            clients: ['frontend-web'],
+            transport: 'http',
+            top_n: 1,
+        }, {graphHome})
+        assert.match(result.text, /^VERDICT CLIENTS_AT_RISK_WITH_METHOD_MISMATCHES/)
+        assert.match(result.text, /Method mismatches \(1 call\(s\)\):/)
+        assert.match(result.text, /DELETE \/api\/items\/:id — 1 call\(s\) use a different method/)
+        assert.match(result.text, /caller frontend-web:src\/api\/items\.ts:\d+ uses GET/)
+        assert.doesNotMatch(result.text, /DELETE \/api\/items\/:id .*→ 0 callsite/, 'the mismatch-only endpoint stays outside the ranked rows')
+        assert.equal(result.result.verdict.methodMismatches, 1)
+        assert.equal(result.result.endpoints.find((endpoint) => endpoint.method === 'DELETE').methodMismatches, 1)
+    } finally {
+        rmSync(workspace, {recursive: true, force: true})
+    }
+})

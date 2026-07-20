@@ -85,12 +85,18 @@ export function analyzeHttpContracts(input = {}) {
   for (const backend of backends) {
     for (const endpoint of backend.endpoints) {
       const callsites = [];
+      let endpointMismatches = 0;
+      const methodMismatchSites = [];
       for (const client of clients) {
         for (const call of client.calls) {
           if (call.path && !methodMatches(endpoint.method, call.method)) {
             const expected = pathSegments(normalizeHttpContractPath(endpoint.path));
             const actual = pathSegments(call.path);
-            if (routeShapeMatches(expected, actual) || suffixShapeMatch(expected, actual)) methodMismatches++;
+            if (routeShapeMatches(expected, actual) || suffixShapeMatch(expected, actual)) {
+              methodMismatches++;
+              endpointMismatches++;
+              if (methodMismatchSites.length < 3) methodMismatchSites.push({ clientRepo: client.id, file: call.file, line: call.line, method: call.method });
+            }
             continue;
           }
           const match = matchHttpContract(endpoint, call);
@@ -124,6 +130,8 @@ export function analyzeHttpContracts(input = {}) {
         file: normalizeContractFile(endpoint.file) || null,
         line: Number(endpoint.line) || null,
         callsites,
+        methodMismatches: endpointMismatches,
+        methodMismatchSites,
         liveness: externalUseLiveness(callsites, handlerEvidence),
         affected: affectedForEndpoint(callsites, clients, limits),
       });

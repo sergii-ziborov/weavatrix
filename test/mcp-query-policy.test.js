@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadGraph, diffGraphs, formatGraphDiff, findSeeds, prevGraphPathFor } from "../src/mcp/graph-context.mjs";
-import { tGodNodes, tQueryGraph } from "../src/mcp/tools-graph.mjs";
+import { tGodNodes, tQueryGraph, tShortestPath } from "../src/mcp/tools-graph.mjs";
 import { tGetDependents, tGraphDiff } from "../src/mcp/tools-impact.mjs";
 import { auditFindingPathScope, tModuleMap, formatAuditFinding } from "../src/mcp/tools-health.mjs";
 import { aggregateGraph } from "../src/analysis/graph-analysis.js";
@@ -158,6 +158,29 @@ test("barrel proxy hops do not inflate semantic hubs, modules, or dependents", (
       "module rollup looks through the barrel instead of assigning coupling to it",
     );
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test("query_graph and shortest_path widen repeated or generic file basenames in edge lines", () => {
+  const a = { id: "src/a/mod.rs", label: "mod.rs", source_file: "src/a/mod.rs" };
+  const b = { id: "src/b/mod.rs", label: "mod.rs", source_file: "src/b/mod.rs" };
+  const ambiguous = graphFile({ nodes: [a, b], links: [{ source: a.id, target: b.id, relation: "imports" }] });
+  const engine = { id: "src/core/engine.rs", label: "engine.rs", source_file: "src/core/engine.rs" };
+  const parser = { id: "src/core/parser.rs", label: "parser.rs", source_file: "src/core/parser.rs" };
+  const unique = graphFile({ nodes: [engine, parser], links: [{ source: engine.id, target: parser.id, relation: "imports" }] });
+  try {
+    const output = tQueryGraph(ambiguous.graph, { question: "modules", seed_files: [a.id, b.id], depth: 1 });
+    assert.match(output, /a\/mod\.rs --imports--> b\/mod\.rs/);
+    const path = tShortestPath(ambiguous.graph, { source: a.id, target: b.id });
+    assert.match(path, /a\/mod\.rs/);
+    assert.match(path, /--imports--> b\/mod\.rs/);
+
+    const bare = tQueryGraph(unique.graph, { question: "core", seed_files: [engine.id, parser.id], depth: 1 });
+    assert.match(bare, /engine\.rs --imports--> parser\.rs/, "unique basenames keep bare labels");
+    assert.doesNotMatch(bare, /core\/engine\.rs --imports-->/);
+  } finally {
+    rmSync(ambiguous.dir, { recursive: true, force: true });
+    rmSync(unique.dir, { recursive: true, force: true });
+  }
 });
 
 test("query_graph preserves importer-to-imported direction when traversing from the imported seed", () => {

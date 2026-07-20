@@ -62,6 +62,11 @@ test("cross-repo analysis joins real backend endpoints and follows bounded rever
     assert.equal(items.liveness.status, "NOT_DEAD_EXTERNAL_USE");
     assert.ok(result.uncertain.some((call) => call.file === "src/api/items.ts" && /dynamic component/.test(call.reason)));
     assert.equal(result.totals.methodMismatches, 1);
+    assert.equal(users.methodMismatches, 1, "the rejected shape-matching POST survives as per-endpoint mismatch evidence");
+    assert.deepEqual(users.methodMismatchSites.map((site) => [site.clientRepo, site.file, site.method]), [["web", "src/api/users.ts", "POST"]]);
+    assert.equal(typeof users.methodMismatchSites[0].line, "number");
+    assert.equal(items.methodMismatches, 0);
+    assert.deepEqual(items.methodMismatchSites, []);
     assert.doesNotMatch(JSON.stringify(result), /export const|getUser\(1\)/, "structured evidence never contains source text");
   } finally {
     rmSync(backend, { recursive: true, force: true });

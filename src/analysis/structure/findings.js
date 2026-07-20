@@ -63,6 +63,23 @@ function compileTimeFinding(adjacency, component, runtimeComponents, edges) {
     })
 }
 
+// Idiomatic Rust module trees close compile-time SCCs by construction: the parent (mod.rs, lib.rs,
+// main.rs, or a 2018-edition foo.rs) declares `mod child` while children reach back via super::/crate::.
+// Suppress only when every member is a .rs file sitting under one anchor's directory; genuine
+// cross-directory .rs cycles keep their findings.
+function isRustModuleTreeComponent(component) {
+    if (!component.every((file) => String(file).endsWith('.rs'))) return false
+    return component.some((anchor) => {
+        const path = String(anchor)
+        const slash = path.lastIndexOf('/')
+        const base = path.slice(slash + 1)
+        const anchorDir = ['mod.rs', 'lib.rs', 'main.rs'].includes(base)
+            ? (slash >= 0 ? path.slice(0, slash) : '')
+            : path.slice(0, -'.rs'.length)
+        return anchorDir !== '' && component.every((member) => member === anchor || String(member).startsWith(`${anchorDir}/`))
+    })
+}
+
 export function computeStructureFindings(graph, {rules = {}, entrySet = new Set(), externalImportFiles = new Set()} = {}) {
     const imports = buildFileImportGraph(graph)
     const findings = []
@@ -73,7 +90,9 @@ export function computeStructureFindings(graph, {rules = {}, entrySet = new Set(
 
     const runtimeKeys = new Set(runtimeComponents.map((component) => [...component].sort().join('\0')))
     const allComponents = findSccs(imports.allAdj).sort((a, b) => b.length - a.length)
-    const compileTimeCouplings = allComponents.filter((component) => !runtimeKeys.has([...component].sort().join('\0')))
+    const compileTimeCandidates = allComponents.filter((component) => !runtimeKeys.has([...component].sort().join('\0')))
+    const rustModuleTreeComponents = compileTimeCandidates.filter((component) => isRustModuleTreeComponent(component))
+    const compileTimeCouplings = compileTimeCandidates.filter((component) => !isRustModuleTreeComponent(component))
     for (const component of compileTimeCouplings.slice(0, MAX_CYCLE_FINDINGS)) {
         findings.push(compileTimeFinding(imports.allAdj, component, runtimeComponents, {
             runtime: imports.edges,
@@ -135,6 +154,7 @@ export function computeStructureFindings(graph, {rules = {}, entrySet = new Set(
             largestTypeCoupling: compileTimeCouplings[0]?.length || 0,
             compileTimeCouplings: compileTimeCouplings.length,
             largestCompileTimeCoupling: compileTimeCouplings[0]?.length || 0,
+            rustModuleTreeCouplings: rustModuleTreeComponents.length,
             orphans: findings.filter((finding) => finding.rule === 'orphan-file').length,
             boundaryViolations: violations.length,
         },

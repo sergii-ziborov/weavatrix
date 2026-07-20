@@ -231,6 +231,15 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                     ...screens,
                 ]
             }),
+            // Mismatch-only endpoints rarely rank into top_n (zero callsites), yet they drive the
+            // *_METHOD_MISMATCH verdicts — always surface them, citing the verdict's own total.
+            ...(analysis.totals.methodMismatches > 0 ? [
+                `  Method mismatches (${verdict.methodMismatches} call(s)):`,
+                ...analysis.endpoints.filter((endpoint) => endpoint.methodMismatches > 0).slice(0, 5).flatMap((endpoint) => [
+                    `    ${endpoint.method} ${endpoint.path} — ${endpoint.methodMismatches} call(s) use a different method`,
+                    ...(endpoint.methodMismatchSites || []).slice(0, 2).map((site) => `      caller ${site.clientRepo}:${site.file}:${site.line} uses ${site.method}`),
+                ]),
+            ] : []),
             ...transportAnalysis.contracts.filter((contract) => contract.callsites.length).slice(0, topN).map((contract) =>
                 `  ${contract.transport.toUpperCase()} ${contract.service ? `${contract.service}.` : contract.operation ? `${contract.operation} ` : ''}${contract.name} (${contract.file}:${contract.line}) [${contract.liveness}] → ${contract.callsites.length} callsite(s), ${contract.affected.files.length} affected file(s)`),
             completeness.complete

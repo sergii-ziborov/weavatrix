@@ -103,13 +103,14 @@ test("dep-rules: type-only edges create info coupling, not a runtime cycle or bo
 });
 
 test("dep-rules: Rust compile-only edges create compile-time coupling, not runtime cycles or boundaries", () => {
+  // Cross-directory .rs cycle — no module-tree anchor, so it stays a reported coupling.
   const rustImp = (a, b) => ({ ...imp(a, b), compileOnly: true, specifier: "crate::module" });
   const graph = {
-    nodes: ["crate/src/lib.rs", "crate/src/api.rs", "crate/src/model.rs"].map(fileNode),
+    nodes: ["crate/src/api/handlers.rs", "crate/src/model/user.rs", "crate/src/service/sync.rs"].map(fileNode),
     links: [
-      rustImp("crate/src/lib.rs", "crate/src/api.rs"),
-      rustImp("crate/src/api.rs", "crate/src/model.rs"),
-      rustImp("crate/src/model.rs", "crate/src/lib.rs"),
+      rustImp("crate/src/api/handlers.rs", "crate/src/model/user.rs"),
+      rustImp("crate/src/model/user.rs", "crate/src/service/sync.rs"),
+      rustImp("crate/src/service/sync.rs", "crate/src/api/handlers.rs"),
     ],
   };
   const runtime = buildFileImportGraph(graph);
@@ -121,6 +122,7 @@ test("dep-rules: Rust compile-only edges create compile-time coupling, not runti
   });
   assert.equal(result.stats.runtimeCycles, 0);
   assert.equal(result.stats.compileTimeCouplings, 1);
+  assert.equal(result.stats.rustModuleTreeCouplings, 0);
   assert.equal(result.stats.runtimeImportEdges, 0);
   assert.equal(result.stats.compileOnlyImportEdges, 3);
   assert.equal(result.stats.boundaryViolations, 0);
@@ -128,6 +130,31 @@ test("dep-rules: Rust compile-only edges create compile-time coupling, not runti
   assert.equal(coupling.severity, "info");
   assert.match(coupling.title, /no runtime cycle/i);
   assert.equal(result.findings.some((finding) => finding.rule === "circular-dep"), false);
+});
+
+test("dep-rules: idiomatic Rust module-tree cycles are counted, not reported as couplings", () => {
+  const rustImp = (a, b) => ({ ...imp(a, b), compileOnly: true, specifier: "crate::module" });
+  const cycleGraph = (files) => ({
+    nodes: files.map(fileNode),
+    links: files.map((file, index) => rustImp(file, files[(index + 1) % files.length])),
+  });
+  const suppressed = [
+    ["src/util/mod.rs", "src/util/tables.rs"], // mod.rs parent <-> child (super::)
+    ["crate/src/lib.rs", "crate/src/api.rs", "crate/src/model.rs"], // lib.rs-anchored crate root
+    ["src/foo.rs", "src/foo/bar.rs"], // 2018-edition parent file <-> child module
+  ];
+  for (const files of suppressed) {
+    const result = computeStructureFindings(cycleGraph(files));
+    assert.equal(result.stats.compileTimeCouplings, 0, files.join(" <-> "));
+    assert.equal(result.stats.rustModuleTreeCouplings, 1, files.join(" <-> "));
+    assert.equal(result.findings.some((finding) => finding.rule === "compile-time-coupling"), false, files.join(" <-> "));
+    assert.equal(result.findings.some((finding) => finding.rule === "circular-dep"), false, files.join(" <-> "));
+  }
+  // Genuine cross-directory pair keeps its finding — neither member anchors the other's directory.
+  const cross = computeStructureFindings(cycleGraph(["src/a/x.rs", "src/b/y.rs"]));
+  assert.equal(cross.stats.compileTimeCouplings, 1);
+  assert.equal(cross.stats.rustModuleTreeCouplings, 0);
+  assert.equal(cross.findings.filter((finding) => finding.rule === "compile-time-coupling").length, 1);
 });
 
 test("dep-rules: Go same-directory edges are excluded from the cycle graph", () => {
