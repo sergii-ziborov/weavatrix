@@ -39,7 +39,7 @@ test('maintained code and site assets stay within the 300-line owner-module budg
     }
     assert.deepEqual(oversized, [], `Split oversized concerns into meaningful owner modules:\n${oversized.join('\n')}`)
     const index = readFileSync(join(REPO_ROOT, 'site/index.html'), 'utf8')
-    assert.ok(index.includes('href="/styles.css?v=0.3.3-hero-graph-3"'), 'the page loads the hero graph stylesheet without a stale asset')
+    assert.ok(index.includes('href="/styles.css?v=0.3.3-hosted-shell-1"'), 'the page loads the Hosted-aligned shell stylesheet without a stale asset')
     assert.ok(index.includes('src="/graph-animation.js?v=0.3.3-hero-graph-3"'), 'the page loads the deterministic hero graph without a stale asset')
     const animation = readFileSync(join(REPO_ROOT, 'site/graph-animation.js'), 'utf8')
     assert.doesNotThrow(() => new Function(animation), 'the extracted browser script parses')
