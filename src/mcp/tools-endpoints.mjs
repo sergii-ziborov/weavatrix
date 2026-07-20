@@ -34,12 +34,26 @@ function handlerCandidates(graph, endpoint) {
     const wanted = endpoint.handler.toLowerCase()
     const qualifier = String(endpoint.handlerRef || '').split('.').slice(-2, -1)[0]?.toLowerCase() || ''
     const routeDir = posix.dirname(endpoint.file)
+    // File-level import/re-export bindings at the route file break same-name ties: the handler file
+    // the route file actually imports outranks an unrelated same-named symbol elsewhere. Same-file
+    // declarations (+100) must keep outranking import-bound ones (+80).
+    const importBound = new Set()
+    for (const edge of graph.out.get(endpoint.file) || []) {
+        if (edge.relation !== 'imports' && edge.relation !== 're_exports') continue
+        if (edge.typeOnly === true || edge.barrelProxy === true) continue
+        const targetId = String(edge.id)
+        if (targetId.includes('#')) continue
+        const target = graph.byId.get(targetId)
+        importBound.add(String(target?.source_file || targetId).replace(/\\/g, '/'))
+    }
     const scored = (graph.nodes || [])
         .filter((node) => String(node.id).includes('#') && node.source_file && symbolName(node).toLowerCase() === wanted)
         .map((node) => {
             const file = String(node.source_file).replace(/\\/g, '/')
             let score = 0
+            const importBoundAtRoute = importBound.has(file)
             if (file === endpoint.file) score += 100
+            if (importBoundAtRoute) score += 80
             if (posix.dirname(file) === routeDir) score += 40
             if (file.startsWith(`${routeDir}/`)) score += 15
             if (qualifier) {
@@ -48,16 +62,15 @@ function handlerCandidates(graph, endpoint) {
             }
             const line = symbolLine(node)
             if (file === endpoint.file && line >= endpoint.line && line - endpoint.line <= 250) score += 20
-            return {node, score}
+            return {node, score, importBoundAtRoute}
         })
         .sort((a, b) => b.score - a.score || String(a.node.id).localeCompare(String(b.node.id)))
     if (!scored.length) return []
     const best = scored[0].score
-    return scored.filter((item) => item.score === best).map((item) => item.node)
+    return scored.filter((item) => item.score === best).map(({node, importBoundAtRoute}) => ({node, importBoundAtRoute}))
 }
 
-function traceCalls(graph, start, {maxDepth, maxNodes, includeClassified, repoRoot}) {
-    const classifier = createPathClassifier(repoRoot)
+function traceCalls(graph, start, {maxDepth, maxNodes, includeClassified, classifier}) {
     const allowed = (node) => {
         if (!node?.source_file) return false
         if (includeClassified) return true
@@ -125,12 +138,29 @@ export function tTraceEndpoint(graph, args, ctx) {
         completeness: {status: 'PARTIAL', reason: 'ambiguous endpoint'},
     })
     const endpoint = candidates[0]
-    const handlers = handlerCandidates(graph, endpoint)
+    const classifier = createPathClassifier(ctx.repoRoot)
+    const classify = (file) => {
+        const info = classifier.explain(file, {content: ''})
+        return {classified: info.excluded || NON_PRODUCT.some((name) => hasPathClass(info, name)), pathClasses: info.classes}
+    }
+    const hint = String(args.handler_file || '').trim().replace(/\\/g, '/')
+    let handlers = handlerCandidates(graph, endpoint)
+        .map((item) => ({...item, ...classify(String(item.node.source_file).replace(/\\/g, '/'))}))
+    if (hint) handlers = handlers.filter(({node}) => {
+        const file = String(node.source_file).replace(/\\/g, '/')
+        return file === hint || file.endsWith(`/${hint}`)
+    })
+    // Production-first: a classified twin (tests/mocks/…) never ties with a production candidate,
+    // but an all-classified candidate set is kept rather than emptied.
+    if (args.include_classified !== true && handlers.some((item) => !item.classified)) {
+        handlers = handlers.filter((item) => !item.classified)
+    }
     if (handlers.length !== 1) return toolResult([
-        `Endpoint resolved, but its handler symbol is ${handlers.length ? 'ambiguous' : 'not present in the graph'}:`,
+        `Endpoint resolved, but its handler symbol is ${handlers.length ? 'ambiguous' : `not present in the graph${hint ? ` (no candidate matched handler_file "${hint}")` : ''}`}:`,
         `  ${endpointLine(endpoint)}`,
-        ...handlers.slice(0, 12).map((node) => `  candidate ${node.label || node.id} (${node.source_file}:${symbolLine(node) || '?'}) [${node.id}]`),
-    ].join('\n'), {status: handlers.length ? 'AMBIGUOUS_HANDLER' : 'HANDLER_NOT_FOUND', endpoint, handlers}, {
+        ...handlers.slice(0, 12).map(({node, importBoundAtRoute, pathClasses}) => `  candidate ${node.label || node.id} (${node.source_file}:${symbolLine(node) || '?'}; import-bound at route: ${importBoundAtRoute ? 'yes' : 'no'}${pathClasses.length ? `; classified:${pathClasses.join('+')}` : ''}) [${node.id}]`),
+        ...(handlers.length > 1 ? ['  Next: pass handler_file with the repo-relative path (or an unambiguous path suffix) of the file that declares the intended handler.'] : []),
+    ].join('\n'), {status: handlers.length ? 'AMBIGUOUS_HANDLER' : 'HANDLER_NOT_FOUND', endpoint, handlers: handlers.map(({node, importBoundAtRoute, pathClasses}) => ({...node, importBoundAtRoute, pathClasses}))}, {
         completeness: {status: 'PARTIAL', reason: handlers.length ? 'ambiguous handler symbol' : 'handler symbol not found'},
     })
 
@@ -138,9 +168,9 @@ export function tTraceEndpoint(graph, args, ctx) {
     const maxNodes = Math.max(2, Math.min(40, Number(args.max_nodes) || 20))
     const contextLines = Math.max(0, Math.min(6, Number(args.context_lines) || 2))
     const maxExcerpts = Math.max(0, Math.min(12, Number(args.max_excerpts) || 6))
-    const handler = handlers[0]
+    const handler = handlers[0].node
     const traced = traceCalls(graph, handler, {
-        maxDepth, maxNodes, includeClassified: args.include_classified === true, repoRoot: ctx.repoRoot,
+        maxDepth, maxNodes, includeClassified: args.include_classified === true, classifier,
     })
     const excerpts = traced.edges.slice(0, maxExcerpts).map((edge) => {
         const source = graph.byId.get(edge.from)

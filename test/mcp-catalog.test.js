@@ -141,9 +141,11 @@ test("endpoint tools expose mount-aware inventory and bounded graph tracing", as
   const list = api.byName.get("list_endpoints");
   const trace = api.byName.get("trace_endpoint");
   assert.equal(list.inputSchema.properties.path.maxLength, 2048);
+  assert.equal(list.inputSchema.properties.include_classified.default, false);
   assert.deepEqual(trace.inputSchema.required, ["path"]);
   assert.equal(trace.inputSchema.properties.max_depth.maximum, 4);
   assert.equal(trace.inputSchema.properties.max_nodes.maximum, 40);
+  assert.equal(trace.inputSchema.properties.handler_file.maxLength, 1024);
 });
 
 test("find_dead_code schema keeps risky surfaces opt-in and bounded", async () => {
