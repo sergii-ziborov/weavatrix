@@ -29,8 +29,8 @@ nav a:hover { color: var(--text); }
 .hg-node { opacity: 0; }
 .hg-node-halo { fill: rgba(124,108,255,.22); }
 .hg-node-core { fill: #897aff; stroke: #15192c; stroke-width: 3; }
-.hg-node-anchor .hg-node-halo { fill: rgba(64,224,200,.15); }
-.hg-node-anchor .hg-node-core { fill: #40e0c8; }
+.hg-node-anchor .hg-node-halo { fill: rgba(183,170,255,.24); }
+.hg-node-anchor .hg-node-core { fill: #b7aaff; }
 .hg-node-source .hg-node-halo { fill: rgba(183,170,255,.26); }
 .hg-node-source .hg-node-core { fill: #b7aaff; }
 .hg-node-hit .hg-node-halo { fill: rgba(64,224,200,.34); }
