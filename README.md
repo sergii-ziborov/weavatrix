@@ -131,6 +131,18 @@ Every finding is review evidence, never an auto-delete verdict: `find_dead_code`
 `run_audit category=unused` always return `REVIEW_REQUIRED` with `autoDelete:false`. Typecheck, tests
 and runtime checks remain the release authority.
 
+## Always-fresh graph
+
+There is no watcher daemon to run and no manual refresh step: every graph/health call reconciles the
+graph before answering. A Git-token freshness probe (HEAD + dirty/untracked content, debounced 2 s)
+decides whether anything changed; when it did, a bounded incremental refresh reparses only the changed
+files plus their reverse importers (≤ 24 changed / ≤ 80 reparsed JS/TS files) and merges the scoped
+result into the previous graph under a file lock. Config/lockfile edits, export-surface changes,
+barrel files and non-JS/TS languages fall back to a full rebuild — correctness always wins over speed.
+Each refreshed answer carries a structured `refresh` record (`none` / `incremental` / `full`, changed
+file count), so an agent can tell exactly which repository state it is reasoning about. The same
+guarantees hold across concurrent MCP clients sharing one canonical graph.
+
 ## Benchmarks
 
 Two gates ship in the repository:
@@ -177,6 +189,11 @@ realpath escapes. Report suspected vulnerabilities privately as described in [SE
 JavaScript · TypeScript · TSX · Python · Go · Java · C# · Rust · HTML · CSS — parsed with
 [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) WASM grammars; no Python install and no
 native compilation.
+
+Test surfaces are classified per file (path conventions plus `.weavatrix.json` overrides) and, for
+Rust, per symbol: `#[cfg(test)]` modules and `#[test]`/`#[bench]` items inside production `.rs` files
+carry a node-level `test_surface` flag, so dead-code, query, hot-path and hub tools treat them as
+tests rather than production code.
 
 ## Development
 

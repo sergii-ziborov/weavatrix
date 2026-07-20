@@ -201,8 +201,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   const deadSymbols = [];
   for (const n of symById.values()) {
     if (isReferenced(n)) continue;
-    // test_surface marks symbols the extractor proved compile only under test (Rust #[cfg(test)]
-    // inline modules) — their files are production paths, so the path check alone misses them.
+    // test_surface: extractor-proven test-only symbols (Rust #[cfg(test)]) live in production paths.
     const test = isTestFile(n.source_file) || n.test_surface === true;
     deadSymbols.push({ id: n.id, file: n.source_file, label: n.label, test, reason: "no inbound edge and name unreferenced outside its file" });
   }
@@ -211,17 +210,13 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
   // A production declaration consumed only by tests is live to the raw graph but dead to production.
   // Keep it in a separate review class: this is useful evidence, never an automatic delete verdict.
   const testOnlySymbols = [];
-  const isTestConsumer = (id) => {
-    const consumer = nodesById.get(id);
-    if (consumer?.test_surface === true) return true;
-    return isTestFile(consumer?.source_file || (id.includes("#") ? id.split("#")[0] : id));
-  };
+  const consumerFileOf = (id) => nodesById.get(id)?.source_file || (id.includes("#") ? id.split("#")[0] : id);
+  const isTestConsumer = (id) => nodesById.get(id)?.test_surface === true || isTestFile(consumerFileOf(id));
   for (const n of symById.values()) {
     if (deadSet.has(n.id) || isTestFile(n.source_file) || n.test_surface === true || isDecorated(n)) continue;
     const sourcesForSymbol = inboundSources.get(String(n.id)) || [];
-    const sourceFiles = sourcesForSymbol.map((id) => nodesById.get(id)?.source_file || (id.includes("#") ? id.split("#")[0] : id));
     const hasTestInbound = sourcesForSymbol.some(isTestConsumer);
-    const hasProductionInbound = sourcesForSymbol.some((id, index) => sourceFiles[index] && !isTestConsumer(id));
+    const hasProductionInbound = sourcesForSymbol.some((id) => consumerFileOf(id) && !isTestConsumer(id));
     const name = bareName(n.label);
     const occurrenceSet = occurrenceFiles.get(name) || new Set();
     const externalOccurrences = [...occurrenceSet].filter((file) => file !== n.source_file);
@@ -239,7 +234,7 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
       label: n.label,
       test: false,
       reason: "referenced only from test/e2e code; no production consumer was found",
-      testConsumerFiles: [...new Set(sourcesForSymbol.filter(isTestConsumer).map((id) => nodesById.get(id)?.source_file || (id.includes("#") ? id.split("#")[0] : id)).filter(Boolean))].sort(),
+      testConsumerFiles: [...new Set(sourcesForSymbol.filter(isTestConsumer).map(consumerFileOf).filter(Boolean))].sort(),
       evidence: hasTestInbound ? "graph" : hasExactTestInbound ? "exact-semantic" : "lexical",
       publicApi: n.exported === true || ["public", "protected"].includes(String(n.visibility || "").toLowerCase()),
     });

@@ -142,12 +142,15 @@ interface dispatch, reflection, or runtime behavior.
 - **Evidence, not verdicts**: treat audit, hub, orphan and duplicate output as hypotheses. Confirm a
   finding in source and check framework/runtime conventions before deleting, merging or redesigning
   code. A same-name/different-body pair is a divergence candidate, not proof of duplication.
-- **Freshness**: graph/health calls automatically reconcile the active graph, while cross-repository
-  tracing reconciles every selected registered graph. Read the structured `refresh` /
-  `graphReconciliation` status: `none`, `incremental`, `full`, or explicitly `PARTIAL`. Use
-  `rebuild_graph` only when automatic reconciliation reports a fallback/error or when intentionally
-  changing build mode. A normal `open_repo` builds missing graphs and upgrades legacy schemas;
-  `build:false` deliberately refuses that upgrade.
+- **Freshness**: the graph is always fresh at answer time — no watcher process and no manual refresh
+  step exists or is needed. Every graph/health call runs a debounced Git freshness probe and, when the
+  repository changed, refreshes before answering (bounded incremental reparse of changed files plus
+  reverse importers for JS/TS; full rebuild for config/export-surface/barrel changes and other
+  languages). Cross-repository tracing reconciles every selected registered graph the same way. Read
+  the structured `refresh` / `graphReconciliation` status: `none`, `incremental`, `full`, or
+  explicitly `PARTIAL`. Use `rebuild_graph` only when automatic reconciliation reports a
+  fallback/error or when intentionally changing build mode. A normal `open_repo` builds missing graphs
+  and upgrades legacy schemas; `build:false` deliberately refuses that upgrade.
 - **Ambiguity**: `get_node`/`get_neighbors`/`get_dependents` disclose `matched N nodes; using the
   best-connected` — read that note before trusting the answer; pass an exact node id to pin it.
 - **Runtime versus compile time**: keep runtime cycles separate from TypeScript type-only and
@@ -169,6 +172,10 @@ interface dispatch, reflection, or runtime behavior.
   roots. Dead-code/clone/audit review also suppresses `benchmarks/**` and `**/__temp/**` as classified
   non-production surfaces. A verified production benchmark can opt back in narrowly through
   `.weavatrix.json` `classify.product`, for example `{"classify":{"product":["benchmarks/core/**"]}}`.
+  Rust inline tests (`#[cfg(test)]` modules, `#[test]`/`#[bench]` items) are classified per symbol via
+  the node-level `test_surface` flag even though they live in production `.rs` files; dead-code,
+  query, hot-path and hub tools treat them like path-classified tests (`include_tests` /
+  `include_classified` and a test-term question opt back in).
 - **Architectural queries**: broad bootstrap/tool-execution/routing questions rank conventional
   production and graph-declared entry points ahead of classified docs, sites, benchmarks and
   fixtures. Production-first classification also applies during traversal. A class term in the
