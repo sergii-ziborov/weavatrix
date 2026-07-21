@@ -35,7 +35,7 @@ for (const dir of ["bin", "src", "skill"]) {
   cpSync(join(root, dir), join(stage, dir), { recursive: true });
 }
 copyFileSync(join(root, "mcpb", "manifest.json"), join(stage, "manifest.json"));
-copyFileSync(join(root, "site", "apple-touch-icon.png"), join(stage, "icon.png"));
+copyFileSync(join(root, "mcpb", "icon.png"), join(stage, "icon.png"));
 
 runNpm(["ci", "--omit=dev", "--ignore-scripts"], stage);
 

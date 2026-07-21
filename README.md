@@ -212,9 +212,9 @@ npm run benchmark        # full TS/JS/Python/Go/Java/Rust + MCP lifecycle gate
 npm run benchmark:real   # locally available real repos vs source-free 0.2.1 baselines
 ```
 
-Maintained JavaScript/TypeScript under `src`, `bin`, `scripts`, `test` (and HTML/CSS/JS under `site`)
-has a hard 300-line physical ceiling enforced by the release suite; larger concerns split into
-owner-focused modules behind slim facades.
+Maintained JavaScript/TypeScript under `src`, `bin`, `scripts`, `test` has a hard 300-line physical
+ceiling enforced by the release suite; larger concerns split into owner-focused modules behind slim
+facades. The weavatrix.com landing site lives in its own repository (`weavatrix-site`).
 
 ## Release history
 
