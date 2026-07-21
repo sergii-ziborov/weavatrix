@@ -1,6 +1,6 @@
 {
   "name": "weavatrix",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "type": "module",
   "description": "Local repository intelligence MCP for AI coding agents: an always-fresh architecture graph with production-first evidence — blast radius, dead code, endpoints, clones, history, Health and architecture safeguards, with honestly labeled precision.",
   "author": "Sergii Ziborov <sergii.ziborov@gmail.com>",
@@ -44,6 +44,7 @@
     "docs/releases/v0.3.8.md",
     "docs/releases/v0.3.9.md",
     "docs/releases/v0.3.10.md",
+    "docs/releases/v0.3.11.md",
     "docs/releases/v0.2.19.md",
     "README.md",
     "SECURITY.md",
