@@ -6,6 +6,7 @@
 // and is fully testable with no filesystem. It only needs {nodes, links} + source text. See [[graph-builder-internalization]].
 import { posix } from "node:path";
 import { isStructuralRelation } from "../graph/relations.js";
+import { createSqlDeadVerdict } from "../graph/builder/lang-sql.js";
 import { createPathClassifier, hasPathClass } from "../path-classification.js";
 
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
@@ -198,12 +199,11 @@ export function computeDead(graph, sources, { entrySet = new Set() } = {}) {
     return isDecorated(n);                                       // framework-registered via decorator
   };
 
+  const sqlVerdict = createSqlDeadVerdict({ nodes, links, ep, bareName });   // gated SQL verdicts — ORM blindness stays silent
   const deadSymbols = [];
   for (const n of symById.values()) {
-    if (isReferenced(n)) continue;
-    // test_surface: extractor-proven test-only symbols (Rust #[cfg(test)]) live in production paths.
-    const test = isTestFile(n.source_file) || n.test_surface === true;
-    deadSymbols.push({ id: n.id, file: n.source_file, label: n.label, test, reason: "no inbound edge and name unreferenced outside its file" });
+    if (isReferenced(n) || sqlVerdict.veto(n)) continue;
+    deadSymbols.push({ id: n.id, file: n.source_file, label: n.label, test: isTestFile(n.source_file) || n.test_surface === true, reason: sqlVerdict.reason(n) || "no inbound edge and name unreferenced outside its file" });
   }
   const deadSet = new Set(deadSymbols.map((s) => s.id));
 

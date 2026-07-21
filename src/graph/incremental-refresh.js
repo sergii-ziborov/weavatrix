@@ -184,7 +184,7 @@ export async function refreshGraphIncrementally(repoDir, existingGraph, {
 
   if (!existingGraph || !existingGraph.fileHashes || !existingGraph.fileExportSignatures
     || !existingGraph.controlHashes || !existingGraph.jsExportRecords || Number(existingGraph.barrelResolutionV) < 1
-    || Number(existingGraph.extractorSchemaV) < 6 || Number(existingGraph.physicalFileLocV) < 1
+    || Number(existingGraph.extractorSchemaV) < 7 || Number(existingGraph.physicalFileLocV) < 1
     || Number(existingGraph.reExportOccurrencesV) < 1
     || Number(existingGraph.symbolSpacesV) < 1 || Number(existingGraph.edgeProvenanceV) < 1) {
     return full("incremental-baseline-unavailable");

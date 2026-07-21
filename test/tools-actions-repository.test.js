@@ -52,7 +52,7 @@ test("open_repo: switches to another Git repository with an existing graph in on
     edgeTypesV: 2,
     edgeProvenanceV: 1,
     physicalFileLocV: 1,
-    extractorSchemaV: 6,
+    extractorSchemaV: 7,
     reExportOccurrencesV: 1,
     symbolSpacesV: 1,
     graphPrecisionMode: "off",
@@ -78,7 +78,7 @@ test("open_repo: build:false refuses an explicit build-mode mismatch without ret
   const graphPath = join(graphOutDirForRepo(realpathSync.native(repo)), "graph.json");
   mkdirSync(graphOutDirForRepo(realpathSync.native(repo)), { recursive: true });
   writeFileSync(graphPath, JSON.stringify({
-    nodes: [], links: [], repoBoundaryV: 1, edgeTypesV: 2, edgeProvenanceV: 1, physicalFileLocV: 1, extractorSchemaV: 6,
+    nodes: [], links: [], repoBoundaryV: 1, edgeTypesV: 2, edgeProvenanceV: 1, physicalFileLocV: 1, extractorSchemaV: 7,
     reExportOccurrencesV: 1, symbolSpacesV: 1, graphPrecisionMode: "off",
     graphBuildMode: "full",
   }));

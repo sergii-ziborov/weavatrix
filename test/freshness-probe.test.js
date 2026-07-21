@@ -62,7 +62,7 @@ test('persisted freshness stamp fails closed for mode, scope, schema, version, l
     barrelResolutionV: 1,
     reExportOccurrencesV: 1,
     symbolSpacesV: 1,
-    extractorSchemaV: 6,
+    extractorSchemaV: 7,
     graphBuildMode: 'full',
     graphBuildScope: '',
   }

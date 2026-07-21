@@ -186,9 +186,17 @@ realpath escapes. Report suspected vulnerabilities privately as described in [SE
 
 ## Languages
 
-JavaScript · TypeScript · TSX · Python · Go · Java · C# · Rust · HTML · CSS — parsed with
+JavaScript · TypeScript · TSX · Python · Go · Java · C# · Rust · Solidity · HTML · CSS — parsed with
 [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) WASM grammars; no Python install and no
 native compilation.
+
+SQL is indexed without a grammar: `.sql` files contribute tables, views, columns, functions, indexes
+and triggers as first-class graph symbols, and SQL found in string literals of any other language
+links the enclosing function to the table it queries. That makes schema objects visible to
+`change_impact`/`get_dependents` (who touches this table?) and lets the dead-code check flag columns
+no statement references — conservatively: verdicts require literal-SQL evidence in the repo, and
+`SELECT *`-consumed tables never have their columns judged by name (ORM-generated SQL stays invisible
+and is therefore never judged either).
 
 Test surfaces are classified per file (path conventions plus `.weavatrix.json` overrides) and, for
 Rust, per symbol: `#[cfg(test)]` modules and `#[test]`/`#[bench]` items inside production `.rs` files

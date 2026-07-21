@@ -16,6 +16,8 @@ import LANG_GO from "./builder/lang-go.js";
 import LANG_JAVA from "./builder/lang-java.js";
 import LANG_CSHARP from "./builder/lang-csharp.js";
 import LANG_RUST from "./builder/lang-rust.js";
+import LANG_SOLIDITY from "./builder/lang-solidity.js";
+import LANG_SQL from "./builder/lang-sql.js";
 import LANG_HTML from "./builder/lang-html.js";
 import LANG_CSS from "./builder/lang-css.js";
 
@@ -27,7 +29,7 @@ const NODE_MODULES = dirname(WTS_DIR);
 const DEFAULT_WASM_DIR = join(NODE_MODULES, "tree-sitter-wasms", "out");
 
 // ---- language registry (derived from the per-language modules) ----
-const LANG_MODULES = [LANG_JS, LANG_PY, LANG_GO, LANG_JAVA, LANG_CSHARP, LANG_RUST, LANG_HTML, LANG_CSS];
+const LANG_MODULES = [LANG_JS, LANG_PY, LANG_GO, LANG_JAVA, LANG_CSHARP, LANG_RUST, LANG_SOLIDITY, LANG_SQL, LANG_HTML, LANG_CSS];
 const LANGS = {};                 // family -> module
 const EXT_LANG = {};              // ext -> grammar
 const FAMILY = {};                // grammar -> family

@@ -27,7 +27,7 @@ const CURRENT_GRAPH_SCHEMA = Object.freeze({
     barrelResolutionV: 1,
     reExportOccurrencesV: 1,
     symbolSpacesV: 1,
-    extractorSchemaV: 6,
+    extractorSchemaV: 7,
 })
 const CONTROL_FILES = ['.gitignore', '.weavatrixignore', '.weavatrix.json']
 const MAX_CONTROL_BYTES = 1_000_000

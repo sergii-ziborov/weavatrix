@@ -1,6 +1,8 @@
 export function createPass2Resolution({symIdsByFileName, nodeById, importedLocals, symByFileName}) {
     const dirSymbols = new Map(), dirMethods = new Map(), dirMethodsByName = new Map(), dirTypes = new Map()
-    const sharesDirScope = (file) => file.endsWith('.go') || file.endsWith('.cs') || file.endsWith('.rs')
+    // .sol shares dir scope because Solidity's project namespace is flat: `import "./Base.sol"` names no
+    // symbols yet pulls every declaration into scope, so same-dir name resolution is the honest static proxy.
+    const sharesDirScope = (file) => file.endsWith('.go') || file.endsWith('.cs') || file.endsWith('.rs') || file.endsWith('.sol')
     for (const [file, names] of symIdsByFileName) {
         if (!sharesDirScope(file)) continue
         const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : ''

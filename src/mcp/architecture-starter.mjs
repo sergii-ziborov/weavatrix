@@ -28,7 +28,7 @@ const BUDGET_PROPOSALS = Object.freeze(Object.entries(PROVISIONAL_BUDGETS)
 const SOURCE_ROOTS = new Set(['src', 'app', 'lib', 'packages', 'services'])
 const CODE_EXTENSIONS = new Set([
     '.cjs', '.cs', '.css', '.go', '.htm', '.html', '.java', '.js', '.jsx', '.less', '.mjs', '.py', '.pyi',
-    '.rs', '.scss', '.ts', '.tsx',
+    '.rs', '.scss', '.sol', '.sql', '.ts', '.tsx',
 ])
 const CLASSIFIED = ['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
 const EDGE_RELATIONS = new Set(['imports', 're_exports', 'calls', 'references'])

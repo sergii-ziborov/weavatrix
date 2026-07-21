@@ -17,11 +17,12 @@ const TOOL_EXECUTION_TERMS = QUERY_INTENTS.find(([id]) => id === 'tool-execution
 const TOOL_EXECUTION_TRIGGERS = new Set(['tool', 'tools', 'tooling', 'mcp'])
 const wordsOf = (value) => String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean)
 const normPath = (value) => String(value ?? '').replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
-const CODE_FILE_RE = /\.(?:[cm]?[jt]sx?|py|go|java|rs|kt|kts|cs|rb|php)$/i
+const CODE_FILE_RE = /\.(?:[cm]?[jt]sx?|py|go|java|rs|kt|kts|cs|rb|php|sol|sql)$/i
 const DATA_OR_PROSE_RE = /\.(?:json|ya?ml|toml|ini|md|mdx|rst|adoc|html?|css|scss|less|svg)$/i
 const LANGUAGE_EXTENSIONS = Object.freeze({
     rust: ['rs'], python: ['py', 'pyi'], typescript: ['ts', 'tsx', 'mts', 'cts'],
     javascript: ['js', 'jsx', 'mjs', 'cjs'], go: ['go'], java: ['java'], csharp: ['cs'],
+    solidity: ['sol'], sql: ['sql'],
 })
 
 function requestedLanguages(query) {
@@ -33,6 +34,8 @@ function requestedLanguages(query) {
     if (words.has('golang') || /(?:^|[^A-Za-z])Go(?:[^A-Za-z]|$)/.test(raw)) requested.add('go')
     if (words.has('java')) requested.add('java')
     if (words.has('csharp') || words.has('dotnet') || /csharp|(?:^|[^A-Za-z])C#(?:[^A-Za-z]|$)/i.test(raw)) requested.add('csharp')
+    if (words.has('solidity') || words.has('contract') || words.has('contracts')) requested.add('solidity')
+    if (words.has('sql') || words.has('schema') || words.has('migration') || words.has('migrations')) requested.add('sql')
     return new Set([...requested].flatMap((language) => LANGUAGE_EXTENSIONS[language]))
 }
 
@@ -141,7 +144,7 @@ function conceptScore(g, node, concept, queryContext) {
         else if (term.length >= 4 && term !== 'tool' && term !== 'tools' && (id.includes(term) || label.includes(term))) match = Math.max(match, primary ? 12 : 7)
     })
     const extension = (/\.([^.\/]+)$/.exec(source) || [])[1] || ''
-    const languageConcept = {rust: ['rs'], python: ['py', 'pyi'], py: ['py', 'pyi'], typescript: ['ts', 'tsx', 'mts', 'cts'], ts: ['ts', 'tsx', 'mts', 'cts'], javascript: ['js', 'jsx', 'mjs', 'cjs'], js: ['js', 'jsx', 'mjs', 'cjs'], nodejs: ['js', 'jsx', 'mjs', 'cjs'], golang: ['go'], go: ['go'], java: ['java'], csharp: ['cs'], dotnet: ['cs']}[concept.raw]
+    const languageConcept = {rust: ['rs'], python: ['py', 'pyi'], py: ['py', 'pyi'], typescript: ['ts', 'tsx', 'mts', 'cts'], ts: ['ts', 'tsx', 'mts', 'cts'], javascript: ['js', 'jsx', 'mjs', 'cjs'], js: ['js', 'jsx', 'mjs', 'cjs'], nodejs: ['js', 'jsx', 'mjs', 'cjs'], golang: ['go'], go: ['go'], java: ['java'], csharp: ['cs'], dotnet: ['cs'], solidity: ['sol'], sql: ['sql'], schema: ['sql']}[concept.raw]
     if (languageConcept?.includes(extension) && queryContext.languageExtensions.has(extension)) match = Math.max(match, 58)
     const fileNode = !isSymbol(node.id), depth = source ? source.split('/').length : 9
     if (concept.id === 'bootstrap') match = Math.max(match, entrypointSignal(g, node, source, stem))

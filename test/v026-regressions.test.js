@@ -36,7 +36,7 @@ test('TypeScript type and value declarations keep separate graph identities', as
     try {
         const graph = await buildInternalGraph(root)
         assert.equal(graph.symbolSpacesV, 1)
-        assert.equal(graph.extractorSchemaV, 6)
+        assert.equal(graph.extractorSchemaV, 7)
         const accounts = graph.nodes.filter((node) => node.source_file === 'src/model.ts' && node.label === 'Account')
         assert.equal(accounts.length, 2)
         const accountType = accounts.find((node) => node.symbol_space === 'type')

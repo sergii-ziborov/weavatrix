@@ -207,6 +207,36 @@ export function buildResolvers(repoDir, fileSet) {
     if (seg[0] === "src" && seg.length > 2) pyTopDirs.add(seg[1]);
   }
 
+  // Solidity: relative imports, Foundry remappings (remappings.txt beats foundry.toml, longest prefix
+  // wins), then root-anchored specs (`src/X.sol` — forge resolves those against the project root).
+  // Nested remapping files are intentionally not scoped per-package: one remapping table per repo is the
+  // overwhelmingly common layout, and a wrong guess here would fabricate cross-package edges.
+  const solRemappings = [];
+  const addRemapping = (entry) => {
+    const m = /^\s*([^=\s]+)\s*=\s*(\S+)\s*$/.exec(String(entry || ""));
+    if (m && !solRemappings.some((r) => r.prefix === m[1])) solRemappings.push({ prefix: m[1], target: cleanRel(m[2]) });
+  };
+  // neither file has an indexed extension, so probe the filesystem directly rather than fileSet
+  try { for (const line of readLocal("remappings.txt").split(/\r?\n/)) addRemapping(line); } catch { /* absent/unreadable */ }
+  try {
+    const toml = readLocal("foundry.toml");
+    for (const m of toml.matchAll(/remappings\s*=\s*\[([^\]]*)\]/g)) for (const s of m[1].matchAll(/["']([^"']+)["']/g)) addRemapping(s[1]);
+  } catch { /* absent/unreadable */ }
+  solRemappings.sort((a, b) => b.prefix.length - a.prefix.length);
+  const resolveSolidityImport = (fromRel, spec) => {
+    if (!spec || !spec.endsWith(".sol")) return null;
+    if (spec.startsWith(".")) {
+      const candidate = cleanRel(join(dirname(fromRel), spec));
+      return fileSet.has(candidate) ? candidate : null;
+    }
+    for (const { prefix, target } of solRemappings) {
+      if (spec !== prefix && !spec.startsWith(prefix)) continue;
+      const candidate = cleanRel(target + "/" + spec.slice(prefix.length)).replace(/\/+/g, "/");
+      if (fileSet.has(candidate)) return candidate;
+    }
+    return fileSet.has(spec) ? spec : null;
+  };
+
   const selectorIndex = new Map();
   const htmlUsages = [];
   const resolveHref = (fromRel, href) => {
@@ -217,5 +247,5 @@ export function buildResolvers(repoDir, fileSet) {
     return fileSet.has(cand) ? cand : null;
   };
 
-  return { resolveJsImport, resolveAlias, resolvePyPath, pyBaseDir, pyTopDirs, resolveGoImport, dirFiles, resolveRustMod, resolveRustPath, resolveJavaImport, resolveHref, selectorIndex, htmlUsages, goModule, goModules, goRequires };
+  return { resolveJsImport, resolveAlias, resolvePyPath, pyBaseDir, pyTopDirs, resolveGoImport, dirFiles, resolveRustMod, resolveRustPath, resolveJavaImport, resolveSolidityImport, resolveHref, selectorIndex, htmlUsages, goModule, goModules, goRequires };
 }

@@ -8,6 +8,7 @@ import { specToPkg } from "./builder/spec-pkg.js";
 import { analyzeSyntaxComplexity } from "../analysis/source-complexity.js";
 import { Parser, Query, GRAMMARS, LANGS, EXT_LANG, FAMILY, isDataFile, isDocFile, MAX_PARSE_BYTES, ensureParser, walk } from "./internal-builder.langs.js";
 import { buildResolvers } from "./internal-builder.resolvers.js";
+import { scanEmbeddedSql, resolveSqlReferences } from "./builder/lang-sql.js";
 import { assignDeterministicCommunities } from "./community.js";
 import { snapshotRepository } from "./incremental-refresh.js";
 import { EDGE_PROVENANCE_V, stampEdgeProvenance } from "./edge-provenance.js";
@@ -72,6 +73,9 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   // Bare-package imports (axios, node:fs, @scope/x) — the graph can't resolve them to a repo file, but
   // dependency analysis NEEDS them (unused/missing deps). Additive top-level array; nodes/links untouched.
   const externalImports = [];
+  // SQL references (from .sql statements AND string literals in host-language code) collect during
+  // pass 1 and resolve after both passes, once every schema object the repo declares is indexed.
+  const sqlRefs = [];
 
   const resolvers = buildResolvers(repoDir, fileSet);          // aliases, go.mod, java index, href, selectors
   const { selectorIndex, htmlUsages } = resolvers;
@@ -90,13 +94,16 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     }  // config/infra/docs file-only node
     let code; try { code = readFileSync(abs, "utf8"); } catch { addNode(fileNode); continue; }
     addNode({ ...fileNode, physical_loc: physicalLineCount(code) });
-    const grammar = EXT_LANG[ext]; const lang = LANGS[FAMILY[grammar]]; if (!lang || !langs[grammar]) continue;
+    const grammar = EXT_LANG[ext]; const lang = LANGS[FAMILY[grammar]]; if (!lang || (!langs[grammar] && !lang.textOnly)) continue;
     // giant / generated / minified file → keep the file NODE but don't parse symbols (avoids a wedged parse)
     if (code.length > MAX_PARSE_BYTES) { perFileSymbols.set(fileRel, []); symByFileName.set(fileRel, new Map()); symIdsByFileName.set(fileRel, new Map()); continue; }
     if ((++_parsed % 24) === 0) await new Promise((r) => setImmediate(r)); // breathe: let the UI paint between chunks
     if (typeof opts.onParseFile === "function") opts.onParseFile(fileRel);
-    const parser = new Parser(); parser.setLanguage(langs[grammar]);
-    let tree; try { tree = parser.parse(code); } catch { continue; }
+    let tree = null;   // textOnly languages (SQL) scan `code` directly — no grammar, no parse
+    if (!lang.textOnly) {
+      const parser = new Parser(); parser.setLanguage(langs[grammar]);
+      try { tree = parser.parse(code); } catch { continue; }
+    }
 
     const syms = []; const nameToId = new Map(); const nameToIds = new Map(); const moduleNameToId = new Map();
     const addSym = (name, line, callable, extra) => {
@@ -214,8 +221,10 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     // Post-hoc export flag (export {a}, export default X, CJS module.exports) — declarations are flagged at addSym time.
     const markExported = (name) => { const id = moduleNameToId.get(name); const n = id && nodeById.get(id); if (n) n.exported = true; };
 
-    try { lang.pass1({ grammar, tree, fileRel, code, caps, field, addSym, addNode, links, nodeIds, syms, nameToId, imports, addImportEdge, addExternalImport, markExported, recordJsExport, fileSet, ...resolvers }); }
+    try { lang.pass1({ grammar, tree, fileRel, code, caps, field, addSym, addNode, links, nodeIds, syms, nameToId, imports, addImportEdge, addExternalImport, markExported, recordJsExport, fileSet, sqlRefs, ...resolvers }); }
     catch (e) { /* one bad file never sinks the whole build */ void e; }
+    // string-literal SQL in host-language code → schema reference candidates (resolved post-pass-2)
+    if (!lang.textOnly && !lang.isWeb) try { scanEmbeddedSql(code, fileRel, sqlRefs); } catch { /* never sinks the build */ }
 
     syms.sort((a, b) => a.start - b.start);
     const eof = code.split("\n").length;
@@ -223,7 +232,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       if (!syms[i].end || syms[i].end < syms[i].start) syms[i].end = i + 1 < syms.length ? syms[i + 1].start - 1 : eof;
     }
     perFileSymbols.set(fileRel, syms); symByFileName.set(fileRel, nameToId); symIdsByFileName.set(fileRel, nameToIds);
-    tree.delete();
+    if (tree) tree.delete();
   }
 
   // ---- pass 2: scope-aware calls + inheritance (Go package = whole dir → same-dir symbols share scope;
@@ -243,6 +252,8 @@ export async function buildInternalGraph(repoDir, opts = {}) {
       links.push({ source: u.htmlFile, target: cssFile, relation: "references", confidence: "INFERRED" });
     }
   }
+  // code/SQL → schema-object edges (tables/views/functions declared in .sql files)
+  try { resolveSqlReferences({ sqlRefs, links, nodeById, perFileSymbols }); } catch { /* never sinks the build */ }
 
   // community = folder bucket (top 2 path parts) — deterministic, mirrors the folder-based module grouping the
   // app already uses (graph-builder-analysis.js). Populates Modules/community cards without a heavy clustering pass.
@@ -266,7 +277,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
     barrelResolutionV: 1,
     reExportOccurrencesV: 1,
     symbolSpacesV: 1,
-    extractorSchemaV: 6,
+    extractorSchemaV: 7,   // v7 = Solidity + SQL indexing (schema objects, embedded-SQL edges)
     reExportOccurrences,
     jsExportRecords: Object.fromEntries([...jsExports.entries()].sort(([a], [b]) => a.localeCompare(b))),
     fileHashes: snapshot.fileHashes,
