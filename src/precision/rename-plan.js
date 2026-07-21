@@ -46,7 +46,12 @@ function graphReferenceInventory(rawGraph, targetId, declaringFile) {
 }
 
 function loadPlanFile(repoRoot, file) {
-    const buffer = readFileSync(resolve(repoRoot, file))
+    let buffer
+    try {
+        buffer = readFileSync(resolve(repoRoot, file))
+    } catch (error) {
+        return {file, error: error?.message || 'file is unreadable'}
+    }
     const content = buffer.toString('utf8')
     if (!Buffer.from(content, 'utf8').equals(buffer)) return {file, error: 'file is not valid UTF-8 text'}
     return {file, buffer, content}
@@ -123,18 +128,23 @@ export async function buildRenamePlan({
         loadedByPath.set(reference.path, loaded)
         sessionFiles.push(reference.path)
     }
-    const client = await clientFactory({repoRoot, timeoutMs})
+    let client = null
     let renamed
     try {
+        // inside the try so a language-server startup failure is an honest LSP_FAILED
+        // status, not an escaped exception
+        client = await clientFactory({repoRoot, timeoutMs})
         for (const file of sessionFiles) await client.openDocument(file, loadedByPath.get(file).content)
         renamed = await client.rename(declaringFile, node.selection_start, newName, timeoutMs)
     } catch (error) {
         return {status: 'LSP_FAILED', reason: error?.message || 'textDocument/rename failed'}
     } finally {
-        try {
-            await client.close()
-        } catch {
-            client.kill?.()
+        if (client) {
+            try {
+                await client.close()
+            } catch {
+                client.kill?.()
+            }
         }
     }
     if (!renamed.files.length) return {status: 'NO_EDITS', reason: 'the language server returned no edits for this rename'}
