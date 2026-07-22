@@ -69,49 +69,12 @@ export async function createTypeScriptLspClient({repoRoot, timeoutMs = 10_000} =
         references(relPath, position, includeDeclaration = true, referenceTimeoutMs = timeoutMs) {
             return client.references({filePath: relPath, position, includeDeclaration, timeoutMs: referenceTimeoutMs})
         },
-        // Returns the raw LSP WorkspaceEdit normalized to repo-relative files. Purely a read:
-        // nothing is applied here (workspace/applyEdit stays refused as read-only); the caller
-        // turns this into an edit plan for review. URIs outside the repository are reported,
-        // never silently dropped, and resource operations (create/rename/delete file) are
-        // surfaced as a count so planners can refuse them explicitly.
-        async rename(relPath, position, newName, renameTimeoutMs = timeoutMs) {
-            const normalized = client.normalizer.toUri(relPath)
-            const result = await client.request('textDocument/rename', {
-                textDocument: {uri: normalized.uri},
-                position,
-                newName,
-            }, {timeoutMs: renameTimeoutMs})
-            const files = []
-            const outsideRepository = []
-            let resourceOperations = 0
-            const collect = (uri, edits) => {
-                let file
-                try {
-                    file = client.normalizer.fromUri(uri).file
-                } catch (error) {
-                    if (error instanceof RangeError) {
-                        outsideRepository.push(String(uri))
-                        return
-                    }
-                    throw error
-                }
-                files.push({file, edits: (edits || []).map((edit) => ({range: edit.range, newText: String(edit.newText ?? '')}))})
-            }
-            if (result && typeof result === 'object' && result.changes && typeof result.changes === 'object') {
-                for (const [uri, edits] of Object.entries(result.changes)) collect(uri, edits)
-            }
-            if (result && Array.isArray(result.documentChanges)) {
-                for (const change of result.documentChanges) {
-                    if (!change || typeof change !== 'object') continue
-                    if (typeof change.kind === 'string') {
-                        resourceOperations += 1
-                        continue
-                    }
-                    collect(change.textDocument?.uri, change.edits)
-                }
-            }
-            return {files, outsideRepository, resourceOperations}
-        },
+        // Generic read-only JSON-RPC passthrough plus URI normalization, so consumers outside
+        // the core (weavatrix-refactor) can issue their own read-only LSP requests. The client
+        // still refuses workspace/applyEdit, so nothing here can apply an edit.
+        request(method, params, options) { return client.request(method, params, options) },
+        toUri(relPath) { return client.normalizer.toUri(relPath) },
+        fromUri(uri) { return client.normalizer.fromUri(uri) },
         definition(relPath, position) { return client.definition({filePath: relPath, position}) },
         closeDocument(relPath) { return client.closeDocument(relPath) },
         async close(shutdownTimeoutMs = timeoutMs) {

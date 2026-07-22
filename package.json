@@ -24,7 +24,7 @@
     "./mcp-runtime": "./src/mcp-runtime.mjs",
     "./extension-api": "./src/mcp/extension-api.mjs",
     "./extension/local-services": "./src/extension/local-services.mjs",
-    "./refactor-engines": "./src/refactor-engines.mjs",
+    "./analysis-kit": "./src/analysis-kit.mjs",
     "./package.json": "./package.json"
   },
   "files": [
