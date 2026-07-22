@@ -214,6 +214,11 @@ function run(command, args, cwd) {
 function runNpm(args, cwd) {
     const npmCli = process.env.npm_execpath
     if (npmCli && existsSync(npmCli)) return run(process.execPath, [npmCli, ...args], cwd)
+    // Node >=20 refuses to spawn npm.cmd with shell:false on Windows (EINVAL — the
+    // CVE-2024-27980 batch-file guard), which breaks a direct `node verify-release.mjs`
+    // run. npm always ships beside the node binary, so run its CLI through node instead.
+    const bundledNpm = resolve(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (existsSync(bundledNpm)) return run(process.execPath, [bundledNpm, ...args], cwd)
     return run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, cwd)
 }
 
