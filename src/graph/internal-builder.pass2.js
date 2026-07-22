@@ -8,10 +8,11 @@ import {createGoReceiverResolution} from './builder/go-receiver-resolution.js'
 
 export function runInternalGraphPass2({
     files, rel, langs, caps, field, links, nodeById, perFileSymbols, symByFileName,
-    symIdsByFileName, importedLocals, jsExports,
+    symIdsByFileName, importedLocals, jsExports, resolvers,
 }) {
     const resolution = createPass2Resolution({symIdsByFileName, nodeById, importedLocals, symByFileName})
-    const {dirSymbols, resolveNamedSymbol, resolveCall, resolveJavaType} = resolution
+    const {dirSymbols, resolveNamedSymbol, resolveCall, resolveJavaType, resolveRustMethod} = resolution
+    const {resolveRustPath, resolveRustCratePath} = resolvers || {}
     const {resolveNamespaceMember, reExportOccurrences} = resolveJsBarrels({
         jsExports, importedLocals, links,
         resolveSymbol: (file, name, typeOnly) => resolveNamedSymbol(file, name, typeOnly ? 'type' : 'value'),
@@ -46,6 +47,7 @@ export function runInternalGraphPass2({
             lang.pass2({
                 grammar, tree, fileRel: file, code, caps, field, enclosing, links, nodeById,
                 perFileSymbols, symByFileName, symIdsByFileName, importedLocals, resolveCall, resolveJavaType,
+                dirSymbols, resolveNamedSymbol, resolveRustMethod, resolveRustPath, resolveRustCratePath,
             })
         } catch { /* one language-specific resolver never sinks the graph */ }
         if (lang.selectorCall) for (const capture of caps(grammar, lang.selectorCall, tree.rootNode)) {

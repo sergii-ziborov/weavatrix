@@ -43,6 +43,32 @@ test("static test reachability follows runtime direction, reports nearest tests 
   assert.ok(result.unreachable.includes("src/unrelated.ts"));
 });
 
+test("static test reachability self-covers inline-test files without over-claiming reach through their production edges", () => {
+  // Rust-style layout: production files carry their own `#[cfg(test)]` symbols (test_surface), no separate
+  // test/ directory. analyze.rs has inline tests AND a production analyze() that calls bss.rs#parse; bss.rs
+  // has no inline test. The inline test does NOT call bss, so bss must NOT be claimed test-reachable just
+  // because a *production* symbol in the test-bearing file calls it.
+  const graph = {
+    nodes: [
+      { id: "src/analyze.rs#analyze@1", source_file: "src/analyze.rs", file_type: "code" },
+      { id: "src/analyze.rs#tests@40", source_file: "src/analyze.rs", file_type: "code", test_surface: true },
+      { id: "src/analyze.rs#checks_analyze@45", source_file: "src/analyze.rs", file_type: "code", test_surface: true },
+      { id: "src/bss.rs#parse@1", source_file: "src/bss.rs", file_type: "code" },
+      { id: "src/untested.rs#lonely@1", source_file: "src/untested.rs", file_type: "code" },
+    ],
+    links: [
+      // a PRODUCTION-to-production edge; no test_surface symbol has an out-edge here.
+      { source: "src/analyze.rs#analyze@1", target: "src/bss.rs#parse@1", relation: "calls", confidence: "INFERRED" },
+    ],
+  };
+  const result = computeStaticTestReachability(graph);
+  assert.equal(result.testFiles, 1, "the inline-test file is counted as a test-bearing file");
+  const analyze = result.reachable.find((entry) => entry.file === "src/analyze.rs");
+  assert.ok(analyze && analyze.nearestTests[0].distance === 0, "a file carrying its own inline tests is self-covered at distance 0");
+  assert.ok(result.unreachable.includes("src/bss.rs"), "bss.rs is reached only by a production call, not by any test, so it stays unreachable (no over-claim)");
+  assert.ok(result.unreachable.includes("src/untested.rs"), "a file no test reaches stays unreachable");
+});
+
 test("coverage_map labels the no-report fallback and a real report wins", () => {
   const repo = mkdtempSync(join(tmpdir(), "weavatrix-static-coverage-"));
   try {

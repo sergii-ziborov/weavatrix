@@ -19,6 +19,13 @@ export function parseCargoToml(text) {
   for (const raw of source.split(/\r?\n/)) {
     const line = raw.replace(/(^|\s)#.*$/, "").trim();
     if (!line) continue;
+    // Array-of-tables headers ([[bin]], [[example]], [[test]], [[bench]]) are neither the [package]
+    // table nor a dependency table. Recognise them so their `name =`/`path =` keys are not mis-read:
+    // a [[bin]] renamed to a crate ([[bin]] name = "foo") would otherwise overwrite the package name and
+    // make every foo:: import look like a self-reference, and a [[bin]] after [dependencies] would leak
+    // phantom "name"/"path" dependencies.
+    const arrayHeader = /^\[\[([^\]]+)]]$/.exec(line);
+    if (arrayHeader) { section = arrayHeader[1].trim(); continue; }
     const header = /^\[([^\]]+)]$/.exec(line);
     if (header) { section = header[1].trim(); workspace ||= section === "workspace"; continue; }
     const kv = /^([A-Za-z0-9_-]+)\s*=\s*(.+)$/.exec(line);

@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { parseGoMod } from "../analysis/manifests.js";
+import { parseCargoToml, cargoName } from "../analysis/cargo-manifests.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { listRepoFiles } from "../analysis/internal-audit/repo-files.js";
 import { createRustResolvers } from "./resolvers/rust.js";
@@ -60,6 +61,40 @@ export function buildResolvers(repoDir, fileSet) {
   };
 
   const { resolveRustMod, resolveRustPath } = createRustResolvers(fileSet);
+
+  // Workspace crate map: normalized package name → its crate source root file (lib.rs/main.rs). A path or
+  // `use` that starts with a sibling crate's name (`use radiochron::wlan`) then resolves INTO that crate's
+  // files instead of being logged as an external crates.io dependency — so cross-crate imports and calls
+  // become real graph edges rather than a false "unused dependency" plus missing coupling.
+  // Cargo.toml (like go.mod) is a manifest, not a parsed source file, so it is read via listRepoFiles
+  // rather than the source fileSet. The crate root .rs it points at IS in fileSet (it is parsed).
+  const rustCrates = new Map();
+  const ambiguousCrates = new Set();
+  for (const manifest of listRepoFiles(repoDir).filter((file) => /(^|\/)Cargo\.toml$/i.test(file))) {
+    let parsed;
+    try { parsed = parseCargoToml(readLocal(manifest)); } catch { continue; }
+    if (!parsed.packageName) continue;
+    const dir = manifest.includes("/") ? manifest.slice(0, manifest.lastIndexOf("/")) : "";
+    const rootFile = ["src/lib.rs", "src/main.rs", "lib.rs", "main.rs"]
+      .map((candidate) => [dir, candidate].filter(Boolean).join("/"))
+      .find((path) => fileSet.has(path));
+    if (!rootFile) continue;
+    const key = cargoName(parsed.packageName);
+    // A repo can hold two crates with the same package name (independent workspaces, vendored copies).
+    // Cross-crate resolution has no way to pick the right one from a bare `name::path`, so treat the name
+    // as ambiguous and resolve nothing for it — better a missing edge than a confident wrong one.
+    if (rustCrates.has(key) && rustCrates.get(key) !== rootFile) ambiguousCrates.add(key);
+    else rustCrates.set(key, rootFile);
+  }
+  // Resolve `<crate>::<segments...>` against the named sibling crate's root, reusing the crate-anchored
+  // module resolver. Returns {targetFile, remaining} or null when the head is not an unambiguous workspace crate.
+  const resolveRustCratePath = (crateName, segments = []) => {
+    const key = cargoName(crateName);
+    if (ambiguousCrates.has(key)) return null;
+    const rootFile = rustCrates.get(key);
+    if (!rootFile) return null;
+    return resolveRustPath(rootFile, ["crate", ...segments], { unqualified: false });
+  };
 
   // Path aliases (tsconfig compilerOptions.paths + vite/webpack alias) are scoped to their config folder.
   // Without nearest-config resolution, a monorepo's root `@/*` can hijack the same alias in web/.
@@ -247,5 +282,5 @@ export function buildResolvers(repoDir, fileSet) {
     return fileSet.has(cand) ? cand : null;
   };
 
-  return { resolveJsImport, resolveAlias, resolvePyPath, pyBaseDir, pyTopDirs, resolveGoImport, dirFiles, resolveRustMod, resolveRustPath, resolveJavaImport, resolveSolidityImport, resolveHref, selectorIndex, htmlUsages, goModule, goModules, goRequires };
+  return { resolveJsImport, resolveAlias, resolvePyPath, pyBaseDir, pyTopDirs, resolveGoImport, dirFiles, resolveRustMod, resolveRustPath, resolveRustCratePath, resolveJavaImport, resolveSolidityImport, resolveHref, selectorIndex, htmlUsages, goModule, goModules, goRequires };
 }

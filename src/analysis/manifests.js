@@ -107,7 +107,10 @@ export function parsePipfileDeps(text) {
   let present = false;
   for (const raw of String(text || "").split(/\r?\n/)) {
     const line = raw.replace(/(^|\s)#.*$/, "").trim();
-    const sec = line.match(/^\[([^\]]+)\]$/);
+    // Match single [section] and array-of-tables [[section]] headers alike. Without the [[...]] case a
+    // `[[source]]` table following [packages] would leave section === "packages" and its name/url/verify_ssl
+    // keys would leak as phantom dependencies (the same blind spot fixed in the Cargo.toml parser).
+    const sec = line.match(/^\[+([^\]]+)\]+$/);
     if (sec) { section = sec[1].trim().toLowerCase(); continue; }
     if (section !== "packages" && section !== "dev-packages") continue;
     const kv = line.match(/^["']?([A-Za-z0-9][\w.-]*)["']?\s*=/);

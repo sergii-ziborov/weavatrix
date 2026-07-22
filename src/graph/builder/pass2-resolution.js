@@ -1,5 +1,8 @@
 export function createPass2Resolution({symIdsByFileName, nodeById, importedLocals, symByFileName}) {
     const dirSymbols = new Map(), dirMethods = new Map(), dirMethodsByName = new Map(), dirTypes = new Map()
+    // Rust associated functions / methods indexed by their owning type, per directory: `Type::method`
+    // resolves to the exact impl member instead of any same-named function in the directory.
+    const rustMethods = new Map() // dir -> Map(typeName -> Map(methodName -> id))
     // .sol shares dir scope because Solidity's project namespace is flat: `import "./Base.sol"` names no
     // symbols yet pulls every declaration into scope, so same-dir name resolution is the honest static proxy.
     const sharesDirScope = (file) => file.endsWith('.go') || file.endsWith('.cs') || file.endsWith('.rs') || file.endsWith('.sol')
@@ -24,6 +27,13 @@ export function createPass2Resolution({symIdsByFileName, nodeById, importedLocal
                 continue
             }
             if (!symbols.has(name)) symbols.set(name, id)
+            if (file.endsWith('.rs') && node?.member_of) {
+                let byType = rustMethods.get(dir)
+                if (!byType) rustMethods.set(dir, (byType = new Map()))
+                let methods = byType.get(node.member_of)
+                if (!methods) byType.set(node.member_of, (methods = new Map()))
+                if (!methods.has(name)) methods.set(name, id)
+            }
             if (file.endsWith('.go') && node?.symbol_space === 'type') {
                 let types = dirTypes.get(dir)
                 if (!types) dirTypes.set(dir, (types = new Map()))
@@ -55,6 +65,7 @@ export function createPass2Resolution({symIdsByFileName, nodeById, importedLocal
         if (!imported?.targetFile) return null
         return resolveNamedSymbol(imported.originFile || imported.targetFile, imported.originName || imported.imported, 'value')
     }
+    const resolveRustMethod = (dir, typeName, methodName) => rustMethods.get(dir)?.get(typeName)?.get(methodName) || null
     const javaTypeKinds = new Set(['class', 'interface', 'enum', 'record', 'annotation'])
     const resolveJavaType = (name, file) => {
         const imported = importedLocals.get(file)?.get(name)
@@ -66,5 +77,5 @@ export function createPass2Resolution({symIdsByFileName, nodeById, importedLocal
         const target = symByFileName.get(file)?.get(name)
         return target && javaTypeKinds.has(nodeById.get(target)?.symbol_kind) ? target : null
     }
-    return {dirSymbols, dirMethods, dirMethodsByName, dirTypes, resolveNamedSymbol, resolveCall, resolveJavaType}
+    return {dirSymbols, dirMethods, dirMethodsByName, dirTypes, resolveNamedSymbol, resolveCall, resolveJavaType, resolveRustMethod}
 }

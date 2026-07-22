@@ -3,6 +3,8 @@
 // File dependencies follow Rust's module tree: outlined `mod`, `use` trees, public re-exports, and anchored
 // `crate/self/super` paths resolve to repo-local .rs or */mod.rs files. External crates deliberately stay out
 // of this adapter; Cargo dependency analysis owns them.
+import { rustScopedCalls } from "./lang-rust-calls.js";
+
 const SYMS_CORE = `
   (function_item name: (identifier) @function)
   (struct_item name: (type_identifier) @struct)
@@ -141,17 +143,19 @@ export default {
   grammars: ["rust"],
   exts: { ".rs": "rust" },
   isWeb: false,
+  // Bare `foo()` and method `x.foo()` calls resolve by name in the generic pass-2 loop. Scoped
+  // `Path::foo()` calls are handled in pass2() below with the full qualifier in hand, so an external
+  // `OpenOptions::new()` cannot bind its bare `new` to an unrelated same-named function in the folder.
   calls: `
     (call_expression function: (identifier) @callee)
-    (call_expression function: (field_expression field: (field_identifier) @callee))
-    (call_expression function: (scoped_identifier name: (identifier) @callee))`,
+    (call_expression function: (field_expression field: (field_identifier) @callee))`,
   heritage: [
     `(impl_item trait: (type_identifier) @super)`,
     `(impl_item trait: (generic_type type: (type_identifier) @super))`,
   ],
 
   pass1(ctx) {
-    const { grammar, tree, fileRel, caps, field, addSym, addImportEdge, addExternalImport, imports, resolveRustMod, resolveRustPath, links, nameToId } = ctx;
+    const { grammar, tree, fileRel, caps, field, addSym, addImportEdge, addExternalImport, imports, resolveRustMod, resolveRustPath, resolveRustCratePath, links, nameToId } = ctx;
     const owned = [];
     for (const src of [SYMS_CORE, ...SYMS_OPTIONAL]) {
       for (const cap of caps(grammar, src, tree.rootNode)) {
@@ -224,9 +228,16 @@ export default {
         // A `use` alias or imported item name shadows any same-named crate for the rest of this file. The
         // crate's OWN root name (e.g. `use anyhow::{self}`) is excluded so it still counts as a dependency.
         if (leaf.local && leaf.local !== "_" && cleanSegment(leaf.local) !== cleanSegment(leaf.segments[0])) localBindings.add(cleanSegment(leaf.local));
-        const resolved = resolveRustPath(fileRel, leaf.segments, { inlineModules: ancestors, unqualified: true });
+        const crate = cleanSegment(leaf.segments[0]);
+        let resolved = resolveRustPath(fileRel, leaf.segments, { inlineModules: ancestors, unqualified: true });
+        // A head that is not a local module may be a sibling workspace crate (`use radiochron::wlan`):
+        // resolve it INTO that crate so its items bind here and cross-crate calls resolve in pass 2. It is
+        // still recorded as a dependency import so the sibling crate is not flagged an unused Cargo dep.
+        if (!resolved && resolveRustCratePath && isExternalCrate(crate, localBindings)) {
+          resolved = resolveRustCratePath(crate, leaf.segments.slice(1));
+          if (resolved) addExternalImport({ spec: leaf.segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-use", line: use.startPosition.row + 1 });
+        }
         if (!resolved) {
-          const crate = cleanSegment(leaf.segments[0]);
           if (isExternalCrate(crate, localBindings)) {
             addExternalImport({ spec: leaf.segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-use", line: use.startPosition.row + 1 });
           }
@@ -250,7 +261,16 @@ export default {
       const segments = pathParts(node);
       if (!["crate", "self", "super"].includes(segments[0])) {
         const crate = cleanSegment(segments[0]);
-        if (isExternalCrate(crate, localBindings)) {
+        // A fully-qualified sibling-crate path (`radiochron::events::recent`) is a real cross-crate
+        // dependency: emit the file edge AND record the dependency import so the sibling crate still
+        // counts as used, rather than being logged as an external crates.io crate.
+        const crateResolved = resolveRustCratePath && isExternalCrate(crate, localBindings)
+          ? resolveRustCratePath(crate, segments.slice(1))
+          : null;
+        if (crateResolved) {
+          emit(crateResolved.targetFile, { line: node.startPosition.row + 1, specifier: node.text });
+          addExternalImport({ spec: segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-path", line: node.startPosition.row + 1 });
+        } else if (isExternalCrate(crate, localBindings)) {
           addExternalImport({ spec: segments.join("::"), pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-path", line: node.startPosition.row + 1 });
         }
         continue;
@@ -270,5 +290,10 @@ export default {
         addExternalImport({ spec: crate, pkg: crate.replace(/_/g, "-"), builtin: false, ecosystem: "crates.io", kind: "rust-extern-crate", line: cap.node.startPosition.row + 1 });
       }
     }
+  },
+
+  // Scoped `Path::method()` calls are resolved in lang-rust-calls.js with the full qualifier in hand.
+  pass2(ctx) {
+    rustScopedCalls(ctx, { pathParts, inlineAncestors });
   },
 };

@@ -101,3 +101,15 @@ black = "*"
   assert.equal(r.present, true);
   assert.deepEqual(r.deps.map((d) => [d.name, d.dev]), [["requests", false], ["discord.py", false], ["black", true]]);
 });
+
+test("parsePipfileDeps: a [[source]] array-of-tables after [packages] does not leak phantom name/url/verify_ssl deps", () => {
+  const r = parsePipfileDeps(`[packages]
+requests = "*"
+
+[[source]]
+name = "private"
+url = "https://internal/simple"
+verify_ssl = true
+`);
+  assert.deepEqual(r.deps.map((d) => d.name), ["requests"], "keys of a trailing [[source]] table are not dependencies");
+});

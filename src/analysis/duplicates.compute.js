@@ -111,7 +111,7 @@ function symbolRanges(graph) {
     if (!line) continue;
     let arr = byFile.get(n.source_file);
     if (!arr) byFile.set(n.source_file, (arr = []));
-    arr.push({ id: n.id, label: n.label || n.id, line, symbolKind: n.symbol_kind || "" });
+    arr.push({ id: n.id, label: n.label || n.id, line, symbolKind: n.symbol_kind || "", testSurface: n.test_surface === true });
   }
   for (const arr of byFile.values()) arr.sort((a, b) => a.line - b.line);
   return byFile;
@@ -184,6 +184,10 @@ export function computeDuplicates(repoPath, graphJsonPath, opts = {}) {
         id: syms[i].id, label: syms[i].label, file, start, end,
         n: toks.strict.length, declarative,
         ...classificationFields(pathInfo),
+        // Inline test surfaces (Rust `#[cfg(test)] mod tests`, `#[test]` fns) live in production files, so a
+        // path check alone misses them; the graph already flags the symbol. OR it in so skip-tests suppresses
+        // them by default and two #[test] fns are never reported as a production clone.
+        test: hasPathClass(pathInfo, "test", "e2e") || syms[i].testSurface === true,
         fp: { strict: fingerprints(toks.strict), renamed: fingerprints(toks.renamed) },
       });
     }

@@ -240,7 +240,7 @@ export async function buildInternalGraph(repoDir, opts = {}) {
   // not files, so the folder map is the only reliable cross-file resolver) ----
   const {reExportOccurrences} = runInternalGraphPass2({
     files, rel, langs, caps, field, links, nodeById, perFileSymbols, symByFileName,
-    symIdsByFileName, importedLocals, jsExports,
+    symIdsByFileName, importedLocals, jsExports, resolvers,
   });
   // HTML class/id usage → the CSS file(s) defining that selector: file-level reference edges (deduped per pair).
   const htmlRefSeen = new Set();

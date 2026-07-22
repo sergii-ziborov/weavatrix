@@ -36,7 +36,7 @@ function coverageForRange(record, startLine, endLine) {
     return total ? covered / total : Number.isFinite(record.pct) ? record.pct : null
 }
 
-function graphRiskBySymbol(graph, symbolIds) {
+function graphRiskBySymbol(graph, symbolIds, testCallerIds) {
     const state = new Map([...symbolIds].map((id) => [id, {
         incoming: 0, outgoing: 0, callers: new Set(), callees: new Set(),
     }]))
@@ -50,7 +50,10 @@ function graphRiskBySymbol(graph, symbolIds) {
             item.outgoing++
             item.callees.add(target)
         }
-        if (state.has(target)) {
+        // A test caller (inline #[cfg(test)] symbol or a test-path file) must not inflate a production
+        // symbol's fan-in — the same reason test symbols are excluded as candidates. Skipped only for the
+        // incoming/coupling side; unless the caller opted tests in (testCallerIds is then null).
+        if (state.has(target) && !(testCallerIds && testCallerIds.has(source))) {
             const item = state.get(target)
             item.incoming++
             item.callers.add(source)
@@ -135,7 +138,26 @@ export function computeHotPathReview(graph, options = {}) {
         eligible.push({node, complexity, file, classification: test ? 'test' : classified ? 'classified' : 'production'})
     }
 
-    const riskById = graphRiskBySymbol(graph, new Set(eligible.map(({node}) => String(node.id))))
+    // Test callers (inline test_surface symbols and test-path files) that must not count toward a
+    // production symbol's fan-in. Built over ALL nodes because a caller may sit outside the review scope.
+    const testCallerIds = options.includeTests === true ? null : (() => {
+        const ids = new Set()
+        const classifyCache = new Map()
+        for (const node of graph?.nodes || []) {
+            const id = String(node?.id || '')
+            if (!id.includes('#')) continue
+            let isTest = node?.test_surface === true
+            const file = normalize(node?.source_file)
+            if (!isTest && file) {
+                let info = classifyCache.get(file)
+                if (info === undefined) classifyCache.set(file, (info = classifier.explain(file)))
+                isTest = hasPathClass(info, 'test', 'e2e')
+            }
+            if (isTest) ids.add(id)
+        }
+        return ids
+    })()
+    const riskById = graphRiskBySymbol(graph, new Set(eligible.map(({node}) => String(node.id))), testCallerIds)
     const candidates = []
     for (const entry of eligible) {
         const {node, complexity, file} = entry

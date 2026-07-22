@@ -168,6 +168,30 @@ test("lang-rust: resolves non-mod-rs children, inline #[path], and main.rs crate
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("lang-rust: a module-qualified call without `use` resolves (`mod utils; utils::init()`)", async () => {
+  // The dominant flat-file idiom: a scoped call whose head is a locally-declared outlined module, with no
+  // `use`. Must still produce a call edge (regression guard for scoped-call resolution moving to pass2).
+  const dir = repoWith({
+    "src/main.rs": `mod utils;
+fn run() -> u32 {
+    let mut v: Vec<u32> = Vec::new();
+    v.push(utils::init());
+    v.len() as u32
+}
+`,
+    "src/utils.rs": "pub fn init() -> u32 { 0 }",
+  });
+  try {
+    const g = await buildInternalGraph(dir);
+    const ep = (v) => String(v && typeof v === "object" ? v.id : v);
+    const calls = g.links.filter((l) => l.relation === "calls");
+    assert.ok(
+      calls.some((l) => ep(l.source).includes("main.rs#run") && ep(l.target).includes("utils.rs#init")),
+      "`utils::init()` on a local outlined module (no `use`) resolves across files",
+    );
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("lang-rust: #[cfg(test)] modules and #[test]/#[bench] functions carry test_only", async () => {
   const dir = repoWith({
     "src/lib.rs": `pub fn prod_fn() -> u32 { 1 }
