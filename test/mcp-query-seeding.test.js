@@ -223,3 +223,22 @@ test("query_graph exact seed_symbols support relation filters and directed flow"
   } finally { rmSync(fx.dir, {recursive: true, force: true}); }
 });
 
+test("query_graph falls back instead of returning nothing for an all-stop concept or impossible language", () => {
+  const nodes = [
+    { id: "src/analysis/architecture/contract-verification.js", label: "contract-verification.js", source_file: "src/analysis/architecture/contract-verification.js" },
+    { id: "src/mcp/architecture-bootstrap.mjs", label: "architecture-bootstrap.mjs", source_file: "src/mcp/architecture-bootstrap.mjs" },
+    { id: "src/analysis/architecture/contract-verification.js#verifyArchitecture@9", label: "verifyArchitecture()", source_file: "src/analysis/architecture/contract-verification.js" },
+    { id: "src/other/unrelated.js", label: "unrelated.js", source_file: "src/other/unrelated.js" },
+  ];
+  const fx = graphFile({ nodes, links: [] });
+  try {
+    // "architecture" is entirely stop-worded; the relax-stop fallback still seeds architecture nodes
+    const arch = findSeeds(fx.graph, "architecture", 5).map((node) => node.id);
+    assert.ok(arch.length > 0, "a bare architecture concept must not return zero seeds");
+    assert.ok(arch.some((id) => id.includes("architecture")), "seeds an architecture node");
+    // "contract" infers Solidity, but there are no .sol files here -> the language filter is dropped
+    const contract = findSeeds(fx.graph, "contract", 5).map((node) => node.id);
+    assert.ok(contract.some((id) => id.includes("contract")), "a contract query in a non-Solidity repo still seeds contract nodes");
+  } finally { rmSync(fx.dir, { recursive: true, force: true }); }
+});
+

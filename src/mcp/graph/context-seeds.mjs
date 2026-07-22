@@ -89,13 +89,16 @@ function toolExecutionSignal(node, source, words, stem) {
     return score
 }
 
-function queryConcepts(query) {
+// relaxStop is the last-resort fallback: when EVERY token is a stop word (e.g. a bare
+// "architecture" query), keep them as concepts so the query still seeds instead of
+// misreporting "No nodes matched" for a concept the repository clearly contains.
+function queryConcepts(query, {relaxStop = false} = {}) {
     const tokens = wordsOf(query)
     const toolExecution = tokens.some((token) => TOOL_EXECUTION_TRIGGERS.has(token))
     const explanatoryWork = tokens.some((token) => token === 'how' || token === 'explain')
     const seen = new Set(), concepts = []
     for (const raw of tokens) {
-        if (raw.length < 2 || QUERY_STOP.has(raw)) continue
+        if (raw.length < 2 || (!relaxStop && QUERY_STOP.has(raw))) continue
         if (explanatoryWork && (raw === 'work' || raw === 'works' || raw === 'working')) continue
         if (toolExecution && TOOL_EXECUTION_TERMS.includes(raw)) {
             if (seen.has('tool-execution')) continue
@@ -116,7 +119,7 @@ function exactIdentifierSeeds(g, query, limit, {repoRoot = null} = {}) {
     const identifiers = [...new Set((String(query || '').match(/[A-Za-z_$][A-Za-z0-9_$]*/g) || [])
         .filter((item) => /(?:[a-z0-9][A-Z]|_)/.test(item)).map((item) => item.toLowerCase()))]
     if (!identifiers.length) return []
-    const requestedClasses = requestedPathClasses(query), languageExtensions = requestedLanguages(query)
+    const requestedClasses = requestedPathClasses(query), languageExtensions = effectiveLanguages(g, query)
     const classifier = createPathClassifier(repoRoot), classificationCache = new Map(), matches = []
     for (const identifier of identifiers) {
         const candidates = g.nodes.filter((node) => String(node.label || '').replace(/\(\)$/, '').toLowerCase() === identifier
@@ -158,12 +161,22 @@ function conceptScore(g, node, concept, queryContext) {
     return Math.max(0, score)
 }
 
+// A requested language that matches ZERO nodes in this graph is over-eager inference (e.g.
+// "contract" inferring Solidity in a repo with no .sol files); drop the filter rather than
+// eliminate every candidate and return nothing.
+function effectiveLanguages(g, query) {
+    const languageExtensions = requestedLanguages(query)
+    if (languageExtensions.size && !g.nodes.some((node) => matchesLanguage(node, languageExtensions))) return new Set()
+    return languageExtensions
+}
+
 export function findSeeds(g, query, limit = 8, {repoRoot = null} = {}) {
     const exact = exactIdentifierSeeds(g, query, limit, {repoRoot})
     if (exact.length) return exact
-    const concepts = queryConcepts(query)
+    let concepts = queryConcepts(query)
+    if (!concepts.length) concepts = queryConcepts(query, {relaxStop: true})
     if (!concepts.length || limit <= 0) return []
-    const requestedClasses = requestedPathClasses(query), languageExtensions = requestedLanguages(query)
+    const requestedClasses = requestedPathClasses(query), languageExtensions = effectiveLanguages(g, query)
     const queryContext = {runtimeIntent: concepts.some((concept) => concept.id === 'bootstrap' || concept.id === 'tool-execution'), maintenanceIntent: wordsOf(query).some((word) => ['script', 'scripts', 'build', 'release', 'publish', 'packaging'].includes(word)), languageExtensions}
     const classifier = createPathClassifier(repoRoot), classificationCache = new Map()
     const rows = g.nodes.filter((node) => matchesLanguage(node, languageExtensions) && isQueryEligible(node, requestedClasses, classificationCache, classifier)).map((node) => {
