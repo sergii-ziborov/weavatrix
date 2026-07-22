@@ -1,17 +1,16 @@
 // Cross-repository HTTP contract intelligence. Repository paths are resolved only through the
 // local global registry; callers can select an opaque repository UUID or an unambiguous label but
 // can never pass an arbitrary filesystem path through this tool.
-import {join} from 'node:path'
 import {analyzeHttpContracts} from '../analysis/http-contracts.js'
 import {analyzeTransportContracts} from '../analysis/transport-contracts.js'
-import {buildGraphForRepo} from '../build-graph.js'
 import {graphHomeDir} from '../graph/layout.js'
 import {liveRepositoryRecords} from '../graph/repo-registry.js'
-import {loadGraph} from './graph-context.mjs'
+import {ContractCursorError, paginateContractEvidence} from './company-contract-page.mjs'
+import {publicRecord, reconcileGraph} from './company-contract-reconcile.mjs'
 import {toolResult} from './tool-result.mjs'
 import {contractVerdict, contractVerdictLine} from './company-contract-verdict.mjs'
 
-const CROSS_REPO_HTTP_CONTRACT_V = 3
+const CROSS_REPO_HTTP_CONTRACT_V = 4
 const selectorText = (value) => String(value ?? '').trim()
 
 function selectRecord(records, selector) {
@@ -33,76 +32,6 @@ function safeAlias(record, records) {
         .replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 56) || 'repo'
     const duplicates = records.filter((item) => String(item.label || '').toLowerCase() === String(record.label || '').toLowerCase())
     return duplicates.length > 1 ? `${base}-${String(record.repositoryId).slice(0, 8)}` : base
-}
-
-function publicRecord(record, alias) {
-    return {repositoryId: record.repositoryId, label: record.label, alias}
-}
-
-function safeRefreshReason(record, error) {
-    let message = String(error instanceof Error ? error.message : error || 'graph refresh failed')
-    for (const path of [record.repoPath, record.graphDir]) {
-        if (!path) continue
-        message = message.split(String(path)).join(record.label || 'repository')
-        message = message.split(String(path).replace(/\\/g, '/')).join(record.label || 'repository')
-    }
-    return message.replace(/[\r\n]+/g, ' ').trim().slice(0, 400) || 'graph refresh failed'
-}
-
-async function reconcileGraph(record, alias, role, graphHome) {
-    let registeredGraph = null
-    try { registeredGraph = loadGraph(join(record.graphDir, 'graph.json'), {repoRoot: record.repoPath}) } catch { /* refresh may repair it */ }
-    const buildMode = ['full', 'no-tests', 'tests-only'].includes(registeredGraph?.graphBuildMode)
-        ? registeredGraph.graphBuildMode
-        : 'full'
-    const precision = registeredGraph?.graphPrecisionMode === 'off' ? 'off' : 'lsp'
-    let build
-    try {
-        build = await buildGraphForRepo(record.repoPath, {
-            mode: buildMode,
-            precision,
-            scope: '',
-            outDir: record.graphDir,
-            graphHome,
-        })
-    } catch (error) {
-        build = {ok: false, error: safeRefreshReason(record, error)}
-    }
-    const refreshKind = build?.refresh?.kind || null
-    const changedFiles = Array.isArray(build?.refresh?.changedFiles) ? build.refresh.changedFiles : []
-    const publicStatus = {
-        role,
-        repository: publicRecord(record, alias),
-        buildMode,
-        status: build?.ok ? (refreshKind === 'none' ? 'CURRENT' : 'REFRESHED') : 'STALE_FALLBACK',
-        refresh: build?.ok ? {
-            kind: refreshKind || 'full',
-            reason: String(build?.refresh?.reason || 'graph-rebuilt'),
-            changedFileCount: changedFiles.length,
-        } : null,
-    }
-    if (build?.ok) {
-        try {
-            return {record, alias, graph: loadGraph(join(record.graphDir, 'graph.json'), {repoRoot: record.repoPath}), publicStatus}
-        } catch (error) {
-            const reason = `refreshed graph could not be loaded: ${safeRefreshReason(record, error)}`
-            return {record, alias, graph: null, reason, publicStatus: {...publicStatus, status: 'FAILED', reason}}
-        }
-    }
-
-    const reason = `graph refresh failed: ${safeRefreshReason(record, build?.error)}`
-    try {
-        return {
-            record,
-            alias,
-            graph: loadGraph(join(record.graphDir, 'graph.json'), {repoRoot: record.repoPath}),
-            reason: `${reason}; stale registered graph used`,
-            publicStatus: {...publicStatus, reason: `${reason}; stale registered graph used`},
-        }
-    } catch (error) {
-        const loadReason = `${reason}; registered graph could not be loaded: ${safeRefreshReason(record, error)}`
-        return {record, alias, graph: null, reason: loadReason, publicStatus: {...publicStatus, status: 'FAILED', reason: loadReason}}
-    }
 }
 
 export async function tTraceApiContract(_g, args = {}, ctx = {}) {
@@ -246,6 +175,39 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                 ? 'Completeness: complete within the declared repository graphs, supported static models and fresh revision-bound runtime capture.'
                 : `Completeness: partial — ${completeness.reasons.join('; ')}.`,
         ]
+        let evidencePage
+        try {
+            evidencePage = paginateContractEvidence({
+                analysis,
+                transportAnalysis,
+                args,
+                fingerprintParts: [
+                    backend.repositoryId,
+                    backendGraph.graph?.graphRevision || null,
+                    ...clientGraphs.flatMap((item) => [item.record.repositoryId, item.graph?.graphRevision || null]),
+                    selectedTransport,
+                    args.method || null,
+                    args.path || null,
+                    Array.isArray(args.changed_files) ? [...args.changed_files].sort() : [],
+                    args.include_tests === true,
+                ],
+            })
+        } catch (error) {
+            if (!(error instanceof ContractCursorError)) throw error
+            return toolResult(
+                `VERDICT INVALID_CURSOR — ${error.message}. Restart from the first page without cursor.`,
+                {status: 'INVALID_CURSOR', code: error.code, reason: error.message},
+                {page: {status: 'INVALID_CURSOR'}},
+            )
+        }
+        const transportSummary = {
+            transportContractsV: transportAnalysis.transportContractsV,
+            transport: transportAnalysis.transport,
+            status: transportAnalysis.status,
+            completeness: transportAnalysis.completeness,
+            totals: transportAnalysis.totals,
+            runtimeEvidence: transportAnalysis.runtimeEvidence,
+        }
         const result = {
             crossRepoHttpContractV: CROSS_REPO_HTTP_CONTRACT_V,
             verdict,
@@ -253,14 +215,28 @@ export async function tTraceApiContract(_g, args = {}, ctx = {}) {
                 backend: publicRecord(backend, backendAlias),
                 clients: clients.map(({record, alias}) => publicRecord(record, alias)),
             },
-            ...analysis,
-            transportContracts: transportAnalysis,
+            httpContractsV: analysis.httpContractsV,
+            filters: analysis.filters,
+            limits: analysis.limits,
+            totals: analysis.totals,
+            wrapperDiscovery: analysis.wrapperDiscovery,
+            transportContracts: transportSummary,
+            evidencePage,
             status: completeness.status,
             graphReconciliation,
             completeness,
         }
         return toolResult(lines.join('\n'), result, {
             completeness,
+            page: {
+                detail: evidencePage.detail,
+                offset: evidencePage.offset,
+                pageSize: evidencePage.pageSize,
+                totalItems: evidencePage.totalItems,
+                returnedItems: evidencePage.returnedItems,
+                hasMore: evidencePage.hasMore,
+                nextCursor: evidencePage.nextCursor,
+            },
             warnings: completeness.complete ? [] : [{code: 'CROSS_REPO_ANALYSIS_PARTIAL', message: completeness.reasons.join('; ')}],
         })
     } catch (error) {

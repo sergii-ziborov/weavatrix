@@ -205,10 +205,3 @@ export function resolveSeedFiles(g, requested, limit = 12) {
     }
     return {seeds, missing}
 }
-
-export function undirectedNeighbors(g, id) {
-    const seen = new Map()
-    for (const e of g.out.get(id) || []) if (e.barrelProxy !== true) seen.set(e.id, e.relation)
-    for (const e of g.inn.get(id) || []) if (e.barrelProxy !== true && !seen.has(e.id)) seen.set(e.id, e.relation)
-    return seen
-}

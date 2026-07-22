@@ -197,12 +197,19 @@ test('verified_change plan returns one proof envelope instead of requiring manua
     verifyArchitecture: () => toolResult('architecture', {state: 'PASS', verification: {status: 'PASS', new: []}}),
     traceApi: async () => null,
   }
-  const result = await tVerifiedChange(graph, {task: 'change target value handling', phase: 'plan', base_ref: 'HEAD'}, {repoRoot: root, graphPath}, tools, {source: true, health: true, crossrepo: false})
+  const result = await tVerifiedChange(graph, {
+    task: 'change target value handling', phase: 'plan', base_ref: 'HEAD', duplicate_ratchet: true,
+  }, {repoRoot: root, graphPath}, tools, {source: true, health: true, crossrepo: false})
   assert.equal(result.result.schemaVersion, 'weavatrix.verified-change.v1')
   assert.equal(result.result.verdict, 'UNKNOWN')
   assert.equal(result.result.retrieval.selected[0].id, 'src/target.js#target@1')
   assert.equal(result.result.editContexts[0].evidence.state, 'EXACT')
   assert.deepEqual(result.result.tests.suggestedFiles, ['test/target.test.js'])
+  assert.deepEqual(result.result.duplicates, {
+    state: 'PLANNED', enabled: true, reason: 'duplicate ratchet runs during verify phase',
+  })
   assert.match(result.text, /^UNKNOWN — verified_change plan/)
+  assert.match(result.text, /duplicates PLANNED/)
+  assert.doesNotMatch(result.text, /duplicate ratchet disabled/)
   assert.match(result.text, /Exact usage: target\(\) — 2 reference occurrence\(s\) in 1 file\(s\); 1 inbound container\(s\): caller\(\) \[src\/caller\.js\]\./)
 })

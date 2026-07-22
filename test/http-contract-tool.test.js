@@ -56,12 +56,12 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         }, {graphHome})
         assert.equal(result.__weavatrixToolResult, true)
         assert.match(result.text, /^VERDICT CLIENTS_AT_RISK/)
-        assert.equal(result.result.crossRepoHttpContractV, 3)
+        assert.equal(result.result.crossRepoHttpContractV, 4)
         assert.equal(result.result.transportContracts.transportContractsV, 2)
         assert.equal(result.result.verdict.callsites, 1)
         assert.equal(result.result.verdict.affectedScreens, 1)
         assert.equal(result.result.totals.endpoints, 1)
-        assert.equal(result.result.endpoints[0].liveness.status, 'NOT_DEAD_EXTERNAL_USE')
+        assert.equal(result.result.evidencePage.items[0].liveness.status, 'NOT_DEAD_EXTERNAL_USE')
         assert.match(result.text, /NOT_DEAD_EXTERNAL_USE/)
         assert.equal(result.result.repositories.backend.repositoryId, backend.repositoryId)
         assert.equal(result.result.repositories.clients[0].repositoryId, client.repositoryId)
@@ -69,7 +69,7 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         assert.equal(result.result.graphReconciliation.length, 2)
         assert.equal(result.result.graphReconciliation.every((item) => ['CURRENT', 'REFRESHED'].includes(item.status)), true)
         assert.equal(result.result.graphReconciliation.every((item) => item.buildMode === 'no-tests'), true)
-        assert.deepEqual(result.result.endpoints[0].affected.files.map((item) => [item.file, item.distance]), [
+        assert.deepEqual(result.result.evidencePage.items[0].affected.files.items.map((item) => [item.file, item.distance]), [
             ['src/api/users.ts', 0],
             ['src/pages/UsersPage.tsx', 1],
         ])
@@ -88,7 +88,7 @@ test('trace_api_contract refreshes registered graphs and returns verdict-first b
         }, {graphHome})
         assert.equal(refreshed.result.status, 'COMPLETE')
         assert.equal(refreshed.result.verdict.affectedScreens, 2)
-        assert.equal(refreshed.result.endpoints[0].affected.screens.some((item) => item.file === 'src/pages/AdminPage.tsx'), true)
+        assert.equal(refreshed.result.evidencePage.items[0].affected.screens.items.some((item) => item.file === 'src/pages/AdminPage.tsx'), true)
         const clientRefresh = refreshed.result.graphReconciliation.find((item) => item.repository.repositoryId === client.repositoryId)
         assert.equal(clientRefresh.status, 'REFRESHED')
         assert.equal(clientRefresh.buildMode, 'no-tests')
@@ -141,7 +141,59 @@ test('trace_api_contract surfaces method mismatches on endpoints ranked out of t
         assert.match(result.text, /caller frontend-web:src\/api\/items\.ts:\d+ uses GET/)
         assert.doesNotMatch(result.text, /DELETE \/api\/items\/:id .*→ 0 callsite/, 'the mismatch-only endpoint stays outside the ranked rows')
         assert.equal(result.result.verdict.methodMismatches, 1)
-        assert.equal(result.result.endpoints.find((endpoint) => endpoint.method === 'DELETE').methodMismatches, 1)
+        assert.equal(result.result.evidencePage.items.find((endpoint) => endpoint.method === 'DELETE').methodMismatches, 1)
+    } finally {
+        rmSync(workspace, {recursive: true, force: true})
+    }
+})
+
+test('trace_api_contract defaults to compact revision-bound pages and supports explicit full detail', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'wx-http-tool-page-'))
+    const graphHome = join(workspace, 'graphs')
+    const backendRoot = join(workspace, 'backend-api')
+    const clientRoot = join(workspace, 'frontend-web')
+    mkdirSync(backendRoot, {recursive: true})
+    mkdirSync(clientRoot, {recursive: true})
+    write(backendRoot, 'src/routes.js', "router.get('/api/a', a); router.get('/api/b', b);")
+    write(clientRoot, 'src/api.ts', "axios.get('/api/a'); axios.get('/api/b');")
+    const backend = registerFixture(graphHome, backendRoot, {
+        repoBoundaryV: 1, edgeTypesV: 2, graphBuildMode: 'no-tests',
+        nodes: [{id: 'routes', source_file: 'src/routes.js'}], links: [],
+    })
+    registerFixture(graphHome, clientRoot, {
+        repoBoundaryV: 1, edgeTypesV: 2, graphBuildMode: 'no-tests',
+        nodes: [{id: 'api', source_file: 'src/api.ts'}], links: [],
+    })
+
+    try {
+        const first = await tTraceApiContract(null, {
+            backend: backend.repositoryId, clients: ['frontend-web'], transport: 'http', page_size: 1,
+        }, {graphHome})
+        assert.equal(first.result.evidencePage.detail, 'compact')
+        assert.equal(first.result.evidencePage.items.length, 1)
+        assert.equal(first.result.evidencePage.hasMore, true)
+        assert.match(first.result.evidencePage.nextCursor, /^[A-Za-z0-9_-]+$/)
+        assert.equal(first.page.nextCursor, first.result.evidencePage.nextCursor)
+        assert.equal(Object.hasOwn(first.result, 'endpoints'), false, 'the unbounded legacy array is not duplicated')
+
+        const second = await tTraceApiContract(null, {
+            backend: backend.repositoryId, clients: ['frontend-web'], transport: 'http', page_size: 1,
+            cursor: first.result.evidencePage.nextCursor,
+        }, {graphHome})
+        assert.equal(second.result.evidencePage.offset, 1)
+        assert.notEqual(second.result.evidencePage.items[0].path, first.result.evidencePage.items[0].path)
+
+        const full = await tTraceApiContract(null, {
+            backend: backend.repositoryId, clients: ['frontend-web'], transport: 'http', page_size: 1,
+            response_detail: 'full',
+        }, {graphHome})
+        assert.equal(full.result.evidencePage.detail, 'full')
+        assert.ok(Array.isArray(full.result.evidencePage.items[0].callsites))
+
+        const invalid = await tTraceApiContract(null, {
+            backend: backend.repositoryId, clients: ['frontend-web'], transport: 'http', cursor: 'not-a-cursor',
+        }, {graphHome})
+        assert.equal(invalid.result.status, 'INVALID_CURSOR')
     } finally {
         rmSync(workspace, {recursive: true, force: true})
     }

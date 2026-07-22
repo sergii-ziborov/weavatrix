@@ -1,77 +1,75 @@
 # ADR 0002: Refactoring capability and the source-write boundary
 
-Status: proposed
+Status: accepted
 
 Date: 2026-07-21
 
 ## Decision
 
-Weavatrix gains first-class refactoring operations, split along one hard line:
-**the core computes and proves; a separately installed package writes.**
+Weavatrix has first-class refactoring operations split along one hard line:
+**the core computes analysis; a separately installed package writes.**
 
-The MIT `weavatrix` core stays read-only over repository source, permanently.
-It gains read-only planning tools — `rename_symbol`, `move_symbol`/`move_file`,
-`delete_readiness`, `change_signature` previews and `post_refactor_verify` —
-that emit a `weavatrix.edit-plan.v1` envelope: exact ranges with mandatory
-`before` text, a sha256 per target file, per-edit provenance
-(`EXACT_LSP`/`RESOLVED`/`EXTRACTED` only), honest `uncertainReferences` and
-`notModified` labels, and a single-use `confirm_token` (5-minute TTL, stored
-outside the repository — the architecture-bootstrap pattern).
+The MIT `weavatrix` core remains permanently read-only over repository source.
+It exports the supported read-only analysis surface used by the separately
+installed Apache-2.0 `weavatrix-refactor` package. The refactor package owns
+`rename_symbol`, `rename_related_symbols`, the other plan producers, and the
+generic apply and rollback tools.
 
-Applying plans is owned by the new Apache-2.0 `weavatrix-refactor` package. It
-extends the core through the supported extension API exactly as
-`weavatrix-online` does — one server process, one graph, its `refactor` profile
-adds the `edit` capability that no core profile can name. Its `apply_edit_plan`
-tool re-verifies every hash and every `before` text, writes a rollback bundle
-first, applies bottom-up and atomically, and fails closed as `STALE` or
-`ROLLED_BACK` — never a silent partial apply. Writing requires all three gates:
-the package installed with its profile selected, `WEAVATRIX_ALLOW_SOURCE_EDITS=1`,
-and a valid plan-bound token.
+Applyable operations use a `weavatrix.edit-plan.v1` envelope: exact ranges with
+mandatory `before` text, a sha256 per target file, per-edit provenance
+(`EXACT_LSP`, `RESOLVED`, `EXTRACTED`, or `LEXICAL_EXACT`), honest
+`uncertainReferences`, and `notModified` labels. No `INFERRED` edit is applyable.
 
-`plan_refactor` (multi-move planning, intent assistance, split suggestions) is
-a `weavatrix-online` capability. Its plans use the same envelope, so
-`weavatrix-refactor` applies them unchanged.
+`rename_symbol` and `rename_related_symbols` own a complete two-call workflow.
+The default `mode="preview"` verifies the generated plan and returns `PREVIEW_OK`
+plus a short-lived, single-use token. Calling the same method with identical
+operation inputs, `mode="apply"`, and that token recomputes the deterministic
+plan, re-verifies it, writes a rollback bundle, and applies atomically. The
+generic `apply_edit_plan` tool keeps the same preview/confirm/apply contract for
+plans produced by other refactor tools or `weavatrix-online`.
+
+Writing requires all three gates: the refactor package/profile with the `edit`
+capability, `WEAVATRIX_ALLOW_SOURCE_EDITS=1`, and a valid plan-bound token. The
+token fingerprint excludes only generated `createdAt` provenance metadata so a
+same-method apply can recompute a plan; all executable fields, including file
+hashes, ranges, before/after text, and provenance, remain bound.
+
+`plan_refactor` (multi-move planning, intent assistance, and split suggestions)
+is a `weavatrix-online` capability. Its plans use the same envelope and can be
+applied by `weavatrix-refactor` unchanged.
 
 ## What this reverses
 
-The v0.2.5 development plan stated "symbol rename is editor behavior" and kept
-refactoring out of scope. This ADR narrows that stance rather than discarding
-it: *applying* a rename remains out of scope **for this package** — forever and
-now verifiably. What enters scope is what the graph, the LSP overlay, and the
-evidence model are uniquely good at: computing a rename/move/delete/signature
-plan with proof, and verifying the result. The editor role moves to a package
-whose name announces it.
+The v0.2.5 development plan stated that symbol rename was editor behavior and
+kept refactoring out of scope. Applying a rename remains permanently out of
+scope for the core package. The editor role belongs to a package whose name and
+selected profile explicitly announce write capability.
 
 ## Why a separate package is the safety mechanism
 
-Installing `weavatrix` alone leaves a server that is physically incapable of
-modifying source: the artifact contains no source-write paths. Installing
-`weavatrix-refactor` is the explicit, visible consent step — the package name
-is the informed-consent label. This mirrors ADR 0001: the offline core
-contains no fetch paths; the write-capable component is a separate artifact
-with its own license (Apache-2.0 for its explicit warranty/liability terms and
-patent grant) and its own trust story.
+Installing `weavatrix` alone leaves a server physically incapable of modifying
+source: the artifact contains no repository source-write path. Installing and
+selecting `weavatrix-refactor` is the explicit consent step. This mirrors ADR
+0001: the offline core contains no fetch path, while network capability belongs
+to a separate artifact.
 
 ## Release gates
 
-1. A new core release gate proves the npm/MCPB artifact contains no
-   source-write path (mirror of the ADR 0001 no-fetch gate): no `writeFileSync`
-   or equivalent targeting repository-root-contained paths outside the
-   `.weavatrix/architecture.json` create-only bootstrap exception.
-2. `weavatrix` and `weavatrix-refactor` release as a compatible pair; the
-   `weavatrix.edit-plan.v1` schema is frozen — changes require a
-   `schemaVersion` bump and a paired release.
-3. Preview tools follow the existing honesty conventions: `completeness`
-   statuses, `PARTIAL` never presented as complete, `uncertainReferences`
-   never silently dropped, and no plan ever contains an `INFERRED` edit.
+1. The core release gate proves the npm/MCPB artifact contains no repository
+   source-write path outside the create-only architecture bootstrap exception.
+2. `weavatrix` and `weavatrix-refactor` release as a compatible pair. Changes to
+   `weavatrix.edit-plan.v1` require a schema-version bump and paired release.
+3. Refactor tools preserve honesty: `PARTIAL` is never presented as complete,
+   `uncertainReferences` are never dropped, and no plan contains an `INFERRED`
+   applyable edit.
 
 ## Consequences
 
-- The core tool catalog grows by read-only tools only; `pinned`/`offline`
-  profiles never gain a write capability.
-- The rename/move planners depend on the bundled TypeScript language server;
-  non-LSP languages return graph-evidence inventories labeled `NOT_SUPPORTED`
-  for planning, never speculative edits.
-- Serena-parity positioning: the atomicity Serena offers lives in
-  `apply_edit_plan`; the evidence, blast radius, cycle/architecture dry-run
-  and post-apply proof remain capabilities no editor-style rename has.
+- Core `pinned` and `offline` profiles never gain a write capability.
+- JS/TS rename uses the bundled TypeScript language server, SQL uses the schema
+  backend, and Rust/Python/Go/Java/C#/Solidity use strict graph+lexical edits.
+  Non-LSP completeness remains `PARTIAL`; ambiguous references are reported and
+  never guessed.
+- Atomic writes live in the rename workflows and `apply_edit_plan`; evidence,
+  blast-radius analysis, architecture checks, and post-apply proof remain
+  separate explicit capabilities.

@@ -1,6 +1,6 @@
 import {
     isSymbol, degreeOf, labelOf, resolveNode, findSeeds, resolveSeedFiles,
-    undirectedNeighbors, requestedPathClasses,
+    requestedPathClasses,
 } from '../graph-context.mjs'
 import {createPathClassifier, hasPathClass} from '../../path-classification.js'
 
@@ -50,6 +50,22 @@ const makeEdgeLabel = (g, shownIds) => {
         if (isFile && ((counts.get(label) || 0) > 1 || AMBIGUOUS_FILE_BASENAME_RE.test(label))) return String(id).split('/').slice(-2).join('/')
         return label
     }
+}
+
+// shortest_path is intentionally a connectivity query, so it may walk an edge in either
+// direction. Keep the stored direction on every hop so the rendered path never turns a reverse
+// traversal into a false caller/importer direction.
+const connectivityNeighbors = (g, id) => {
+    const seen = new Map()
+    for (const edge of g.out.get(id) || []) {
+        if (edge.barrelProxy !== true) seen.set(String(edge.id), {relation: edge.relation, direction: 'forward'})
+    }
+    for (const edge of g.inn.get(id) || []) {
+        if (edge.barrelProxy !== true && !seen.has(String(edge.id))) {
+            seen.set(String(edge.id), {relation: edge.relation, direction: 'backward'})
+        }
+    }
+    return seen
 }
 
 const relationSet = (relationFilter, legacyFilter) => {
@@ -221,17 +237,17 @@ export function tShortestPath(g, {source, target, max_hops = 8} = {}) {
     if (sourceId === targetId) return `Source and target are the same node: ${sourceNode.label ?? sourceId}.`
     const limit = Math.max(1, Math.min(20, Number(max_hops) || 8))
     const previous = new Map([[sourceId, null]])
-    const relationTo = new Map()
+    const edgeTo = new Map()
     let frontier = [sourceId]
     let hops = 0
     let found = false
     while (frontier.length && hops < limit && !found) {
         const next = []
         for (const id of frontier) {
-            for (const [neighbor, relation] of undirectedNeighbors(g, id)) {
+            for (const [neighbor, edge] of connectivityNeighbors(g, id)) {
                 if (previous.has(neighbor)) continue
                 previous.set(neighbor, id)
-                relationTo.set(neighbor, relation)
+                edgeTo.set(neighbor, edge)
                 if (neighbor === targetId) { found = true; break }
                 next.push(neighbor)
             }
@@ -244,6 +260,17 @@ export function tShortestPath(g, {source, target, max_hops = 8} = {}) {
     const path = []
     for (let current = targetId; current != null; current = previous.get(current)) path.unshift(current)
     const edgeLabel = makeEdgeLabel(g, path)
-    const lines = path.map((id, index) => index === 0 ? `  ${edgeLabel(id)}` : `  --${relationTo.get(id) || 'rel'}--> ${edgeLabel(id)}`)
-    return [`Shortest path (${path.length - 1} hops): ${sourceNode.label ?? sourceId} → ${targetNode.label ?? targetId}`, ...lines].join('\n')
+    const hopCount = path.length - 1
+    const lines = path.map((id, index) => {
+        if (index === 0) return `  ${edgeLabel(id)}`
+        const edge = edgeTo.get(id) || {}
+        return edge.direction === 'backward'
+            ? `  <--${edge.relation || 'rel'}-- ${edgeLabel(id)}`
+            : `  --${edge.relation || 'rel'}--> ${edgeLabel(id)}`
+    })
+    return [
+        `Shortest path (${hopCount} ${hopCount === 1 ? 'hop' : 'hops'}; undirected connectivity) from ${edgeLabel(sourceId)} to ${edgeLabel(targetId)}`,
+        'Edge arrows preserve stored graph direction; traversal may move with or against them.',
+        ...lines,
+    ].join('\n')
 }

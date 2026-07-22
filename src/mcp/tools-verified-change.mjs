@@ -148,10 +148,17 @@ export async function tVerifiedChange(g, args = {}, ctx = {}, tools = {}, permis
   const baseRef = String(args.base_ref || 'HEAD').trim()
   const graph = phase === 'verify' ? await baselineProof(ctx, baseRef, currentGraph) : {state: 'PLANNED', baseline: baseRef}
 
-  let duplicates = {state: 'SKIPPED', reason: 'duplicate ratchet disabled'}
-  if (phase === 'verify' && args.duplicate_ratchet !== false) duplicates = permissions.health
-    ? await compareDuplicateGroups({repoRoot: ctx.repoRoot, graphPath: ctx.graphPath, currentGraph, baseRef, changedFiles, args: {mode: 'renamed', min_similarity: 80, min_tokens: 50}})
-    : {state: 'UNKNOWN', reason: 'health capability is not enabled'}
+  const duplicateRatchetEnabled = args.duplicate_ratchet !== false
+  let duplicates
+  if (!duplicateRatchetEnabled) {
+    duplicates = {state: 'SKIPPED', enabled: false, reason: 'duplicate ratchet disabled'}
+  } else if (phase !== 'verify') {
+    duplicates = {state: 'PLANNED', enabled: true, reason: 'duplicate ratchet runs during verify phase'}
+  } else {
+    duplicates = permissions.health
+      ? {enabled: true, ...await compareDuplicateGroups({repoRoot: ctx.repoRoot, graphPath: ctx.graphPath, currentGraph, baseRef, changedFiles, args: {mode: 'renamed', min_similarity: 80, min_tokens: 50}})}
+      : {state: 'UNKNOWN', enabled: true, reason: 'health capability is not enabled'}
+  }
 
   let api = {state: 'SKIPPED', reason: 'no api_contract scope was requested'}
   if (args.api_contract) {

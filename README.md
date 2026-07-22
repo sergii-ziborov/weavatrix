@@ -128,7 +128,9 @@ The 34 methods project the same reusable graph into the smallest view a task nee
 - **build** — `rebuild_graph` (reports the structural delta, keeps the prior state as `graph.prev.json`).
 - **retarget** *(in `offline`, absent from `pinned`)* — `open_repo`, `list_known_repos`.
 - **crossrepo** *(in `offline`, absent from `pinned`)* — `trace_api_contract` (joins routes to client
-  call-sites across registered local graphs; reads no source).
+  call-sites across registered local graphs; reads no source). Results are compact and paginated by
+  default (`page_size`, opaque `cursor`, and bounded `per_item_limit` samples); `response_detail="full"`
+  is an explicit opt-in and remains paginated.
 
 Every finding is review evidence, never an auto-delete verdict: `find_dead_code` /
 `run_audit category=unused` always return `REVIEW_REQUIRED` with `autoDelete:false`. Typecheck, tests

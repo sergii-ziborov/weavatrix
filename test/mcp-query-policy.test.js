@@ -173,6 +173,12 @@ test("query_graph and shortest_path widen repeated or generic file basenames in 
     const path = tShortestPath(ambiguous.graph, { source: a.id, target: b.id });
     assert.match(path, /a\/mod\.rs/);
     assert.match(path, /--imports--> b\/mod\.rs/);
+    assert.match(path, /undirected connectivity/);
+    assert.match(path, /arrows preserve stored graph direction/);
+    assert.match(path, /from a\/mod\.rs to b\/mod\.rs/);
+    const reversePath = tShortestPath(ambiguous.graph, { source: b.id, target: a.id });
+    assert.match(reversePath, /b\/mod\.rs\s+<--imports-- a\/mod\.rs/);
+    assert.doesNotMatch(reversePath, /b\/mod\.rs\s+--imports--> a\/mod\.rs/);
 
     const bare = tQueryGraph(unique.graph, { question: "core", seed_files: [engine.id, parser.id], depth: 1 });
     assert.match(bare, /engine\.rs --imports--> parser\.rs/, "unique basenames keep bare labels");
@@ -191,5 +197,8 @@ test("query_graph preserves importer-to-imported direction when traversing from 
     const output = tQueryGraph(fx.graph, { question: "state", seed_files: [store.id], depth: 1 });
     assert.match(output, /EditWidget\.tsx --imports--> useDynamicStore\.ts/);
     assert.doesNotMatch(output, /useDynamicStore\.ts --imports--> EditWidget\.tsx/);
+    const path = tShortestPath(fx.graph, { source: store.id, target: editor.id });
+    assert.match(path, /useDynamicStore\.ts\s+<--imports-- EditWidget\.tsx/);
+    assert.doesNotMatch(path, /useDynamicStore\.ts\s+--imports--> EditWidget\.tsx/);
   } finally { rmSync(fx.dir, { recursive: true, force: true }); }
 });
