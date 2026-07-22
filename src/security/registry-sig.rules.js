@@ -77,7 +77,7 @@ export const CONTENT_RULES = [
     severity: "medium", // raw-IP URLs have some legit uses (local tooling) — escalates via co-occurrence
     nearZeroFp: false,
     pattern: "https?://[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
-    re: /https?:\/\/(?!127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/i, // /i: rg sweeps -i; URL schemes are case-insensitive (HTTP:// is a known evasion)
+    re: /https?:\/\/(?!127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/i, // /i: rg sweeps -i; schemes are case-insensitive (an uppercase scheme prefix is a known evasion)
     what: "hardcoded raw-IP URL (loopback/private/link-local ranges excluded)", // 169.254.169.254 = cloud IMDS (AWS/GCP/Azure SDK metadata) — benign, was a hot FP
   },
   {

@@ -58,3 +58,17 @@ test('the analysis-kit exposes only read-only primitives (no builder/apply names
     const kit = readFileSync(join(srcDir, 'analysis-kit.mjs'), 'utf8')
     for (const marker of FORBIDDEN) assert.equal(kit.includes(marker), false, `analysis-kit must not export ${marker}`)
 })
+
+// The core is the innermost layer of the stack (weavatrix-online > weavatrix-refactor >
+// core); it must not link to anything external. A literal http(s):// scheme is a link — the
+// malware-detection heuristics use `https?://` / `https?:\/\/` patterns (the '?' or escaped
+// slashes mean they are matchers over scanned code, not a link the core follows), so a literal
+// consecutive-slash scan catches real links without touching the detectors.
+test('core source contains no literal URL / link (http:// or https://)', () => {
+    const offenders = []
+    for (const file of sourceFiles(srcDir)) {
+        const lower = readFileSync(file, 'utf8').toLowerCase()
+        if (lower.includes('http://') || lower.includes('https://')) offenders.push(file.slice(srcDir.length + 1))
+    }
+    assert.deepEqual(offenders, [], `a literal URL leaked into the link-free core:\n${offenders.join('\n')}`)
+})

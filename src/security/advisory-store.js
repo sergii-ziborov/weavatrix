@@ -76,7 +76,6 @@ export function normalizeOsvAdvisory(record, ecosystem, name) {
     kind: String(record.id || '').startsWith('MAL-') ? 'malicious' : 'vuln',
     severity: severityOf(record),
     summary: String(record.summary || record.details || '').slice(0, 300),
-    url: `https://osv.dev/vulnerability/${record.id}`,
     modified: record.modified || '',
     aliases: (record.aliases || []).slice(0, 6),
     fixedIn: [...new Set(fixed)].slice(0, 4),

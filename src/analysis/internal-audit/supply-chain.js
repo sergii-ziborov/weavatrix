@@ -74,7 +74,7 @@ export async function runSupplyChainChecks(repoPath, {
           version: hit.pkg.version,
           reachability,
           evidence: [
-            { file: hit.adv.url, line: 0, snippet: `installed via ${hit.pkg.source}${hit.pkg.dev ? " (dev)" : ""}` },
+            { file: hit.adv.id, line: 0, snippet: `installed via ${hit.pkg.source}${hit.pkg.dev ? " (dev)" : ""}` },
             ...reachability.evidence.slice(0, 5).map((item) => ({ file: item.file, line: item.line, snippet: `${item.typeOnly ? "type-only " : ""}${item.kind}` })),
           ],
           source: "osv",
