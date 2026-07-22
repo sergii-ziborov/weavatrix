@@ -12,9 +12,12 @@ questions. **34 network-free tools. No repository data leaves your machine.**
 - Source: [github.com/sergii-ziborov/weavatrix](https://github.com/sergii-ziborov/weavatrix)
 - npm: [`weavatrix`](https://www.npmjs.com/package/weavatrix) — `npx -y weavatrix <repoRoot>`
 
-This package is the complete offline engine under the MIT license and initiates no outbound HTTP.
-Every network capability lives in the separately versioned `weavatrix-online` superset, which depends
-on this core through a supported extension API. The split is documented in
+This package is the complete offline engine under the MIT license: it reads and analyzes your code,
+initiates no outbound HTTP, and never edits your source. It is the read-only base of a layered stack —
+add [`weavatrix-refactor`](https://github.com/sergii-ziborov/weavatrix-refactor) (Apache-2.0) to apply
+hash-verified, reversible edits, or [`weavatrix-online`](https://github.com/sergii-ziborov/weavatrix-online)
+for authorized Cloud or self-hosted sync. Each is an optional superset that depends on this core through
+a supported extension API; the offline/online split is documented in
 [docs/adr/0001-v0.3-offline-online-split.md](docs/adr/0001-v0.3-offline-online-split.md).
 
 ## Install
