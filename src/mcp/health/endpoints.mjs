@@ -35,7 +35,7 @@ export function tListEndpoints(g, args, ctx) {
     const suppressed = includeClassified ? 0 : classified.length
     eps = includeClassified ? [...production, ...classified] : production
     const suppressionNote = suppressed
-        ? `${suppressed} endpoint(s) in classified test/e2e/generated/mock/story/docs/benchmark/temp or explicitly excluded paths were suppressed; pass include_classified:true to inspect them.`
+        ? `${suppressed} endpoint(s) in classified test/e2e/generated/vendored/mock/story/docs/benchmark/temp or explicitly excluded paths were suppressed; pass include_classified:true to inspect them.`
         : ''
     if (!eps.length) return suppressed
         ? `No production HTTP endpoints detected; ${suppressionNote}`

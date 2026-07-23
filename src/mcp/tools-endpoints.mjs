@@ -4,7 +4,7 @@ import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {sourceExcerpt} from './tools-source.mjs'
 import {toolResult} from './tool-result.mjs'
 
-const NON_PRODUCT = ['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
+const NON_PRODUCT = ['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp']
 
 const symbolLine = (node) => Number(String(node?.source_location || '').match(/L(\d+)/)?.[1]
     || String(node?.id || '').match(/@(\d+)$/)?.[1] || 0)

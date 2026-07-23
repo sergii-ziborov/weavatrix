@@ -12,7 +12,7 @@ export function hasDynamicCode(source, file = '') {
     return DYNAMIC_CODE_RE.test(text) || (JS_LIKE_PATH_RE.test(String(file)) && JS_DYNAMIC_IMPORT_RE.test(text))
 }
 
-const NON_PRODUCT_CLASSES = Object.freeze(['generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const NON_PRODUCT_CLASSES = Object.freeze(['generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 
 export function deadCodePathAllowed(info, {includeTests, includeClassified}) {
     if (!includeTests && hasPathClass(info, 'test', 'e2e')) return {ok: false, bucket: 'tests'}

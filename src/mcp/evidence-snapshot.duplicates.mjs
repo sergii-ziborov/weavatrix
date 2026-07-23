@@ -8,7 +8,7 @@ import {compareDuplicateMember} from './evidence/duplicate-member-order.mjs'
 const CLONE_MIN_SIMILARITY = 80
 const DIVERGENCE_MAX_SIMILARITY = 45
 const MIN_TOKENS = 50
-const FILTERED_CLASSES = new Set(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const FILTERED_CLASSES = new Set(['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const SAFE_SYMBOL = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 const DUPLICATE_EVIDENCE_THRESHOLDS = Object.freeze({

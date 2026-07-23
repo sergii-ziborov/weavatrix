@@ -53,6 +53,30 @@ export function springConventionEntries(sources, fileSet = null) {
   return out.sort((a, b) => a.file.localeCompare(b.file));
 }
 
+// Electron loads preload scripts from BrowserWindow.webPreferences rather than through a normal
+// import edge. Require both a conventional preload filename and a bounded `preload:` option that
+// names that exact file, so an unrelated helper called preload.js is not silently blessed.
+export function electronPreloadEntries(sources, fileSet = null) {
+  const files = fileSet || new Set((sources || new Map()).keys());
+  const out = [];
+  for (const rawFile of files) {
+    const file = String(rawFile || "").replace(/\\/g, "/");
+    if (!/(^|\/)preload\.[cm]?[jt]s$/i.test(file)) continue;
+    const basename = posix.basename(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const marker = new RegExp(`\\bpreload\\s*:\\s*[\\s\\S]{0,240}?["'\\x60]${basename}["'\\x60]`, "i");
+    const owner = [...(sources || [])].find(([other, text]) => String(other).replace(/\\/g, "/") !== file && marker.test(String(text || "")));
+    if (!owner) continue;
+    out.push({
+      file,
+      framework: "electron",
+      marker: `BrowserWindow preload option in ${String(owner[0]).replace(/\\/g, "/")}`,
+      confidence: "high",
+      reason: "Electron loads this exact preload script outside the static import graph",
+    });
+  }
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
+
 // Entry set for reachability: conventional entry names + package.json main/module/browser/bin/exports +
 // html pages (they root classic-script apps) + test files (the runner enters them) + root config files +
 // dynamic-import targets. Anything reachable from here is "used"; the rest corroborates unused-file.
@@ -133,6 +157,10 @@ export function entryFiles(graph, pkgOrScopes, dynamicTargets = new Set(), { dec
     }
   }
   for (const evidence of springConventionEntries(sources, fileSet)) {
+    entries.add(evidence.file);
+    conventionEvidence.push(evidence);
+  }
+  for (const evidence of electronPreloadEntries(sources, fileSet)) {
     entries.add(evidence.file);
     conventionEvidence.push(evidence);
   }

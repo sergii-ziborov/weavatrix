@@ -56,6 +56,7 @@ function makeRepo() {
     "test-e2e/cypress/support/testLocators/a.js": `${CLONE}\n`,
     "src/generated/client.js": `${CLONE}\n`,
     "src/mockData.js": `${CLONE}\n`,
+    "renderer/vendor/three/three.module.js": `${CLONE}\n`,
   };
   const nodes = [];
   for (const [rel, content] of Object.entries(files)) {
@@ -244,9 +245,9 @@ test("find_duplicates: include_tests=false excludes Cypress test-root clones", (
   const { dir, graphJson } = makeRepo();
   try {
     const hidden = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: false }, { repoRoot: dir, graphPath: graphJson });
-    assert.doesNotMatch(hidden, /test-e2e\/cypress/);
+    assert.doesNotMatch(hidden.text, /test-e2e\/cypress/);
     const included = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: true }, { repoRoot: dir, graphPath: graphJson });
-    assert.match(included, /test-e2e\/cypress/);
+    assert.match(included.text, /test-e2e\/cypress/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -254,13 +255,15 @@ test("find_duplicates suppresses generated/mock signal by default with an explic
   const { dir, graphJson } = makeRepo();
   try {
     const hidden = tFindDuplicates(null, { mode: "strict", min_tokens: 30, include_tests: true }, { repoRoot: dir, graphPath: graphJson });
-    assert.doesNotMatch(hidden, /src\/generated\/client\.js|src\/mockData\.js/);
-    assert.match(hidden, /classified as tests\/e2e\/generated\/mock\/story\/docs\/benchmark\/temp/);
+    assert.doesNotMatch(hidden.text, /src\/generated\/client\.js|src\/mockData\.js|renderer\/vendor\/three/);
+    assert.match(hidden.text, /classified as tests\/e2e\/generated\/vendored\/mock\/story\/docs\/benchmark\/temp/);
+    assert.ok(hidden.result.groups.every((group) => group.members.every((member) => !/\/vendor\//.test(member.file))), "machine-readable groups follow the same production filter");
     const included = tFindDuplicates(null, {
       mode: "strict", min_tokens: 30, include_tests: true, include_classified: true,
     }, { repoRoot: dir, graphPath: graphJson });
-    assert.match(included, /src\/generated\/client\.js/);
-    assert.match(included, /src\/mockData\.js/);
+    assert.match(included.text, /src\/generated\/client\.js/);
+    assert.match(included.text, /src\/mockData\.js/);
+    assert.ok(Array.isArray(included.result.groups));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -6,7 +6,7 @@ import {sourceExcerpt} from './tools-source.mjs'
 import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
 const MAX_LINE_SAMPLES = 5
-const CONTEXT_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const CONTEXT_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 
 const fileOf = (g, id) => {
     const node = g.byId.get(String(id))

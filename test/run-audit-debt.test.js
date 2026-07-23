@@ -79,11 +79,13 @@ test("run_audit compares an immutable baseline and never relabels old debt as ne
     assert.ok(scoped.result.findings.every((finding) => !Object.hasOwn(finding, "debtState")), "changed-scope findings receive no invented debt state");
 
     const ordinary = await tRunAudit(loaded, {}, ctx);
-    assert.equal(typeof ordinary, "string", "run_audit with no new arguments preserves the legacy response contract");
-    assert.match(ordinary, /^Internal audit of /);
-    assert.match(ordinary, /Dependency manifests: COMPLETE .* unused \d+, missing \d+/);
-    assert.match(ordinary, /Health capability matrix \(status\/completeness\):/);
-    assert.match(ordinary, /runtime correctness: (?:CHECKED|NOT_SUPPORTED)\/PARTIAL/);
+    assert.equal(ordinary.__weavatrixToolResult, true);
+    assert.equal(ordinary.result.mode, "ordinary");
+    assert.ok(Array.isArray(ordinary.result.findings), "run_audit exposes machine-readable findings");
+    assert.match(ordinary.text, /^Internal audit of /);
+    assert.match(ordinary.text, /Dependency manifests: COMPLETE .* unused \d+, missing \d+/);
+    assert.match(ordinary.text, /Health capability matrix \(status\/completeness\):/);
+    assert.match(ordinary.text, /runtime correctness: (?:CHECKED|NOT_SUPPORTED)\/PARTIAL/);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

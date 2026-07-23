@@ -61,7 +61,7 @@ export async function runInternalAudit(repoPath, {
   };
   const isNonProductPath = (file) => {
     const info = classifyPath(file);
-    return info.excluded || hasPathClass(info, "test", "e2e", "generated", "mock", "story", "docs", "benchmark", "temp");
+    return info.excluded || hasPathClass(info, "test", "e2e", "generated", "vendored", "mock", "story", "docs", "benchmark", "temp");
   };
 
   const conventionEvidence = [];

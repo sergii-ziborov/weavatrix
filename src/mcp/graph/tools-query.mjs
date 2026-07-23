@@ -4,7 +4,7 @@ import {
 } from '../graph-context.mjs'
 import {createPathClassifier, hasPathClass} from '../../path-classification.js'
 
-const QUERY_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const QUERY_NON_PRODUCT = Object.freeze(['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const LOW_SIGNAL_SYMBOL_RE = /^(?:const(?:ant)?|variable|property|field|enum_member)$/i
 const AMBIGUOUS_FILE_BASENAME_RE = /^(mod|lib|main)\.rs$|^index\.[a-z0-9]+$|^__init__\.py$/
 const querySourceFile = (node) => String(node?.source_file || String(node?.id || '').split('#', 1)[0]).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()

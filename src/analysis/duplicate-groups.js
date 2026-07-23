@@ -6,7 +6,7 @@ import {withGitRefCheckout} from './git-ref-graph.js'
 import {buildInternalGraph} from '../graph/internal-builder.js'
 import {filterGraphForMode} from '../graph/graph-filter.js'
 
-const NON_PRODUCT = new Set(['generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const NON_PRODUCT = new Set(['generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const eligible = (fragment, settings) => {
   const classes = new Set(fragment.classes || [])
   if (fragment.n < settings.tokMin) return false

@@ -11,6 +11,7 @@ import {buildInternalGraph} from '../../graph/internal-builder.js'
 import {resolveGitCommit, withGitRefCheckout} from '../../analysis/git-ref-graph.js'
 import {filterGraphForMode} from '../../graph/graph-filter.js'
 import {toolResult} from '../tool-result.mjs'
+import {summarizeFindings} from '../../analysis/findings.js'
 const auditFormatVersion = new URL(import.meta.url).search
 const {
   auditFilter,
@@ -147,16 +148,22 @@ async function runAuditWithBaseline(args, ctx, currentGraph) {
 // unused deps), structure (import cycles / orphans / boundary rules), supply-chain (offline OSV
 // advisories, typosquat, lockfile drift), optional malware heuristics.
 export async function tRunAudit(g, args, ctx) {
-    if (!ctx.repoRoot) return 'Audit needs the repo root (not provided to this server).'
+    if (!ctx.repoRoot) return toolResult('Audit needs the repo root (not provided to this server).', {
+        status: 'INVALID', findings: [], reason: 'repo root unavailable',
+    }, {completeness: {status: 'PARTIAL', reason: 'repo root unavailable'}})
     if (args.base_ref) return runAuditWithBaseline(args, ctx, rawGraph(ctx))
     const graph = effectiveRawGraph(ctx)
     const audit = await runAudit(ctx.repoRoot, graph, args, ctx, {
         skipMalwareScan: !args.include_malware_scan, // greps installed packages — slow, so opt-in
     })
-    if (!audit.ok) return `Audit failed: ${audit.error}`
+    if (!audit.ok) return toolResult(`Audit failed: ${audit.error}`, {
+        status: 'ERROR', findings: [], reason: audit.error,
+    }, {completeness: {status: 'PARTIAL', reason: audit.error}})
     if (Array.isArray(args.changed_files)) {
         const normalized = normalizeAuditScopeFiles(args.changed_files)
-        if (!normalized.ok) return `Changed-scope audit invalid: ${normalized.error}.`
+        if (!normalized.ok) return toolResult(`Changed-scope audit invalid: ${normalized.error}.`, {
+            status: 'INVALID', mode: 'changed-scope', findings: [], reason: normalized.error,
+        }, {completeness: {status: 'PARTIAL', reason: normalized.error}})
         const scoped = scopeAuditFindings(audit.findings, normalized.files)
         const text = formatOrdinaryAudit(audit, args, scoped,
             `CHANGED-SCOPE ONLY — ${normalized.files.length} explicitly supplied file(s); no baseline was provided, so these findings are not classified as new, existing, or fixed.`, ctx.repoRoot)
@@ -168,7 +175,25 @@ export async function tRunAudit(g, args, ctx) {
             findings: auditFilter(audit, args, scoped, ctx.repoRoot),
         }, {completeness: {status: 'COMPLETE'}})
     }
-    return formatOrdinaryAudit(audit, args, audit.findings, null, ctx.repoRoot)
+    const filtered = auditFilter(audit, args, audit.findings, ctx.repoRoot)
+    const max = Math.max(1, Math.min(100, Number(args.max_findings) || 30))
+    const shown = filtered.slice(0, max)
+    return toolResult(formatOrdinaryAudit(audit, args, audit.findings, null, ctx.repoRoot), {
+        status: 'COMPLETE',
+        mode: 'ordinary',
+        repo: audit.repo,
+        scanned: audit.scanned,
+        summary: summarizeFindings(filtered),
+        findings: shown,
+        healthCapabilities: audit.healthCapabilities,
+        extensionCapabilities: audit.extensionCapabilities || [],
+        dependencyReport: audit.dependencyReport,
+        conventionReachability: audit.conventionReachability,
+        checks: audit.checks,
+    }, {
+        page: {shown: shown.length, total: filtered.length, capped: shown.length < filtered.length},
+        completeness: {status: 'COMPLETE'},
+    })
 }
 
 // Named module clusters: graph communities labeled by their dominant folder instead of bare numbers.

@@ -30,7 +30,7 @@ const CODE_EXTENSIONS = new Set([
     '.cjs', '.cs', '.css', '.go', '.htm', '.html', '.java', '.js', '.jsx', '.less', '.mjs', '.py', '.pyi',
     '.rs', '.scss', '.sol', '.sql', '.ts', '.tsx',
 ])
-const CLASSIFIED = ['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
+const CLASSIFIED = ['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp']
 const EDGE_RELATIONS = new Set(['imports', 're_exports', 'calls', 'references'])
 
 const slash = (value) => String(value || '').replace(/\\/g, '/').replace(/^\.\//, '')

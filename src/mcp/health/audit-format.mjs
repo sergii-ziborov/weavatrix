@@ -3,7 +3,7 @@ import {runGit} from '../../git-exec.js'
 import {createPathClassifier, hasPathClass} from '../../path-classification.js'
 
 const SEVERITY_RANK = {critical: 0, high: 1, medium: 2, low: 3, info: 4}
-const AUDIT_NON_PRODUCT_CLASSES = ['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
+const AUDIT_NON_PRODUCT_CLASSES = ['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp']
 
 export function formatAuditFinding(f) {
     const where = f.file ? `  (${f.file}${f.symbol ? ` ${f.symbol}` : ''})` : f.package ? `  (pkg ${f.package}${f.version ? `@${f.version}` : ''}${f.manifest ? `; ${f.manifest}` : ''})` : ''
@@ -168,7 +168,7 @@ export const formatOrdinaryAudit = (audit, args, findings = audit.findings, head
         ...auditCapabilityLines(audit),
         ...auditExtensionLines(audit),
         `Scoped severity: critical ${sev.critical}, high ${sev.high}, medium ${sev.medium}, low ${sev.low}, info ${sev.info}. Scoped categories: unused ${bycat.unused}, structure ${bycat.structure}, vulnerability ${bycat.vulnerability}, malware ${bycat.malware}.`,
-        pathScope.suppressed ? `Path policy: production-first; suppressed ${pathScope.suppressed} finding(s) whose evidence is entirely test/e2e/generated/mock/story/docs/benchmark/temp or explicitly excluded. Pass include_classified:true to include them.` : 'Path policy: production-first; no classified-only findings were suppressed.',
+        pathScope.suppressed ? `Path policy: production-first; suppressed ${pathScope.suppressed} finding(s) whose evidence is entirely test/e2e/generated/vendored/mock/story/docs/benchmark/temp or explicitly excluded. Pass include_classified:true to include them.` : 'Path policy: production-first; no classified-only findings were suppressed.',
         `Repository-level ${auditChecksLine(audit)}`,
         '',
         `Showing ${shown.length} of ${filtered.length} finding(s)${args.category ? ` in category "${args.category}"` : ''}${args.min_severity ? ` at ≥${args.min_severity}` : ''}:`,

@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRepoParts, readCoverageForRepo, pctFromCounts } from "./coverage-reports.js";
-import { bareSymbolName, countLocalRefsOutsideOwnRange, computeSymbolExternalRefs } from "./graph-analysis.refs.js";
+import { bareSymbolName, computeLocalSymbolRefs, computeSymbolExternalRefs } from "./graph-analysis.refs.js";
 import { createRepoBoundary } from "../repo-path.js";
 import { edgeList, folderModuleOf } from "./graph-analysis.edges.js";
 export { folderModuleOf } from "./graph-analysis.edges.js";
@@ -223,6 +223,7 @@ export function aggregateGraph(graph, repoRoot) {
       .map((s) => ({ id: s.id, label: s.label, start: parseInt(s.line, 10), end: parseInt(s.endLine, 10), ref: s }))
       .filter((s) => Number.isFinite(s.start) && s.start > 0)
       .sort((a, b) => a.start - b.start);
+    const ranges = [];
     for (let i = 0; i < sorted.length; i++) {
       const start = sorted[i].start;
       const next = i + 1 < sorted.length ? sorted[i + 1].start : total > start ? total + 1 : start + 1;
@@ -234,9 +235,9 @@ export function aggregateGraph(graph, repoRoot) {
       sorted[i].ref.endLine = end;
       const cov = coverageForRange(fid, start, end);
       if (cov != null) symbolCoverage.set(sorted[i].id, cov);
-      const refs = countLocalRefsOutsideOwnRange(txt, bareSymbolName(sorted[i].label), start, end);
-      if (refs > 0) symbolLocalRefs.set(sorted[i].id, refs);
+      ranges.push({id: sorted[i].id, name: bareSymbolName(sorted[i].label), startLine: start, endLine: end});
     }
+    for (const [id, refs] of computeLocalSymbolRefs(txt, ranges)) symbolLocalRefs.set(id, refs);
   }
   for (const s of symbols) {
     const fid = id2file.get(s.id);

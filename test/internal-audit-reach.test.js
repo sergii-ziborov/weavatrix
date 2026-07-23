@@ -68,3 +68,22 @@ test("entry discovery: Drizzle config roots configured schema modules", () => {
   assert.ok(entries.has("db/schema.ts"));
   assert.ok(!entries.has("db/orphan.ts"));
 });
+
+test("entry discovery: Electron BrowserWindow preload option roots the exact preload script", () => {
+  const graph = {
+    nodes: ["main.cjs", "preload.cjs", "src/preload.js", "src/orphan.js"].map(file),
+    links: [],
+  };
+  const conventionEvidence = [];
+  const entries = entryFiles(graph, { main: "main.cjs" }, new Set(), {
+    conventionEvidence,
+    sources: new Map([
+      ["main.cjs", `new BrowserWindow({ webPreferences: { preload: join(__dirname, "preload.cjs") } });`],
+      ["preload.cjs", `const { contextBridge } = require("electron");`],
+      ["src/preload.js", `export const preload = true;`],
+    ]),
+  });
+  assert.ok(entries.has("preload.cjs"));
+  assert.ok(!entries.has("src/preload.js"), "a conventional basename without exact BrowserWindow evidence stays reviewable");
+  assert.deepEqual(conventionEvidence.map((item) => [item.file, item.framework]), [["preload.cjs", "electron"]]);
+});

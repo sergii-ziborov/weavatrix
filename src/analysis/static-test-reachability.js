@@ -47,7 +47,7 @@ export function computeStaticTestReachability(graph, {
   const isTest = (file) => hasPathClass(classify(file), "test", "e2e");
   const isProduct = (file) => {
     const info = classify(file);
-    return !info.excluded && !hasPathClass(info, "test", "e2e", "generated", "mock", "story", "docs", "benchmark", "temp");
+    return !info.excluded && !hasPathClass(info, "test", "e2e", "generated", "vendored", "mock", "story", "docs", "benchmark", "temp");
   };
 
   const idToFile = new Map();

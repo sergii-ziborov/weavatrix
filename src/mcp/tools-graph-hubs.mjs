@@ -3,7 +3,7 @@ import {connList} from './graph-context.mjs'
 import {createPathClassifier, hasPathClass} from '../path-classification.js'
 
 const isCompileTimeEdge = (edge) => edge?.typeOnly === true || edge?.compileOnly === true
-const NON_PRODUCT_CLASSES = Object.freeze(['test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp'])
+const NON_PRODUCT_CLASSES = Object.freeze(['test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp'])
 const sourceFileOf = (node) => String(node?.source_file || (node?.file_type === 'code' ? node?.id : '') || '').replace(/\\/g, '/')
 
 export function tGodNodes(g, {top_n = 10, include_classified = false} = {}, ctx = {}) {

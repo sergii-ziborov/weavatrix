@@ -103,13 +103,14 @@ test("audit finding output exposes dependency confidence reasons", () => {
 test("run_audit path policy suppresses test-only cycles without hiding mixed/product evidence", () => {
   const findings = [
     {rule: "circular-dep", file: "services/auth/__test__/actions.js", cycleRoute: "services/auth/__test__/actions.js → services/common/tests/utils.js → services/auth/__test__/actions.js"},
+    {rule: "unused-export", file: "renderer/vendor/three/three.module.js"},
     {rule: "circular-dep", file: "src/app.js", cycleRoute: "src/app.js → test/helper.js → src/app.js"},
     {rule: "missing-dep", package: "mongodb"},
   ];
   const scoped = auditFindingPathScope(findings, {repoRoot: tmpdir()});
-  assert.equal(scoped.suppressed, 1);
+  assert.equal(scoped.suppressed, 2);
   assert.deepEqual(scoped.findings.map((finding) => finding.rule), ["circular-dep", "missing-dep"]);
-  assert.equal(auditFindingPathScope(findings, {includeClassified: true, repoRoot: tmpdir()}).findings.length, 3);
+  assert.equal(auditFindingPathScope(findings, {includeClassified: true, repoRoot: tmpdir()}).findings.length, 4);
 });
 
 test("get_dependents keeps a real runtime path even when a shorter type-only path exists", () => {

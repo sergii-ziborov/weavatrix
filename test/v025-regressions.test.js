@@ -87,7 +87,9 @@ test("duplicate scan can inspect high-confidence fragments below 30 tokens", () 
     assert.equal(result.frags.length, 2);
     assert.ok(result.frags.every((fragment) => fragment.n < 30));
     assert.ok(result.modes.strict.some((pair) => pair[2] === 100));
-    assert.match(tFindDuplicates(null, {mode: "strict", min_tokens: 12, min_similarity: 95}, {repoRoot: root, graphPath}), /Found 1 clone group/);
+    const duplicateResult = tFindDuplicates(null, {mode: "strict", min_tokens: 12, min_similarity: 95}, {repoRoot: root, graphPath});
+    assert.match(duplicateResult.text, /Found 1 clone group/);
+    assert.equal(duplicateResult.result.groups.length, 1);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 

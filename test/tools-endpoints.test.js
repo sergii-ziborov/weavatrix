@@ -198,7 +198,7 @@ test('list_endpoints suppresses classified endpoints by default and tags them on
         const byDefault = tListEndpoints(null, {}, ctx)
         assert.match(byDefault.text, /GET\s+\/api\/live/)
         assert.doesNotMatch(byDefault.text, /\/api\/testonly|\/api\/bench/)
-        assert.match(byDefault.text, /2 endpoint\(s\) in classified test\/e2e\/generated\/mock\/story\/docs\/benchmark\/temp or explicitly excluded paths were suppressed; pass include_classified:true/)
+        assert.match(byDefault.text, /2 endpoint\(s\) in classified test\/e2e\/generated\/vendored\/mock\/story\/docs\/benchmark\/temp or explicitly excluded paths were suppressed; pass include_classified:true/)
         assert.equal(byDefault.result.suppressed, 2)
         assert.equal(byDefault.result.pathPolicy, 'production-first')
         assert.equal(byDefault.result.page.total, 1)

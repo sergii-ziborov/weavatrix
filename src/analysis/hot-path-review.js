@@ -7,7 +7,7 @@ import {createPathClassifier, hasPathClass} from '../path-classification.js'
 import {isStructuralRelation} from '../graph/relations.js'
 import {boundedInteger} from '../util.js'
 
-const NON_PRODUCT = ['generated', 'mock', 'story', 'docs', 'benchmark', 'temp']
+const NON_PRODUCT = ['generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp']
 const endpoint = (value) => String(value && typeof value === 'object' ? value.id : value || '')
 const normalize = (value) => String(value || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
 const boundedInt = boundedInteger

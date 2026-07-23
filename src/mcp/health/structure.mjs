@@ -31,7 +31,7 @@ export function tModuleMap(g, args, ctx) {
             if (classifiedFiles.has(sourceFile)) continue
             classifiedFiles.add(sourceFile)
             const explanation = classifier.explain(sourceFile)
-            if (explanation.excluded || hasPathClass(explanation, 'test', 'e2e', 'generated', 'mock', 'story', 'docs', 'benchmark', 'temp')) {
+            if (explanation.excluded || hasPathClass(explanation, 'test', 'e2e', 'generated', 'vendored', 'mock', 'story', 'docs', 'benchmark', 'temp')) {
                 nonProductFiles.add(sourceFile)
             }
         }
@@ -173,7 +173,9 @@ export function tCoverageMap(g, args, ctx) {
             '  JS/TS:  npx vitest run --coverage   (or jest --coverage)',
             '  Python: pytest --cov --cov-report=json',
             '  Go:     go test ./... -coverprofile=coverage.out',
-            'Read locations: coverage/coverage-summary.json, coverage/coverage-final.json, (coverage/)lcov.info, coverage.json, coverage.out.',
+            '  Rust:   cargo tarpaulin --out Json --output-dir .',
+            '          or cargo llvm-cov --lcov --output-path lcov.info',
+            'Read locations: coverage/coverage-summary.json, coverage/coverage-final.json, (coverage/)lcov.info, coverage.json, tarpaulin-report.json, coverage.out.',
         ].filter((line) => line != null).join('\n')
     }
     const pctStr = (v) => (v == null ? 'n/a' : `${Math.round(v * 100)}%`)
@@ -216,4 +218,3 @@ export function tCoverageMap(g, args, ctx) {
 }
 
 // HTTP endpoint inventory: Express/Fastify/Nest/Flask/FastAPI/Go/Rust/Spring route definitions.
-

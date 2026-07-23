@@ -92,6 +92,19 @@ export function extractEndpointsFromText(text, file) {
     if (!HTTP_CLIENT_CALLER.test(match[1]) && handler && handler[0] !== "{") add(match[2], match[4], match[5], match.index);
   }
 
+  // Bare node:http servers commonly dispatch through request-method and URL-pathname guards rather
+  // than a router API. Keep the extraction bounded to files that actually construct an HTTP server;
+  // test assertions and arbitrary `object.method` comparisons are not enough to create endpoints.
+  if (!py && /\bcreateServer\s*\(|\b(?:node:)?https?\b/.test(scanText)) {
+    const guardedRoute = /\bif\s*\(([\s\S]{0,600}?)\)\s*(?:\{|return\b)/g;
+    while ((match = guardedRoute.exec(scanText))) {
+      const condition = match[1];
+      const methodMatch = /\b[A-Za-z_$][\w$]*\.method\s*={2,3}\s*(["'`])(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)\1/i.exec(condition);
+      const pathMatch = /\b[A-Za-z_$][\w$]*\.pathname\s*={2,3}\s*(["'`])(\/[^"'`]*)\1/i.exec(condition);
+      if (methodMatch && pathMatch) add(methodMatch[2], pathMatch[2], "", match.index);
+    }
+  }
+
   const go = /\.\s*(?:HandleFunc|Handle)\s*\(\s*(["'`])(\/[^"'`]*)\1\s*,\s*([\s\S]{0,120}?)\)/g;
   while ((match = go.exec(scanText))) add("ANY", match[2], match[3], match.index);
 

@@ -201,6 +201,32 @@ test("detectEndpoints: {id} doc route and :id real route collapse to ONE, real h
   }
 });
 
+test("endpoints: regex literals do not confuse comment masking", () => {
+  const text = String.raw`
+    const routePattern = /(["'\x60])(\/[^"'\x60]*)\1/g;
+    // app.get("/comment-only", ignoredHandler);
+    router.get("/real", realHandler);`;
+  const eps = extractEndpointsFromText(text, "src/analyzer.js");
+  assert.ok(!find(eps, "GET", "/comment-only"));
+  assert.equal(find(eps, "GET", "/real").handler, "realHandler");
+});
+
+test("endpoints: node:http method/pathname guards are real route declarations", () => {
+  const text = `
+    import { createServer } from "node:http";
+    const server = createServer((req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/ping") return reply(res);
+      if (req.method === "GET" && url.pathname === "/job") { return reply(res); }
+      if (req.method === "GET" && url.pathname === "/jobs") { return reply(res); }
+      if (req.method === "POST" && url.pathname === "/action") { return reply(res); }
+    });`;
+  const eps = extractEndpointsFromText(text, "main/control-server.js");
+  assert.deepEqual(eps.map((endpoint) => `${endpoint.method} ${endpoint.path}`), [
+    "GET /ping", "GET /job", "GET /jobs", "POST /action",
+  ]);
+});
+
 test("detectEndpoints: composes nested Express router.use mount paths across imported files", () => {
   const dir = mkdtempSync(join(tmpdir(), "eps-mounts-"));
   try {

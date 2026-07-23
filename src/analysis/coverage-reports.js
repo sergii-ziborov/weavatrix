@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { createRepoBoundary } from "../repo-path.js";
+import { readTarpaulinCoverage } from "./coverage-reports-tarpaulin.js";
 
 export function normRepoPath(value) {
   return String(value || "").replace(/\\/g, "/").replace(/^\.\//, "");
@@ -84,8 +85,10 @@ function mergeCoverageEntry(map, rawPath, entry, knownFiles, repoRoot) {
 }
 
 function addLineHit(lines, line, hit) {
-  const n = Math.max(1, Math.round(Number(line) || 0));
-  if (!n) return;
+  const value = Number(line);
+  if (!Number.isFinite(value) || value <= 0) return;
+  const n = Math.round(value);
+  if (n < 1) return;
   const current = lines.get(n);
   lines.set(n, Math.max(Number(current) || 0, Number(hit) || 0));
 }
@@ -208,6 +211,12 @@ function parseGoCoverage(map, filePath, knownFiles, repoRoot) {
   }
 }
 
+function parseTarpaulinJson(map, filePath, knownFiles, repoRoot) {
+  for (const record of readTarpaulinCoverage(filePath)) {
+    mergeCoverageEntry(map, record.path, record.entry, knownFiles, repoRoot);
+  }
+}
+
 export function readCoverageForRepo(repoRoot, knownFiles) {
   const out = new Map();
   if (!repoRoot) return out;
@@ -219,6 +228,8 @@ export function readCoverageForRepo(repoRoot, knownFiles) {
     ["lcov.info", parseLcov],
     ["coverage/coverage.json", parseCoveragePyJson],
     ["coverage.json", parseCoveragePyJson],
+    ["tarpaulin-report.json", parseTarpaulinJson],
+    ["coverage/tarpaulin-report.json", parseTarpaulinJson],
     ["coverage.out", parseGoCoverage],
     ["cover.out", parseGoCoverage]
   ];

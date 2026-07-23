@@ -11,7 +11,15 @@ export function lineAt(text, index) {
 // Preserve offsets and literals while hiding comments from regex extractors.
 export function maskComments(text, { hashComments = false } = {}) {
   const chars = String(text || "").split("");
-  let quote = "", escaped = false, lineComment = false, blockComment = false;
+  let quote = "", escaped = false, lineComment = false, blockComment = false, regex = false, regexClass = false;
+  const startsRegex = (index) => {
+    let cursor = index - 1;
+    while (cursor >= 0 && /\s/.test(chars[cursor])) cursor--;
+    if (cursor < 0) return true;
+    if (/[=(:,!&|?{}[\];]/.test(chars[cursor])) return true;
+    const prefix = chars.slice(Math.max(0, cursor - 12), cursor + 1).join("");
+    return /(?:^|\b)(?:return|throw|case|yield|await)\s*$/i.test(prefix) || /=>\s*$/.test(prefix);
+  };
   for (let i = 0; i < chars.length; i++) {
     const ch = chars[i], next = chars[i + 1];
     if (lineComment) {
@@ -24,6 +32,14 @@ export function maskComments(text, { hashComments = false } = {}) {
       else if (ch !== "\n" && ch !== "\r") chars[i] = " ";
       continue;
     }
+    if (regex) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "[") regexClass = true;
+      else if (ch === "]") regexClass = false;
+      else if (ch === "/" && !regexClass) regex = false;
+      continue;
+    }
     if (quote) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;
@@ -33,6 +49,7 @@ export function maskComments(text, { hashComments = false } = {}) {
     if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
     if (ch === "/" && next === "/") { chars[i] = chars[i + 1] = " "; i++; lineComment = true; continue; }
     if (ch === "/" && next === "*") { chars[i] = chars[i + 1] = " "; i++; blockComment = true; continue; }
+    if (!hashComments && ch === "/" && startsRegex(i)) { regex = true; regexClass = false; escaped = false; continue; }
     if (hashComments && ch === "#") { chars[i] = " "; lineComment = true; }
   }
   return chars.join("");

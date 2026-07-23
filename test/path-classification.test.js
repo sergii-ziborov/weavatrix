@@ -10,11 +10,13 @@ const put = (root, file, text = "") => {
   writeFileSync(join(root, file), text);
 };
 
-test("path classification explains defaults for e2e, generated, mock, stories, docs, benchmarks and temp roots", () => {
+test("path classification explains defaults for e2e, generated, vendored, mock, stories, docs, benchmarks and temp roots", () => {
   const cases = [
     ["test-e2e/cypress/support/testLocators/a.ts", ["test", "e2e"]],
     ["src/generated/api/client.ts", ["generated"]],
     ["build/static/js/main.abc123.js", ["generated"]],
+    ["renderer/vendor/three/three.module.js", ["vendored"]],
+    ["src/third_party/parser/index.js", ["vendored"]],
     ["src/widget/mockData.ts", ["mock"]],
     ["src/Button.stories.tsx", ["story"]],
     ["docs/architecture.md", ["docs"]],

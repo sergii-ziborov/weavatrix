@@ -41,6 +41,54 @@ export function countLocalRefsOutsideOwnRange(text, name, startLine, endLine) {
   return refs;
 }
 
+const lowerBound = (values, target) => {
+  let low = 0, high = values.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (values[middle] < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
+// Count every wanted identifier in a file once, then subtract occurrences inside each declaration
+// with binary searches over occurrence line numbers. The former per-symbol full-file scan became
+// quadratic on large vendored files (thousands of symbols over tens of thousands of lines).
+export function computeLocalSymbolRefs(text, symbols) {
+  const candidates = (symbols || []).map((symbol) => ({
+    id: symbol.id,
+    name: bareSymbolName(symbol.name ?? symbol.label),
+    start: Number(symbol.startLine ?? symbol.start),
+    end: Number(symbol.endLine ?? symbol.end),
+  })).filter((symbol) => symbol.id && isIdentifierName(symbol.name));
+  if (!text || !candidates.length) return new Map();
+  const wanted = new Set(candidates.map((symbol) => symbol.name));
+  const occurrenceLines = new Map();
+  const identifier = /[A-Za-z_$][\w$]*/g;
+  const lines = String(text).split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    identifier.lastIndex = 0;
+    let match;
+    while ((match = identifier.exec(lines[index]))) {
+      const name = match[0];
+      if (!wanted.has(name)) continue;
+      const positions = occurrenceLines.get(name) || [];
+      positions.push(index + 1);
+      occurrenceLines.set(name, positions);
+    }
+  }
+  const refs = new Map();
+  for (const symbol of candidates) {
+    const positions = occurrenceLines.get(symbol.name) || [];
+    const start = Number.isFinite(symbol.start) && symbol.start > 0 ? symbol.start : 0;
+    const end = Number.isFinite(symbol.end) && symbol.end >= start ? symbol.end : start;
+    const inside = start ? lowerBound(positions, end + 1) - lowerBound(positions, start) : 0;
+    const outside = Math.max(0, positions.length - inside);
+    if (outside > 0) refs.set(symbol.id, outside);
+  }
+  return refs;
+}
+
 function importCandidates(fromFile, spec) {
   const raw = String(spec || "");
   if (!raw.startsWith(".")) return [];
